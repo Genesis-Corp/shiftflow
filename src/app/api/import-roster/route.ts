@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { RosterEntry, matchStaffName } from '@/lib/roster';
-import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requiresBreak, BREAK_DURATION_MINUTES, RELIABILITY_DELTAS, clampScore } from '@/lib/shiftUtils';
 
 /**
  * Turns roster entries read from a screenshot into shifts.
@@ -9,6 +9,10 @@ import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
  * Runs as a preview first: a name the app does not recognise, or someone
  * already rostered that day, is reported rather than quietly skipped, so the
  * screenshot can be checked against the staff list before anything is written.
+ *
+ * A screenshot taken after the fact carries the day's outcome in its status
+ * chips. A no-show there can be recorded against the person's reliability, but
+ * only when the import explicitly asks for it — it lowers their score.
  */
 
 interface PlannedShift {
@@ -30,9 +34,11 @@ export interface RosterPlan {
   unmatched: string[];
   /** Read from the screenshot but missing a usable time. */
   unreadable: string[];
+  /** Rostered people the screenshot marks as a no-show. */
+  noShows: { name: string; staff_id: string }[];
   warnings: string[];
   errors: string[];
-  applied?: { shifts_created: number };
+  applied?: { shifts_created: number; incidents_logged: number };
 }
 
 export async function POST(req: NextRequest) {
@@ -41,6 +47,7 @@ export async function POST(req: NextRequest) {
   const departmentId: string = body?.department_id ?? '';
   const entries: RosterEntry[] = Array.isArray(body?.entries) ? body.entries : [];
   const mode: 'preview' | 'apply' = body?.mode === 'apply' ? 'apply' : 'preview';
+  const logNoShows: boolean = body?.logNoShows === true;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'Pick the date this roster is for.' }, { status: 400 });
@@ -59,6 +66,7 @@ export async function POST(req: NextRequest) {
     duplicates: [],
     unmatched: [],
     unreadable: [],
+    noShows: [],
     warnings: [],
     errors: [],
   };
@@ -107,6 +115,12 @@ export async function POST(req: NextRequest) {
       plan.warnings.push(`${match.name} is marked inactive but is on this roster.`);
     }
 
+    // Only people getting a shift from this import can get an incident from it,
+    // so re-importing the same screenshot cannot log the same no-show twice.
+    if (/no.?show/i.test(entry.status ?? '')) {
+      plan.noShows.push({ name: match.name, staff_id: match.id });
+    }
+
     plan.creates.push({
       name: match.name,
       staff_id: match.id,
@@ -118,7 +132,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (mode === 'preview' || !plan.creates.length) {
-    if (mode === 'apply') plan.applied = { shifts_created: 0 };
+    if (mode === 'apply') plan.applied = { shifts_created: 0, incidents_logged: 0 };
     return NextResponse.json(plan);
   }
 
@@ -139,10 +153,46 @@ export async function POST(req: NextRequest) {
 
   if (error) {
     plan.errors.push(`Could not save the shifts: ${error.message}`);
-    plan.applied = { shifts_created: 0 };
+    plan.applied = { shifts_created: 0, incidents_logged: 0 };
     return NextResponse.json(plan, { status: 500 });
   }
 
-  plan.applied = { shifts_created: plan.creates.length };
+  const incidents = logNoShows ? await recordNoShows(plan, date) : 0;
+
+  plan.applied = { shifts_created: plan.creates.length, incidents_logged: incidents };
   return NextResponse.json(plan);
+}
+
+/** Log a no-show against each person the screenshot marks as one, and dock their score. */
+async function recordNoShows(plan: RosterPlan, date: string): Promise<number> {
+  if (!plan.noShows.length) return 0;
+
+  const { error } = await supabase.from('reliability_incidents').insert(
+    plan.noShows.map(({ staff_id }) => ({
+      staff_id,
+      incident_type: 'no_show',
+      date,
+      notes: 'From roster import',
+    }))
+  );
+
+  if (error) {
+    plan.errors.push(`The shifts were added, but the no-shows could not be logged: ${error.message}`);
+    return 0;
+  }
+
+  const delta = RELIABILITY_DELTAS.no_show ?? 0;
+  const { data: scores } = await supabase
+    .from('staff')
+    .select('id, reliability_score')
+    .in('id', plan.noShows.map(n => n.staff_id));
+
+  for (const row of (scores ?? []) as { id: string; reliability_score: number }[]) {
+    await supabase
+      .from('staff')
+      .update({ reliability_score: clampScore(row.reliability_score + delta) })
+      .eq('id', row.id);
+  }
+
+  return plan.noShows.length;
 }

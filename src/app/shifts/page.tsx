@@ -11,7 +11,7 @@ import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
 import { RosterEntry, matchDepartment } from '@/lib/roster';
 import type { RosterPlan } from '@/app/api/import-roster/route';
-import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES, RELIABILITY_DELTAS } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
 
 const STATUS_BADGE: Record<string, string> = {
@@ -46,6 +46,7 @@ export default function ShiftsPage() {
   const [rosterDept, setRosterDept] = useState('');
   const [rosterPlan, setRosterPlan] = useState<RosterPlan | null>(null);
   const [applying, setApplying] = useState(false);
+  const [logNoShows, setLogNoShows] = useState(false);
 
   async function load() {
     const [shiftRes, deptRes] = await Promise.all([
@@ -93,6 +94,7 @@ export default function ShiftsPage() {
       }
 
       setRoster({ entries: scan.data.entries, warnings: scan.data.warnings, seconds: scan.data.seconds });
+      setLogNoShows(false);
       setRosterDate(date);
       setRosterDept(department.id);
 
@@ -134,7 +136,7 @@ export default function ShiftsPage() {
 
     const applied = await postJson<RosterPlan>(
       '/api/import-roster',
-      { date: rosterDate, department_id: rosterDept, entries: roster.entries, mode: 'apply' },
+      { date: rosterDate, department_id: rosterDept, entries: roster.entries, mode: 'apply', logNoShows },
       { timeoutMs: 60_000 }
     );
 
@@ -147,7 +149,12 @@ export default function ShiftsPage() {
       return;
     }
     const created = applied.data.applied?.shifts_created ?? 0;
-    alert(`${created} shift${created === 1 ? '' : 's'} added for ${rosterDate}.${applied.data.errors.length ? `\n\n${applied.data.errors.join('\n')}` : ''}`);
+    const logged = applied.data.applied?.incidents_logged ?? 0;
+    alert([
+      `${created} shift${created === 1 ? '' : 's'} added for ${rosterDate}.`,
+      logged ? ` ${logged} no-show${logged === 1 ? '' : 's'} logged.` : '',
+      applied.data.errors.length ? `\n\n${applied.data.errors.join('\n')}` : '',
+    ].join(''));
     load();
   }
 
@@ -405,7 +412,8 @@ export default function ShiftsPage() {
                 <div className="flex flex-wrap gap-1.5">
                   <span className="badge-green">{rosterPlan.creates.length} to add</span>
                   {rosterPlan.duplicates.length > 0 && <span className="badge-slate">{rosterPlan.duplicates.length} already rostered</span>}
-                  {rosterPlan.unmatched.length > 0 && <span className="badge-red">{rosterPlan.unmatched.length} not recognised</span>}
+                  {rosterPlan.unmatched.length > 0 && <span className="badge-amber">{rosterPlan.unmatched.length} not on the staff list</span>}
+                  {rosterPlan.noShows.length > 0 && <span className="badge-red">{rosterPlan.noShows.length} no-show{rosterPlan.noShows.length === 1 ? '' : 's'}</span>}
                   {rosterPlan.unreadable.length > 0 && <span className="badge-amber">{rosterPlan.unreadable.length} unreadable</span>}
                 </div>
 
@@ -426,14 +434,17 @@ export default function ShiftsPage() {
                   </section>
                 )}
 
-                {rosterPlan.unmatched.length > 0 && (
+                {rosterPlan.noShows.length > 0 && (
                   <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Not on the staff list</h3>
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3">
-                      <p className="text-xs text-red-700">{rosterPlan.unmatched.join(', ')}</p>
-                      <p className="text-xs text-red-600 mt-1">
-                        No shift is added for these. Add them on the Staff page, or upload the availability sheet, then try again.
-                      </p>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Marked as a no-show</h3>
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+                      <p className="text-xs text-red-700">{rosterPlan.noShows.map(n => n.name).join(', ')}</p>
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" checked={logNoShows} onChange={e => setLogNoShows(e.target.checked)} className="mt-0.5 accent-red-600" />
+                        <span className="text-xs text-red-800">
+                          Also log this against their reliability, which lowers their score by {Math.abs(RELIABILITY_DELTAS.no_show)} points each and adds an entry to the Reliability log.
+                        </span>
+                      </label>
                     </div>
                   </section>
                 )}
@@ -451,10 +462,15 @@ export default function ShiftsPage() {
                   </section>
                 )}
 
-                {(rosterPlan.unreadable.length > 0 || rosterPlan.warnings.length > 0 || roster.warnings.length > 0) && (
+                {(rosterPlan.unmatched.length > 0 || rosterPlan.unreadable.length > 0 || rosterPlan.warnings.length > 0 || roster.warnings.length > 0) && (
                   <section>
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Needs a look</h3>
                     <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+                      {rosterPlan.unmatched.map(name => (
+                        <li key={name} className="text-xs text-amber-800">
+                          {name} is not on the staff list yet — add them on the Staff page, then import this roster again to give them their shift.
+                        </li>
+                      ))}
                       {rosterPlan.unreadable.map(name => (
                         <li key={name} className="text-xs text-amber-800">{name} — the rostered time could not be read, so no shift was made.</li>
                       ))}
