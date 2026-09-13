@@ -13,15 +13,22 @@ import { SHEET_DAYS, rowsToMatrix } from '@/lib/availabilitySheet';
  *
  * Everything here is shaped by one constraint — the hosting platform kills the
  * function at 60 seconds. The reply is kept small (short keys, blank days left
- * out), the model runs at low effort in fast mode, and the request carries its
- * own budget so a slow read returns a readable error instead of being cut off
- * mid-flight and replaced with an HTML error page.
+ * out), the model runs at low effort, and the request carries its own budget so
+ * a slow read returns a readable error instead of being cut off mid-flight and
+ * replaced with an HTML error page.
  */
 
 export const maxDuration = 60;
 
-const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-opus-5';
+const MODEL = process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-5';
 const FAST_MODE_BETA = 'fast-mode-2026-02-01';
+
+/**
+ * Fast mode only exists on the Opus 5 / 4.8 models, and it has its own rate
+ * limit separate from standard capacity — so it is used only when the chosen
+ * model supports it, and dropped on the first sign that it is unavailable.
+ */
+const FAST_MODE_MODELS = /^claude-opus-(5|4-8)\b/;
 
 /** Leaves ~13s of the platform's 60s for the rest of the request. */
 const TOTAL_BUDGET_MS = 47_000;
@@ -140,16 +147,21 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic();
 
+  const fastMode = FAST_MODE_MODELS.test(MODEL);
+
   try {
     let message;
     try {
-      message = await transcribe(client, image, mediaType, { fast: true, timeoutMs: budgetLeft() });
+      message = await transcribe(client, image, mediaType, { fast: fastMode, timeoutMs: budgetLeft() });
     } catch (err) {
-      // Fast mode is a paid add-on and may not be enabled on the account; that
-      // is rejected before any work is done, so there is time to try again.
-      const rejectedFastMode =
-        err instanceof Anthropic.BadRequestError && /speed|fast|beta/i.test(err.message);
-      if (!rejectedFastMode || budgetLeft() < MIN_RETRY_BUDGET_MS) throw err;
+      // Fast mode can be unavailable on the account, or busy on its own rate
+      // limit. Both are answered before any work is done, so there is time to
+      // fall back to standard capacity rather than fail the upload.
+      const fastModeUnavailable =
+        fastMode &&
+        ((err instanceof Anthropic.BadRequestError && /speed|fast|beta/i.test(err.message)) ||
+          err instanceof Anthropic.RateLimitError);
+      if (!fastModeUnavailable || budgetLeft() < MIN_RETRY_BUDGET_MS) throw err;
       message = await transcribe(client, image, mediaType, { fast: false, timeoutMs: budgetLeft() });
     }
 
@@ -187,7 +199,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'ANTHROPIC_API_KEY was rejected — check the key set on the deployment.' }, { status: 502 });
     }
     if (err instanceof Anthropic.RateLimitError) {
-      return NextResponse.json({ error: 'Too many requests right now. Wait a moment and take the photo again.' }, { status: 429 });
+      const retryAfter = err.headers?.get?.('retry-after');
+      const wait = retryAfter ? `Try again in about ${retryAfter} seconds.` : 'Wait a minute and take the photo again.';
+      return NextResponse.json(
+        { error: `${MODEL} is rate limited on this account. ${wait} Uploading the sheet as a CSV works in the meantime.` },
+        { status: 429 }
+      );
     }
     if (err instanceof Anthropic.APIError) {
       return NextResponse.json({ error: `Could not read the photo (${err.status}): ${err.message}` }, { status: 502 });
