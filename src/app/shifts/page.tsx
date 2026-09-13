@@ -1,11 +1,16 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Coffee, Download, Upload } from 'lucide-react';
+import { Plus, Pencil, Trash2, Coffee, Download, Upload, Camera } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import { Shift, Department } from '@/lib/types';
-import { fetchList } from '@/lib/api';
+import { fetchList, postJson } from '@/lib/api';
+import { downscalePhoto } from '@/lib/image';
+import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
+import { STAGES } from '@/lib/progressStages';
+import { RosterEntry, matchDepartment } from '@/lib/roster';
+import type { RosterPlan } from '@/app/api/import-roster/route';
 import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
 
@@ -31,6 +36,16 @@ export default function ShiftsPage() {
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
   const importRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
+
+  // A roster read from a screenshot, and what importing it would do.
+  const [stage, setStage] = useState<ProgressStage | null>(null);
+  const [roster, setRoster] = useState<{ entries: RosterEntry[]; warnings: string[]; seconds?: number } | null>(null);
+  const [rosterDate, setRosterDate] = useState('');
+  const [rosterDept, setRosterDept] = useState('');
+  const [rosterPlan, setRosterPlan] = useState<RosterPlan | null>(null);
+  const [applying, setApplying] = useState(false);
 
   async function load() {
     const [shiftRes, deptRes] = await Promise.all([
@@ -44,6 +59,97 @@ export default function ShiftsPage() {
   }
 
   useEffect(() => { load(); }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /**
+   * A screenshot of one day's roster becomes shifts: read it, work out what it
+   * would add, and only write once that has been confirmed. The screenshot
+   * rarely carries a date, so the date is chosen here rather than guessed.
+   */
+  async function readRosterPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    try {
+      setStage(STAGES.preparing);
+      const { base64, mediaType } = await downscalePhoto(file);
+
+      setStage(STAGES.readingRoster);
+      const scan = await postJson<{
+        department: string | null;
+        date: string | null;
+        entries: RosterEntry[];
+        warnings: string[];
+        seconds?: number;
+      }>('/api/scan-roster', { image: base64, mediaType }, { timeoutMs: 70_000 });
+
+      if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that screenshot.'); return; }
+
+      const date = scan.data.date ?? new Date().toISOString().split('T')[0];
+      const department = matchDepartment(scan.data.department ?? undefined, departments) ?? departments[0];
+      if (!department) {
+        alert('Add a department before importing a roster — every shift belongs to one.');
+        return;
+      }
+
+      setRoster({ entries: scan.data.entries, warnings: scan.data.warnings, seconds: scan.data.seconds });
+      setRosterDate(date);
+      setRosterDept(department.id);
+
+      setStage(STAGES.comparing);
+      await previewRoster(date, department.id, scan.data.entries);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read that screenshot.');
+    } finally {
+      setStage(null);
+    }
+  }
+
+  async function previewRoster(date: string, department_id: string, entries: RosterEntry[]) {
+    const preview = await postJson<RosterPlan>(
+      '/api/import-roster',
+      { date, department_id, entries, mode: 'preview' },
+      { timeoutMs: 60_000 }
+    );
+    if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not check that roster.'); return; }
+    setRosterPlan(preview.data);
+  }
+
+  /** The date and department decide what counts as a duplicate, so re-check on a change. */
+  async function changeRosterTarget(date: string, department_id: string) {
+    setRosterDate(date);
+    setRosterDept(department_id);
+    if (roster) await previewRoster(date, department_id, roster.entries);
+  }
+
+  function closeRoster() {
+    setRoster(null);
+    setRosterPlan(null);
+  }
+
+  async function applyRoster() {
+    if (!roster || !rosterPlan) return;
+    setApplying(true);
+    setStage(STAGES.savingShifts);
+
+    const applied = await postJson<RosterPlan>(
+      '/api/import-roster',
+      { date: rosterDate, department_id: rosterDept, entries: roster.entries, mode: 'apply' },
+      { timeoutMs: 60_000 }
+    );
+
+    setApplying(false);
+    setStage(null);
+    closeRoster();
+
+    if (!applied.ok || !applied.data) {
+      alert(applied.error ?? 'The shifts could not be added.');
+      return;
+    }
+    const created = applied.data.applied?.shifts_created ?? 0;
+    alert(`${created} shift${created === 1 ? '' : 's'} added for ${rosterDate}.${applied.data.errors.length ? `\n\n${applied.data.errors.join('\n')}` : ''}`);
+    load();
+  }
 
   function openAdd() {
     setForm({ date: new Date().toISOString().split('T')[0], start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
@@ -118,21 +224,33 @@ export default function ShiftsPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
+  const busy = stage !== null || applying;
+
   return (
     <div className="space-y-4">
       <ErrorBanner message={loadError} onRetry={load} />
+
+      {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>
           <p className="text-sm text-slate-500">{shifts.length} shifts {dateFilter ? `on ${formatDate(dateFilter)}` : 'total'}</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input type="date" className="input w-auto" value={dateFilter} onChange={e => setDateFilter(e.target.value)} />
-          {dateFilter && <button onClick={() => setDateFilter('')} className="btn-secondary text-xs">Clear date</button>}
-          <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
-          <button onClick={() => importRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
-          <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
-          <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Shift</button>
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full sm:w-auto">
+          <div className="flex gap-2">
+            <input type="date" className="input w-auto flex-1" value={dateFilter} onChange={e => setDateFilter(e.target.value)} />
+            {dateFilter && <button onClick={() => setDateFilter('')} className="btn-secondary text-xs">Clear date</button>}
+          </div>
+          <div className="grid grid-cols-2 sm:flex gap-2">
+            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Camera size={14} /> Capture</button>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={readRosterPhoto} />
+            <button onClick={() => photoRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload Roster</button>
+            <input ref={photoRef} type="file" accept="image/*" className="hidden" onChange={readRosterPhoto} />
+            <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
+            <button onClick={() => importRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Import CSV</button>
+            <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export</button>
+            <button onClick={openAdd} className="btn-primary justify-center col-span-2 sm:col-auto"><Plus size={16} /> Add Shift</button>
+          </div>
         </div>
       </div>
 
@@ -259,6 +377,112 @@ export default function ShiftsPage() {
           </div>
         </Modal>
       )}
+
+      {roster && (
+        <Modal title="Roster from screenshot" onClose={closeRoster} size="lg">
+          <div className="space-y-4 text-sm">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+              <p className="text-xs text-amber-800">
+                Read from a screenshot{roster.seconds ? ` in ${roster.seconds}s` : ''}. Check the names and times below before adding them.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Date of this roster</label>
+                <input type="date" className="input" value={rosterDate} onChange={e => changeRosterTarget(e.target.value, rosterDept)} />
+              </div>
+              <div>
+                <label className="label">Department</label>
+                <select className="input" value={rosterDept} onChange={e => changeRosterTarget(rosterDate, e.target.value)}>
+                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            {rosterPlan && (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="badge-green">{rosterPlan.creates.length} to add</span>
+                  {rosterPlan.duplicates.length > 0 && <span className="badge-slate">{rosterPlan.duplicates.length} already rostered</span>}
+                  {rosterPlan.unmatched.length > 0 && <span className="badge-red">{rosterPlan.unmatched.length} not recognised</span>}
+                  {rosterPlan.unreadable.length > 0 && <span className="badge-amber">{rosterPlan.unreadable.length} unreadable</span>}
+                </div>
+
+                {rosterPlan.creates.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shifts to add</h3>
+                    <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                      {rosterPlan.creates.map(shift => (
+                        <li key={shift.staff_id} className="px-3 py-2 flex items-center justify-between gap-2">
+                          <span className="font-medium text-slate-700 truncate">{shift.name}</span>
+                          <span className="text-xs text-slate-500 shrink-0">
+                            {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
+                            {shift.has_break && <span className="text-slate-400"> · break</span>}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {rosterPlan.unmatched.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Not on the staff list</h3>
+                    <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                      <p className="text-xs text-red-700">{rosterPlan.unmatched.join(', ')}</p>
+                      <p className="text-xs text-red-600 mt-1">
+                        No shift is added for these. Add them on the Staff page, or upload the availability sheet, then try again.
+                      </p>
+                    </div>
+                  </section>
+                )}
+
+                {rosterPlan.duplicates.length > 0 && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Already rostered that day</h3>
+                    <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                      {rosterPlan.duplicates.map(d => (
+                        <li key={d.name} className="px-3 py-2 text-xs text-slate-500 flex justify-between gap-2">
+                          <span>{d.name}</span><span>{d.existing}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {(rosterPlan.unreadable.length > 0 || rosterPlan.warnings.length > 0 || roster.warnings.length > 0) && (
+                  <section>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Needs a look</h3>
+                    <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+                      {rosterPlan.unreadable.map(name => (
+                        <li key={name} className="text-xs text-amber-800">{name} — the rostered time could not be read, so no shift was made.</li>
+                      ))}
+                      {[...roster.warnings, ...rosterPlan.warnings].map((w, i) => (
+                        <li key={i} className="text-xs text-amber-800">{w}</li>
+                      ))}
+                    </ul>
+                  </section>
+                )}
+
+                {rosterPlan.errors.length > 0 && (
+                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
+                    {rosterPlan.errors.map((err, i) => <p key={i} className="text-xs text-red-700">{err}</p>)}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={closeRoster} className="btn-secondary">Cancel</button>
+              <button onClick={applyRoster} disabled={applying || !rosterPlan?.creates.length} className="btn-primary">
+                {applying ? 'Adding...' : `Add ${rosterPlan?.creates.length ?? 0} shift${rosterPlan?.creates.length === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
     </div>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, Camera, FileSpreadsheet } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
+import { STAGES } from '@/lib/progressStages';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, AvailabilityTemplate } from '@/lib/types';
@@ -18,15 +19,6 @@ const ROLE_LABELS: Record<RoleType, string> = {
   department_only: 'Department Only',
   all_rounder: 'All Rounder',
   potential_all_rounder: 'Potential All Rounder',
-};
-
-/** Steps a sheet goes through, from picking a file to the staff list changing. */
-const STAGES: Record<string, ProgressStage> = {
-  preparing: { label: 'Preparing the photo…', detail: 'Shrinking it so it uploads quickly.', from: 4, to: 18, seconds: 4 },
-  reading: { label: 'Reading the sheet…', detail: 'Turning the photo into a spreadsheet. This can take up to a minute — keep this page open.', from: 18, to: 78, seconds: 45 },
-  parsing: { label: 'Reading the sheet…', detail: 'Checking the columns and times.', from: 10, to: 60, seconds: 3 },
-  comparing: { label: 'Comparing with the staff list…', from: 78, to: 95, seconds: 6 },
-  applying: { label: 'Updating the staff list…', from: 20, to: 95, seconds: 8 },
 };
 
 interface DayAvailability {
