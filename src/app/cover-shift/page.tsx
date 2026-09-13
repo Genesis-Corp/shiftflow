@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Department, CoverCandidate } from '@/lib/types';
+import { fetchList } from '@/lib/api';
 import { formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
 
 interface CoverResult {
@@ -21,12 +23,14 @@ export default function CoverShiftPage() {
   });
   const [result, setResult] = useState<CoverResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [claimMsg, setClaimMsg] = useState('');
   const [incidentLoading, setIncidentLoading] = useState('');
 
   useEffect(() => {
-    fetch('/api/departments').then(r => r.json()).then(data => {
+    fetchList<Department>('/api/departments').then(({ data, error }) => {
       setDepartments(data);
+      setLoadError(error);
       if (data[0]) setForm(f => ({ ...f, department_id: data[0].id }));
     });
   }, []);
@@ -60,6 +64,7 @@ export default function CoverShiftPage() {
 
   return (
     <div className="space-y-6">
+      <ErrorBanner message={loadError} />
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Find Cover</h1>
         <p className="text-sm text-slate-500">Enter the shift details to find available staff</p>

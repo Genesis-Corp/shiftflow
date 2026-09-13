@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle, PhoneMissed, XCircle, UserX, CheckCircle, Plus } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
+import { fetchList } from '@/lib/api';
 import { formatDate } from '@/lib/shiftUtils';
 
 const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string; delta: string }> = {
@@ -18,13 +20,18 @@ export default function ReliabilityPage() {
   const [incidents, setIncidents] = useState<ReliabilityIncident[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
   const [modal, setModal] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: new Date().toISOString().split('T')[0], notes: '' });
   const [filterStaff, setFilterStaff] = useState('');
 
   async function load() {
-    const [iRes, sRes] = await Promise.all([fetch('/api/reliability'), fetch('/api/staff')]);
-    setIncidents(await iRes.json());
-    setStaff(await sRes.json());
+    const [incidentRes, staffRes] = await Promise.all([
+      fetchList<ReliabilityIncident>('/api/reliability'),
+      fetchList<Staff>('/api/staff'),
+    ]);
+    setIncidents(incidentRes.data);
+    setStaff(staffRes.data);
+    setLoadError(incidentRes.error ?? staffRes.error);
   }
 
   useEffect(() => { load(); }, []);
@@ -58,6 +65,7 @@ export default function ReliabilityPage() {
 
   return (
     <div className="space-y-6">
+      <ErrorBanner message={loadError} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Reliability</h1>

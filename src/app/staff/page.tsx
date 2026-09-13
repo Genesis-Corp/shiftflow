@@ -1,11 +1,14 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, Camera, Loader2 } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
+import { fetchList } from '@/lib/api';
+import { downscalePhoto } from '@/lib/image';
 import type { SyncPlan } from '@/lib/staffSync';
 import Papa from 'papaparse';
 
@@ -25,10 +28,12 @@ export default function StaffPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [filter, setFilter] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
 
   // Availability-sheet sync: the uploaded grid, the preview of what it changes,
   // and whether staff missing from it should be removed.
@@ -36,6 +41,8 @@ export default function StaffPage() {
   const [plan, setPlan] = useState<SyncPlan | null>(null);
   const [removeMissing, setRemoveMissing] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [fromPhoto, setFromPhoto] = useState(false);
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
@@ -43,9 +50,13 @@ export default function StaffPage() {
   });
 
   async function load() {
-    const [sRes, dRes] = await Promise.all([fetch('/api/staff'), fetch('/api/departments')]);
-    setStaff(await sRes.json());
-    setDepartments(await dRes.json());
+    const [staffRes, deptRes] = await Promise.all([
+      fetchList<Staff>('/api/staff'),
+      fetchList<Department>('/api/departments'),
+    ]);
+    setStaff(staffRes.data);
+    setDepartments(deptRes.data);
+    setLoadError(staffRes.error ?? deptRes.error);
     setLoading(false);
   }
 
@@ -145,6 +156,7 @@ export default function StaffPage() {
           if (!res.ok) { alert(preview.error ?? 'Could not read that sheet.'); return; }
           setSheet(rows);
           setRemoveMissing(true);
+          setFromPhoto(false);
           setPlan(preview);
           return;
         }
@@ -161,9 +173,51 @@ export default function StaffPage() {
     });
   }
 
+  /**
+   * Photograph the sheet instead of exporting it. The photo is transcribed into
+   * the same grid a CSV produces and then goes through the identical preview,
+   * which is where a misread time or digit gets caught.
+   */
+  async function handleCapture(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setScanning(true);
+    try {
+      const { base64, mediaType } = await downscalePhoto(file);
+
+      const scanRes = await fetch('/api/scan-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: base64, mediaType }),
+      });
+      const scan = await scanRes.json();
+      if (!scanRes.ok) { alert(scan.error ?? 'Could not read that photo.'); return; }
+
+      const previewRes = await fetch('/api/sync-staff-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: scan.rows, mode: 'preview' }),
+      });
+      const preview = await previewRes.json();
+      if (!previewRes.ok) { alert(preview.error ?? 'Could not read that photo as an availability sheet.'); return; }
+
+      setSheet(scan.rows);
+      setRemoveMissing(true);
+      setFromPhoto(true);
+      setPlan(preview);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read that photo.');
+    } finally {
+      setScanning(false);
+    }
+  }
+
   function closeSync() {
     setPlan(null);
     setSheet(null);
+    setFromPhoto(false);
   }
 
   async function applySync() {
@@ -192,6 +246,23 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-4">
+      <ErrorBanner message={loadError} />
+
+      {(scanning || syncing) && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 flex items-center gap-3">
+          <Loader2 size={18} className="animate-spin text-blue-600 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-blue-900">
+              {scanning ? 'Reading the photo…' : plan ? 'Applying the changes…' : 'Checking the sheet…'}
+            </p>
+            {scanning && (
+              <p className="text-xs text-blue-700">
+                Transcribing the whole sheet takes up to a minute. Keep this page open.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
@@ -200,7 +271,9 @@ export default function StaffPage() {
         <div className="flex gap-2 flex-wrap">
           <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
-          <button onClick={() => fileRef.current?.click()} disabled={syncing} className="btn-secondary"><Upload size={14} /> {syncing ? 'Reading sheet...' : 'Import / Sync Sheet'}</button>
+          <button onClick={() => cameraRef.current?.click()} disabled={scanning || syncing} className="btn-secondary"><Camera size={14} /> {scanning ? 'Reading photo...' : 'Capture'}</button>
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCapture} />
+          <button onClick={() => fileRef.current?.click()} disabled={scanning || syncing} className="btn-secondary"><Upload size={14} /> {syncing ? 'Reading sheet...' : 'Import / Sync Sheet'}</button>
           <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
         </div>
@@ -319,8 +392,17 @@ export default function StaffPage() {
       )}
 
       {plan && (
-        <Modal title="Sync Availability Sheet" onClose={closeSync} size="lg">
+        <Modal title={fromPhoto ? 'Sync from Photo' : 'Sync Availability Sheet'} onClose={closeSync} size="lg">
           <div className="space-y-4 text-sm">
+            {fromPhoto && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs text-amber-800">
+                  Read from a photo. Check the names, mobile numbers and times below against the sheet before applying —
+                  anything that could not be read clearly was left unchanged.
+                </p>
+              </div>
+            )}
+
             {plan.layout && <p className="text-xs text-slate-400">Columns read — {plan.layout}</p>}
 
             <div className="flex flex-wrap gap-1.5">

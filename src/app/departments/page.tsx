@@ -2,19 +2,23 @@
 
 import { useEffect, useState } from 'react';
 import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import { Department } from '@/lib/types';
+import { fetchList } from '@/lib/api';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
   const [form, setForm] = useState({ name: '', requires_supervisor: false });
 
   async function load() {
-    const res = await fetch('/api/departments');
-    setDepartments(await res.json());
+    const { data, error } = await fetchList<Department>('/api/departments');
+    setDepartments(data);
+    setLoadError(error);
     setLoading(false);
   }
 
@@ -50,6 +54,7 @@ export default function DepartmentsPage() {
 
   return (
     <div className="space-y-4">
+      <ErrorBanner message={loadError} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Departments</h1>

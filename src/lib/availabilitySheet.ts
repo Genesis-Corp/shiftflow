@@ -21,6 +21,9 @@ export const SHEET_DAYS = [
 const SECTION_LABEL = /^(store|juniors?|seniors?|adults?|staff|team|managers?|supervisors?)$/i;
 /** Age markers used on banner rows, e.g. "-18" or "18+". */
 const AGE_LABEL = /^[-–—]?\s*\d{1,2}\s*\+?$/;
+/** Marks a character a photo transcription could not make out. */
+const ILLEGIBLE = /\?/;
+
 /** Header captions for columns that precede the day columns but hold no name. */
 const NON_NAME_HEADER = /^(store|section|dept|department|#|no\.?|id|index)$/i;
 
@@ -59,6 +62,8 @@ export interface SheetStaffRow {
   /** Normalised name used to match this person against the app's staff list. */
   key: string;
   phone: string | null;
+  /** A mobile the camera could not read fully; the stored number is kept. */
+  phone_unreadable: boolean;
   /** Derived from the section banner above the row; only used when creating. */
   age_group: AgeGroup;
   days: Record<number, DayCell>;
@@ -69,6 +74,11 @@ export interface ParsedSheet {
   staff: SheetStaffRow[];
   warnings: string[];
   errors: string[];
+  /**
+   * True when a row could not be read at all. The sheet is then an incomplete
+   * picture of the roster, so it must not be used to decide who has left.
+   */
+  incomplete: boolean;
 }
 
 // ── Cell-level helpers ────────────────────────────────────────────────────────
@@ -249,12 +259,14 @@ export function parseSheet(rows: string[][]): ParsedSheet {
       staff: [],
       errors: ['Could not find the header row — expected columns for the name, mobile number and each day of the week.'],
       warnings,
+      incomplete: true,
     };
   }
 
   const staff: SheetStaffRow[] = [];
   const seen = new Map<string, number>();
   let ageGroup: AgeGroup = 'senior';
+  let incomplete = false;
 
   for (let r = layout.headerRow + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
@@ -274,11 +286,20 @@ export function parseSheet(rows: string[][]): ParsedSheet {
 
     if (!first && !last) continue; // blank spacer row
 
+    // A half-read name would be matched as a different person — which would add
+    // one staff member and drop another. Skip the row instead.
+    if (ILLEGIBLE.test(first) || ILLEGIBLE.test(last)) {
+      incomplete = true;
+      errors.push(`Row ${rowNumber}: the name "${fullName(first, last)}" could not be read. That row was skipped.`);
+      continue;
+    }
+
     const name = fullName(first, last);
     const key = nameKey(name);
 
     const previous = seen.get(key);
     if (previous !== undefined) {
+      incomplete = true;
       errors.push(`Row ${rowNumber}: "${name}" also appears on row ${previous} — only the first entry was used.`);
       continue;
     }
@@ -305,21 +326,42 @@ export function parseSheet(rows: string[][]): ParsedSheet {
       if (!(day in days)) days[day] = { raw: '', kind: 'unreadable' };
     }
 
+    const phoneUnreadable = ILLEGIBLE.test(phoneRaw);
+    if (phoneUnreadable) {
+      warnings.push(`${name} — the mobile number could not be read in full. The stored number was left unchanged.`);
+    }
+
     staff.push({
       rowNumber,
       first_name: first,
       last_name: last,
       name,
       key,
-      phone: normalizePhone(phoneRaw),
+      phone: phoneUnreadable ? null : normalizePhone(phoneRaw),
+      phone_unreadable: phoneUnreadable,
       age_group: ageGroup,
       days,
     });
   }
 
-  if (!staff.length) errors.push('No staff rows were found beneath the header row.');
+  if (!staff.length) {
+    errors.push('No staff rows were found beneath the header row.');
+    incomplete = true;
+  }
 
-  return { layout, staff, warnings, errors };
+  return { layout, staff, warnings, errors, incomplete };
+}
+
+/** Column keys used when a transcribed photo is laid out as a grid. */
+export const SHEET_FIELDS = ['first_name', 'last_name', 'mobile', ...SHEET_DAYS.map(d => d.toLowerCase())];
+
+/**
+ * Lay transcribed rows out as the grid `parseSheet` expects, with the same
+ * header the printed sheet uses (the name caption spans two columns).
+ */
+export function rowsToMatrix(rows: Record<string, string>[]): string[][] {
+  const header = ['NAME', '', 'MOBILE #', ...SHEET_DAYS];
+  return [header, ...rows.map(row => SHEET_FIELDS.map(field => clean(row[field])))];
 }
 
 /** Turn `[["name","phone"],["Sam","0400"]]` into row objects for the standard CSV importer. */

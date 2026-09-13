@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Coffee, Download, Upload } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import { Shift, Department } from '@/lib/types';
+import { fetchList } from '@/lib/api';
 import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
 
@@ -17,6 +19,7 @@ export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
   const [dateFilter, setDateFilter] = useState('');
@@ -30,12 +33,13 @@ export default function ShiftsPage() {
   const importRef = useRef<HTMLInputElement>(null);
 
   async function load() {
-    const [sRes, dRes] = await Promise.all([
-      fetch(`/api/shifts${dateFilter ? `?date=${dateFilter}` : ''}`),
-      fetch('/api/departments'),
+    const [shiftRes, deptRes] = await Promise.all([
+      fetchList<Shift>(`/api/shifts${dateFilter ? `?date=${dateFilter}` : ''}`),
+      fetchList<Department>('/api/departments'),
     ]);
-    setShifts(await sRes.json());
-    setDepartments(await dRes.json());
+    setShifts(shiftRes.data);
+    setDepartments(deptRes.data);
+    setLoadError(shiftRes.error ?? deptRes.error);
     setLoading(false);
   }
 
@@ -116,6 +120,7 @@ export default function ShiftsPage() {
 
   return (
     <div className="space-y-4">
+      <ErrorBanner message={loadError} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>

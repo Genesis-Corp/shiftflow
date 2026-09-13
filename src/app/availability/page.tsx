@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
 import { Staff, AvailabilityTemplate, DayOfWeek } from '@/lib/types';
+import { fetchList } from '@/lib/api';
 import { DAYS, DAY_SHORT } from '@/lib/shiftUtils';
 
 const DEFAULT_SLOTS = [
@@ -23,11 +25,18 @@ export default function AvailabilityPage() {
   const [templates, setTemplates] = useState<Record<number, DayTemplate>>({});
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [allTemplates, setAllTemplates] = useState<AvailabilityTemplate[]>([]);
 
   useEffect(() => {
-    fetch('/api/staff').then(r => r.json()).then(data => setStaff((data ?? []).filter((s: Staff) => s.active)));
-    fetch('/api/availability').then(r => r.json()).then(setAllTemplates);
+    Promise.all([
+      fetchList<Staff>('/api/staff'),
+      fetchList<AvailabilityTemplate>('/api/availability'),
+    ]).then(([staffRes, templateRes]) => {
+      setStaff(staffRes.data.filter(s => s.active));
+      setAllTemplates(templateRes.data);
+      setLoadError(staffRes.error ?? templateRes.error);
+    });
   }, []);
 
   function loadStaffTemplates(s: Staff) {
@@ -56,8 +65,8 @@ export default function AvailabilityPage() {
       body: JSON.stringify({ staff_id: selectedStaff.id, templates: rows.filter(r => r.available) }),
     });
     // Refresh
-    const updated = await fetch('/api/availability').then(r => r.json());
-    setAllTemplates(updated);
+    const updated = await fetchList<AvailabilityTemplate>('/api/availability');
+    setAllTemplates(updated.data);
     setLoading(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
@@ -81,6 +90,7 @@ export default function AvailabilityPage() {
 
   return (
     <div className="space-y-6">
+      <ErrorBanner message={loadError} />
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Availability</h1>
         <p className="text-sm text-slate-500">Set weekly availability templates for each staff member</p>

@@ -119,9 +119,11 @@ function matchExisting(
 
 export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}): Promise<SyncPlan> {
   const mode = options.mode ?? 'preview';
-  const deleteMissing = options.deleteMissing ?? true;
-
   const parsed: ParsedSheet = parseSheet(rows);
+
+  // Part of the sheet could not be read, so absence from it proves nothing
+  // about who still works here — never delete on the strength of that.
+  const deleteMissing = (options.deleteMissing ?? true) && !parsed.incomplete;
   const plan: SyncPlan = {
     mode,
     layout: parsed.layout ? describeLayout(parsed.layout) : null,
@@ -134,6 +136,12 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
   };
 
   if (!parsed.staff.length) return plan;
+
+  if (parsed.incomplete && (options.deleteMissing ?? true)) {
+    plan.warnings.push(
+      'Part of the sheet could not be read, so nobody was removed. Fix the rows listed above, or remove the staff member by hand.'
+    );
+  }
 
   const withNameParts = await hasNameColumns();
   if (!withNameParts) {
@@ -225,7 +233,7 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
       }
     }
     const existingPhone = normalizePhone(existing.phone);
-    if (existingPhone !== row.phone) {
+    if (!row.phone_unreadable && existingPhone !== row.phone) {
       payload.phone = row.phone;
       changes.push({ field: 'Mobile', from: existing.phone ?? null, to: row.phone });
     }
