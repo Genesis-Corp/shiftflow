@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Coffee, Download, Upload, Camera } from 'lucide-react';
+import { Plus, Pencil, Trash2, Coffee, Download, Upload, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import { Shift, Department } from '@/lib/types';
@@ -47,6 +47,10 @@ export default function ShiftsPage() {
   const [rosterPlan, setRosterPlan] = useState<RosterPlan | null>(null);
   const [applying, setApplying] = useState(false);
   const [logNoShows, setLogNoShows] = useState(false);
+  /** What the screenshot's heading said, and whether it found a department. */
+  const [rosterHeading, setRosterHeading] = useState<{ text: string; matched: boolean } | null>(null);
+  /** Each photo is one day and one department, so a run of them usually shares one or the other. */
+  const lastImport = useRef<{ date: string; department_id: string } | null>(null);
 
   async function load() {
     const [shiftRes, deptRes] = await Promise.all([
@@ -86,12 +90,22 @@ export default function ShiftsPage() {
 
       if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that screenshot.'); return; }
 
-      const date = scan.data.date ?? new Date().toISOString().split('T')[0];
-      const department = matchDepartment(scan.data.department ?? undefined, departments) ?? departments[0];
-      if (!department) {
+      if (!departments.length) {
         alert('Add a department before importing a roster — every shift belongs to one.');
         return;
       }
+
+      // The date is the one thing a roster screenshot almost never carries, so
+      // it falls back to the last import in this session, then to today.
+      const date = scan.data.date ?? lastImport.current?.date ?? new Date().toISOString().split('T')[0];
+
+      // One department per photo, named in the heading. When the heading does
+      // not match one, say so rather than quietly filing it under the first.
+      const heading = scan.data.department ?? null;
+      const matched = matchDepartment(heading ?? undefined, departments);
+      const department =
+        matched ?? departments.find(d => d.id === lastImport.current?.department_id) ?? departments[0];
+      setRosterHeading(heading ? { text: heading, matched: Boolean(matched) } : null);
 
       setRoster({ entries: scan.data.entries, warnings: scan.data.warnings, seconds: scan.data.seconds });
       setLogNoShows(false);
@@ -127,6 +141,14 @@ export default function ShiftsPage() {
   function closeRoster() {
     setRoster(null);
     setRosterPlan(null);
+    setRosterHeading(null);
+  }
+
+  /** Step the roster date a day at a time — a run of photos is usually consecutive days. */
+  function stepRosterDate(days: number) {
+    const moved = new Date(`${rosterDate}T00:00:00`);
+    moved.setDate(moved.getDate() + days);
+    changeRosterTarget(moved.toISOString().split('T')[0], rosterDept);
   }
 
   async function applyRoster() {
@@ -148,6 +170,8 @@ export default function ShiftsPage() {
       alert(applied.error ?? 'The shifts could not be added.');
       return;
     }
+    lastImport.current = { date: rosterDate, department_id: rosterDept };
+
     const created = applied.data.applied?.shifts_created ?? 0;
     const logged = applied.data.applied?.incidents_logged ?? 0;
     alert([
@@ -446,7 +470,11 @@ export default function ShiftsPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="label">Date of this roster</label>
-                <input type="date" className="input" value={rosterDate} onChange={e => changeRosterTarget(e.target.value, rosterDept)} />
+                <div className="flex gap-1">
+                  <button onClick={() => stepRosterDate(-1)} className="btn-secondary px-2" aria-label="Day before"><ChevronLeft size={15} /></button>
+                  <input type="date" className="input flex-1" value={rosterDate} onChange={e => changeRosterTarget(e.target.value, rosterDept)} />
+                  <button onClick={() => stepRosterDate(1)} className="btn-secondary px-2" aria-label="Day after"><ChevronRight size={15} /></button>
+                </div>
                 <p className="text-xs text-slate-500 mt-1">{rosterDate ? formatDate(rosterDate) : 'Pick the day this roster covers'}</p>
               </div>
               <div>
@@ -454,6 +482,13 @@ export default function ShiftsPage() {
                 <select className="input" value={rosterDept} onChange={e => changeRosterTarget(rosterDate, e.target.value)}>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
+                {rosterHeading && (
+                  <p className={`text-xs mt-1 ${rosterHeading.matched ? 'text-slate-500' : 'text-amber-700'}`}>
+                    {rosterHeading.matched
+                      ? `Matched from the heading "${rosterHeading.text}".`
+                      : `The heading says "${rosterHeading.text}", which is not one of your departments — check this is the right one.`}
+                  </p>
+                )}
               </div>
             </div>
 
