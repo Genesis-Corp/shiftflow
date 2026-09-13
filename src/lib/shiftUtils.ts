@@ -79,6 +79,19 @@ export function adjustShift(
   };
 }
 
+/** Format "17:35:00" as "5:35pm", and "06:00:00" as "6am" — how the sheet reads. */
+export function formatTime12(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const suffix = h >= 12 ? 'pm' : 'am';
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return m ? `${hour}:${String(m).padStart(2, '0')}${suffix}` : `${hour}${suffix}`;
+}
+
+/** Format a pair of times as "6am–2pm". */
+export function formatTimeRange12(start: string, end: string): string {
+  return `${formatTime12(start)}\u2013${formatTime12(end)}`;
+}
+
 /** Format a date string as "Mon 27 Apr" */
 export function formatDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');

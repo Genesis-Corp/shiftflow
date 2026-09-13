@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Staff, AvailabilityTemplate, DayOfWeek } from '@/lib/types';
 import { fetchList } from '@/lib/api';
 import ErrorBanner from '@/components/ErrorBanner';
-import { DAYS, DAY_SHORT } from '@/lib/shiftUtils';
+import { DAYS, DAY_SHORT, formatTimeRange12 } from '@/lib/shiftUtils';
 
 /**
  * A read-only view of who can work when.
@@ -63,14 +63,14 @@ export default function AvailabilityPage() {
           <h2 className="font-semibold text-slate-800">Availability Matrix Overview</h2>
 
           <div className="overflow-x-auto -mx-4 px-4">
-            <table className="text-xs border-separate border-spacing-0">
+            <table className="w-full text-xs border-separate border-spacing-0">
               <thead>
                 <tr>
-                  <th className="sticky left-0 z-10 bg-white text-left px-3 py-2 text-slate-500 font-semibold border-b border-r border-slate-200 min-w-[8.5rem]">
+                  <th className="sticky left-0 z-10 bg-white text-left px-3 py-2 text-slate-500 font-semibold border-b border-r border-slate-200 min-w-[7rem] md:min-w-[9rem]">
                     Staff
                   </th>
                   {DAY_SHORT.map((d, i) => (
-                    <th key={d} className="px-3 py-2 text-slate-500 font-semibold text-center border-b border-slate-200 min-w-[3rem]" title={DAYS[i]}>
+                    <th key={d} className="px-2 py-2 text-slate-500 font-semibold text-center border-b border-slate-200 min-w-[5.25rem]" title={DAYS[i]}>
                       {d}
                     </th>
                   ))}
@@ -85,10 +85,14 @@ export default function AvailabilityPage() {
                     {([0, 1, 2, 3, 4, 5, 6] as DayOfWeek[]).map(day => {
                       const t = byDay.get(day);
                       return (
-                        <td key={day} className="px-3 py-2 text-center border-b border-slate-100" title={`${s.name} — ${DAYS[day]}: ${hours(t)}`}>
-                          {t
-                            ? <span className="inline-block w-5 h-5 rounded-full bg-green-400" />
-                            : <span className="inline-block w-5 h-5 rounded-full bg-slate-100" />}
+                        <td key={day} className="px-2 py-1.5 text-center border-b border-slate-100" title={`${s.name} — ${DAYS[day]}: ${hours(t)}`}>
+                          {t ? (
+                            <span className="inline-block rounded border border-green-200 bg-green-50 px-1.5 py-1 text-[11px] font-medium text-green-800 whitespace-nowrap">
+                              {formatTimeRange12(t.start_time, t.end_time)}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">—</span>
+                          )}
                         </td>
                       );
                     })}
@@ -100,7 +104,7 @@ export default function AvailabilityPage() {
 
           {rows.length === 0 && <p className="text-center text-slate-400 py-8">No active staff yet.</p>}
           <p className="text-xs text-slate-400">
-            Green means the person is available that day. Hold or hover a square to see the hours.
+            The hours each person can work. A dash means they are not available that day. Scroll sideways for the rest of the week.
           </p>
         </div>
       )}
