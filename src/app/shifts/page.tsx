@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Coffee, Download, Upload, Camera, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Trash2, Coffee, Download, Upload, Camera } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import Modal from '@/components/Modal';
 import { Shift, Department } from '@/lib/types';
@@ -9,7 +9,8 @@ import { fetchList, postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
-import { RosterEntry, matchDepartment } from '@/lib/roster';
+import { RosterEntry, RosterJob, matchDepartment } from '@/lib/roster';
+import RosterQueue from '@/components/RosterQueue';
 import type { RosterPlan } from '@/app/api/import-roster/route';
 import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES, RELIABILITY_DELTAS } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
@@ -39,18 +40,13 @@ export default function ShiftsPage() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const photoRef = useRef<HTMLInputElement>(null);
 
-  // A roster read from a screenshot, and what importing it would do.
+  // Roster photos waiting to become shifts.
   const [stage, setStage] = useState<ProgressStage | null>(null);
-  const [roster, setRoster] = useState<{ entries: RosterEntry[]; warnings: string[]; seconds?: number } | null>(null);
-  const [rosterDate, setRosterDate] = useState('');
-  const [rosterDept, setRosterDept] = useState('');
-  const [rosterPlan, setRosterPlan] = useState<RosterPlan | null>(null);
-  const [applying, setApplying] = useState(false);
-  const [logNoShows, setLogNoShows] = useState(false);
-  /** What the screenshot's heading said, and whether it found a department. */
-  const [rosterHeading, setRosterHeading] = useState<{ text: string; matched: boolean } | null>(null);
-  /** Each photo is one day and one department, so a run of them usually shares one or the other. */
-  const lastImport = useRef<{ date: string; department_id: string } | null>(null);
+  const [jobs, setJobs] = useState<RosterJob[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [applying, setApplying] = useState<string | null>(null);
+  /** Photos are read one at a time; this stops a second reader starting. */
+  const reading = useRef(false);
 
   async function load() {
     const [shiftRes, deptRes] = await Promise.all([
@@ -66,20 +62,62 @@ export default function ShiftsPage() {
   useEffect(() => { load(); }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
-   * A screenshot of one day's roster becomes shifts: read it, work out what it
-   * would add, and only write once that has been confirmed. The screenshot
-   * rarely carries a date, so the date is chosen here rather than guessed.
+   * Queue up whatever was picked. Each photo is one day in one department, so
+   * each becomes its own job with its own date, department and confirmation —
+   * and each is read in its own request, which is what keeps a batch of them
+   * clear of the hosting platform's per-request time limit.
    */
-  async function readRosterPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  function queueRosterPhotos(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = '';
-    if (!file) return;
+    if (!files.length) return;
+
+    if (!departments.length) {
+      alert('Add a department before importing a roster — every shift belongs to one.');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    setJobs(current => [
+      ...current,
+      ...files.map<RosterJob>((file, i) => ({
+        id: `${Date.now()}-${i}-${file.name}`,
+        name: file.name,
+        status: 'pending',
+        entries: [],
+        warnings: [],
+        date: today,
+        department_id: departments[0].id,
+        logNoShows: false,
+        file,
+      } as RosterJob & { file: File })),
+    ]);
+    setQueueOpen(true);
+  }
+
+  /** Work through the queue one photo at a time. */
+  useEffect(() => {
+    if (reading.current) return;
+    const next = jobs.find(j => j.status === 'pending') as (RosterJob & { file?: File }) | undefined;
+    if (!next?.file) return;
+
+    reading.current = true;
+    void readJob(next, next.file).finally(() => {
+      reading.current = false;
+      setJobs(current => [...current]); // nudge the queue on to the next photo
+    });
+  }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function readJob(job: RosterJob, file: File) {
+    const update = (patch: Partial<RosterJob>) =>
+      setJobs(current => current.map(j => (j.id === job.id ? { ...j, ...patch } : j)));
+
+    update({ status: 'reading' });
+    const position = jobs.filter(j => j.status === 'applied' || j.status === 'ready' || j.status === 'failed').length + 1;
+    setStage({ ...STAGES.readingRoster, label: jobs.length > 1 ? `Reading roster ${position} of ${jobs.length}…` : STAGES.readingRoster.label });
 
     try {
-      setStage(STAGES.preparing);
       const { base64, mediaType } = await downscalePhoto(file);
-
-      setStage(STAGES.readingRoster);
       const scan = await postJson<{
         department: string | null;
         date: string | null;
@@ -88,98 +126,102 @@ export default function ShiftsPage() {
         seconds?: number;
       }>('/api/scan-roster', { image: base64, mediaType }, { timeoutMs: 70_000 });
 
-      if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that screenshot.'); return; }
-
-      if (!departments.length) {
-        alert('Add a department before importing a roster — every shift belongs to one.');
+      if (!scan.ok || !scan.data) {
+        update({ status: 'failed', error: scan.error ?? 'Could not be read.' });
         return;
       }
 
-      // The date is the one thing a roster screenshot almost never carries, so
-      // it falls back to the last import in this session, then to today.
-      const date = scan.data.date ?? lastImport.current?.date ?? new Date().toISOString().split('T')[0];
-
-      // One department per photo, named in the heading. When the heading does
-      // not match one, say so rather than quietly filing it under the first.
+      // Neither the day nor the department is reliably printed on a photo, so
+      // each is taken from the picture when it is there and left to be checked
+      // when it is not.
       const heading = scan.data.department ?? null;
       const matched = matchDepartment(heading ?? undefined, departments);
-      const department =
-        matched ?? departments.find(d => d.id === lastImport.current?.department_id) ?? departments[0];
-      setRosterHeading(heading ? { text: heading, matched: Boolean(matched) } : null);
+      const date = scan.data.date ?? job.date;
+      const departmentId = matched?.id ?? job.department_id;
 
-      setRoster({ entries: scan.data.entries, warnings: scan.data.warnings, seconds: scan.data.seconds });
-      setLogNoShows(false);
-      setRosterDate(date);
-      setRosterDept(department.id);
+      update({
+        status: 'ready',
+        entries: scan.data.entries,
+        warnings: scan.data.warnings,
+        seconds: scan.data.seconds,
+        heading: heading ? { text: heading, matched: Boolean(matched) } : null,
+        date,
+        department_id: departmentId,
+      });
 
-      setStage(STAGES.comparing);
-      await previewRoster(date, department.id, scan.data.entries);
+      await previewJob({ ...job, entries: scan.data.entries, date, department_id: departmentId });
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not read that screenshot.');
+      update({ status: 'failed', error: err instanceof Error ? err.message : 'Could not be read.' });
     } finally {
       setStage(null);
     }
   }
 
-  async function previewRoster(date: string, department_id: string, entries: RosterEntry[]) {
+  async function previewJob(job: RosterJob) {
     const preview = await postJson<RosterPlan>(
       '/api/import-roster',
-      { date, department_id, entries, mode: 'preview' },
+      { date: job.date, department_id: job.department_id, entries: job.entries, mode: 'preview' },
       { timeoutMs: 60_000 }
     );
-    if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not check that roster.'); return; }
-    setRosterPlan(preview.data);
+    setJobs(current =>
+      current.map(j =>
+        j.id === job.id
+          ? { ...j, plan: preview.data ?? undefined, error: preview.ok ? undefined : preview.error ?? undefined }
+          : j
+      )
+    );
   }
 
   /** The date and department decide what counts as a duplicate, so re-check on a change. */
-  async function changeRosterTarget(date: string, department_id: string) {
-    setRosterDate(date);
-    setRosterDept(department_id);
-    if (roster) await previewRoster(date, department_id, roster.entries);
+  async function changeJobTarget(id: string, date: string, department_id: string) {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+    setJobs(current => current.map(j => (j.id === id ? { ...j, date, department_id } : j)));
+    await previewJob({ ...job, date, department_id });
   }
 
-  function closeRoster() {
-    setRoster(null);
-    setRosterPlan(null);
-    setRosterHeading(null);
+  function toggleJobNoShows(id: string, value: boolean) {
+    setJobs(current => current.map(j => (j.id === id ? { ...j, logNoShows: value } : j)));
   }
 
-  /** Step the roster date a day at a time — a run of photos is usually consecutive days. */
-  function stepRosterDate(days: number) {
-    const moved = new Date(`${rosterDate}T00:00:00`);
-    moved.setDate(moved.getDate() + days);
-    changeRosterTarget(moved.toISOString().split('T')[0], rosterDept);
+  function removeJob(id: string) {
+    setJobs(current => {
+      const left = current.filter(j => j.id !== id);
+      if (!left.length) setQueueOpen(false);
+      return left;
+    });
   }
 
-  async function applyRoster() {
-    if (!roster || !rosterPlan) return;
-    setApplying(true);
-    setStage(STAGES.savingShifts);
+  async function applyJob(id: string): Promise<boolean> {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return false;
 
+    setApplying(id);
     const applied = await postJson<RosterPlan>(
       '/api/import-roster',
-      { date: rosterDate, department_id: rosterDept, entries: roster.entries, mode: 'apply', logNoShows },
+      { date: job.date, department_id: job.department_id, entries: job.entries, mode: 'apply', logNoShows: job.logNoShows },
       { timeoutMs: 60_000 }
     );
-
-    setApplying(false);
-    setStage(null);
-    closeRoster();
+    setApplying(null);
 
     if (!applied.ok || !applied.data) {
-      alert(applied.error ?? 'The shifts could not be added.');
-      return;
+      setJobs(current => current.map(j => (j.id === id ? { ...j, error: applied.error ?? 'Could not be added.' } : j)));
+      return false;
     }
-    lastImport.current = { date: rosterDate, department_id: rosterDept };
 
-    const created = applied.data.applied?.shifts_created ?? 0;
-    const logged = applied.data.applied?.incidents_logged ?? 0;
-    alert([
-      `${created} shift${created === 1 ? '' : 's'} added for ${rosterDate}.`,
-      logged ? ` ${logged} no-show${logged === 1 ? '' : 's'} logged.` : '',
-      applied.data.errors.length ? `\n\n${applied.data.errors.join('\n')}` : '',
-    ].join(''));
-    load();
+    setJobs(current =>
+      current.map(j => (j.id === id ? { ...j, status: 'applied', applied: applied.data!.applied ?? { shifts_created: 0, incidents_logged: 0 } } : j))
+    );
+    await load();
+    return true;
+  }
+
+  /** Add every roster that has been read and checked, in order. */
+  async function applyAllJobs() {
+    for (const job of jobs.filter(j => j.status === 'ready')) {
+      const ok = await applyJob(job.id);
+      if (!ok) break; // stop at the first failure rather than pressing on blindly
+    }
   }
 
   function openAdd() {
@@ -255,7 +297,7 @@ export default function ShiftsPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
-  const busy = stage !== null || applying;
+  const busy = stage !== null || applying !== null;
 
   /** The list reads as a roster, so it is grouped under the day it belongs to. */
   const byDate = shifts.reduce<{ date: string; items: Shift[] }[]>((groups, shift) => {
@@ -282,9 +324,9 @@ export default function ShiftsPage() {
           </div>
           <div className="grid grid-cols-2 sm:flex gap-2">
             <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Camera size={14} /> Capture</button>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={readRosterPhoto} />
-            <button onClick={() => photoRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload Roster</button>
-            <input ref={photoRef} type="file" accept="image/*" className="hidden" onChange={readRosterPhoto} />
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={queueRosterPhotos} />
+            <button onClick={() => photoRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload Rosters</button>
+            <input ref={photoRef} type="file" accept="image/*" multiple className="hidden" onChange={queueRosterPhotos} />
             <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
             <button onClick={() => importRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Import CSV</button>
             <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export</button>
@@ -458,140 +500,18 @@ export default function ShiftsPage() {
         </Modal>
       )}
 
-      {roster && (
-        <Modal title="Roster from screenshot" onClose={closeRoster} size="lg">
-          <div className="space-y-4 text-sm">
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs text-amber-800">
-                Read from a screenshot{roster.seconds ? ` in ${roster.seconds}s` : ''}. Check the names and times below before adding them.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="label">Date of this roster</label>
-                <div className="flex gap-1">
-                  <button onClick={() => stepRosterDate(-1)} className="btn-secondary px-2" aria-label="Day before"><ChevronLeft size={15} /></button>
-                  <input type="date" className="input flex-1" value={rosterDate} onChange={e => changeRosterTarget(e.target.value, rosterDept)} />
-                  <button onClick={() => stepRosterDate(1)} className="btn-secondary px-2" aria-label="Day after"><ChevronRight size={15} /></button>
-                </div>
-                <p className="text-xs text-slate-500 mt-1">{rosterDate ? formatDate(rosterDate) : 'Pick the day this roster covers'}</p>
-              </div>
-              <div>
-                <label className="label">Department</label>
-                <select className="input" value={rosterDept} onChange={e => changeRosterTarget(rosterDate, e.target.value)}>
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-                {rosterHeading && (
-                  <p className={`text-xs mt-1 ${rosterHeading.matched ? 'text-slate-500' : 'text-amber-700'}`}>
-                    {rosterHeading.matched
-                      ? `Matched from the heading "${rosterHeading.text}".`
-                      : `The heading says "${rosterHeading.text}", which is not one of your departments — check this is the right one.`}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {rosterPlan && rosterPlan.existingOnDate > 0 && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                <p className="text-xs text-blue-900">
-                  {departments.find(d => d.id === rosterDept)?.name} already has {rosterPlan.existingOnDate} shift
-                  {rosterPlan.existingOnDate === 1 ? '' : 's'} on {formatDate(rosterDate)}.
-                  {' '}If this screenshot is for a different day, change the date above before adding it.
-                </p>
-              </div>
-            )}
-
-            {rosterPlan && (
-              <>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="badge-green">{rosterPlan.creates.length} to add</span>
-                  {rosterPlan.duplicates.length > 0 && <span className="badge-slate">{rosterPlan.duplicates.length} already there</span>}
-                  {rosterPlan.unmatched.length > 0 && <span className="badge-amber">{rosterPlan.unmatched.length} not on the staff list</span>}
-                  {rosterPlan.noShows.length > 0 && <span className="badge-red">{rosterPlan.noShows.length} no-show{rosterPlan.noShows.length === 1 ? '' : 's'}</span>}
-                  {rosterPlan.unreadable.length > 0 && <span className="badge-amber">{rosterPlan.unreadable.length} unreadable</span>}
-                </div>
-
-                {rosterPlan.creates.length > 0 && (
-                  <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Shifts to add</h3>
-                    <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-                      {rosterPlan.creates.map(shift => (
-                        <li key={shift.staff_id} className="px-3 py-2 flex items-center justify-between gap-2">
-                          <span className="font-medium text-slate-700 truncate">{shift.name}</span>
-                          <span className="text-xs text-slate-500 shrink-0">
-                            {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
-                            {shift.has_break && <span className="text-slate-400"> · break</span>}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {rosterPlan.noShows.length > 0 && (
-                  <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Marked as a no-show</h3>
-                    <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
-                      <p className="text-xs text-red-700">{rosterPlan.noShows.map(n => n.name).join(', ')}</p>
-                      <label className="flex items-start gap-2 cursor-pointer">
-                        <input type="checkbox" checked={logNoShows} onChange={e => setLogNoShows(e.target.checked)} className="mt-0.5 accent-red-600" />
-                        <span className="text-xs text-red-800">
-                          Also log this against their reliability, which lowers their score by {Math.abs(RELIABILITY_DELTAS.no_show)} points each and adds an entry to the Reliability log.
-                        </span>
-                      </label>
-                    </div>
-                  </section>
-                )}
-
-                {rosterPlan.duplicates.length > 0 && (
-                  <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Already on this date, unchanged</h3>
-                    <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100">
-                      {rosterPlan.duplicates.map(d => (
-                        <li key={d.name} className="px-3 py-2 text-xs text-slate-500 flex justify-between gap-2">
-                          <span>{d.name}</span><span>{d.existing}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {(rosterPlan.unmatched.length > 0 || rosterPlan.unreadable.length > 0 || rosterPlan.warnings.length > 0 || roster.warnings.length > 0) && (
-                  <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Needs a look</h3>
-                    <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
-                      {rosterPlan.unmatched.map(name => (
-                        <li key={name} className="text-xs text-amber-800">
-                          {name} is not on the staff list yet — add them on the Staff page, then import this roster again to give them their shift.
-                        </li>
-                      ))}
-                      {rosterPlan.unreadable.map(name => (
-                        <li key={name} className="text-xs text-amber-800">{name} — the rostered time could not be read, so no shift was made.</li>
-                      ))}
-                      {[...roster.warnings, ...rosterPlan.warnings].map((w, i) => (
-                        <li key={i} className="text-xs text-amber-800">{w}</li>
-                      ))}
-                    </ul>
-                  </section>
-                )}
-
-                {rosterPlan.errors.length > 0 && (
-                  <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
-                    {rosterPlan.errors.map((err, i) => <p key={i} className="text-xs text-red-700">{err}</p>)}
-                  </div>
-                )}
-              </>
-            )}
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={closeRoster} className="btn-secondary">Cancel</button>
-              <button onClick={applyRoster} disabled={applying || !rosterPlan?.creates.length} className="btn-primary">
-                {applying ? 'Adding...' : `Add ${rosterPlan?.creates.length ?? 0} shift${rosterPlan?.creates.length === 1 ? '' : 's'}`}
-              </button>
-            </div>
-          </div>
-        </Modal>
+      {queueOpen && jobs.length > 0 && (
+        <RosterQueue
+          jobs={jobs}
+          departments={departments}
+          applying={applying}
+          onClose={() => setQueueOpen(false)}
+          onChangeTarget={changeJobTarget}
+          onToggleNoShows={toggleJobNoShows}
+          onApply={applyJob}
+          onApplyAll={applyAllJobs}
+          onRemove={removeJob}
+        />
       )}
 
     </div>

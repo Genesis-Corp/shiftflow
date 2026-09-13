@@ -135,3 +135,32 @@ export function matchDepartment<T extends { id: string; name: string }>(
     }) ?? null
   );
 }
+
+/**
+ * One photo waiting to be turned into shifts.
+ *
+ * Each photo is a single day in a single department, and neither is reliably
+ * printed on it, so every job carries its own date and department rather than
+ * inheriting a run-wide setting. Photos are read one at a time: each read is
+ * its own request, which is what keeps a batch of them clear of the hosting
+ * platform's per-request time limit.
+ */
+export interface RosterJob {
+  id: string;
+  /** File name, so a row in the queue is recognisable. */
+  name: string;
+  status: 'pending' | 'reading' | 'ready' | 'failed' | 'applied';
+  error?: string;
+  /** How long the read took, when it has happened. */
+  seconds?: number;
+  /** What the screenshot's heading said, and whether it named a known department. */
+  heading?: { text: string; matched: boolean } | null;
+  entries: RosterEntry[];
+  warnings: string[];
+  date: string;
+  department_id: string;
+  logNoShows: boolean;
+  /** Set once the read is previewed against the staff list and existing shifts. */
+  plan?: unknown;
+  applied?: { shifts_created: number; incidents_logged: number };
+}
