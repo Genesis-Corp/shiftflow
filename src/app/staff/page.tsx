@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, Camera, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, Camera, FileSpreadsheet } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
+import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
@@ -16,6 +17,15 @@ const ROLE_LABELS: Record<RoleType, string> = {
   department_only: 'Department Only',
   all_rounder: 'All Rounder',
   potential_all_rounder: 'Potential All Rounder',
+};
+
+/** Steps a sheet goes through, from picking a file to the staff list changing. */
+const STAGES: Record<string, ProgressStage> = {
+  preparing: { label: 'Preparing the photo…', detail: 'Shrinking it so it uploads quickly.', from: 4, to: 18, seconds: 4 },
+  reading: { label: 'Reading the sheet…', detail: 'Turning the photo into a spreadsheet. This can take up to a minute — keep this page open.', from: 18, to: 78, seconds: 45 },
+  parsing: { label: 'Reading the sheet…', detail: 'Checking the columns and times.', from: 10, to: 60, seconds: 3 },
+  comparing: { label: 'Comparing with the staff list…', from: 78, to: 95, seconds: 6 },
+  applying: { label: 'Updating the staff list…', from: 20, to: 95, seconds: 8 },
 };
 
 const ROLE_BADGE: Record<RoleType, string> = {
@@ -41,7 +51,7 @@ export default function StaffPage() {
   const [plan, setPlan] = useState<SyncPlan | null>(null);
   const [removeMissing, setRemoveMissing] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [scanning, setScanning] = useState(false);
+  const [stage, setStage] = useState<ProgressStage | null>(null);
   const [fromPhoto, setFromPhoto] = useState(false);
 
   const [form, setForm] = useState({
@@ -139,20 +149,21 @@ export default function StaffPage() {
     e.target.value = ''; // let the same file be picked again after a fix
     if (!file) return;
 
+    setStage(STAGES.parsing);
     Papa.parse<string[]>(file, {
       skipEmptyLines: 'greedy',
       complete: async (results) => {
         const rows = results.data;
 
         if (isAvailabilitySheet(rows)) {
-          setSyncing(true);
+          setStage(STAGES.comparing);
           const res = await fetch('/api/sync-staff-sheet', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ rows, mode: 'preview' }),
           });
           const preview = await res.json();
-          setSyncing(false);
+          setStage(null);
           if (!res.ok) { alert(preview.error ?? 'Could not read that sheet.'); return; }
           setSheet(rows);
           setRemoveMissing(true);
@@ -183,10 +194,11 @@ export default function StaffPage() {
     e.target.value = '';
     if (!file) return;
 
-    setScanning(true);
     try {
+      setStage(STAGES.preparing);
       const { base64, mediaType } = await downscalePhoto(file);
 
+      setStage(STAGES.reading);
       const scanRes = await fetch('/api/scan-sheet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -195,6 +207,7 @@ export default function StaffPage() {
       const scan = await scanRes.json();
       if (!scanRes.ok) { alert(scan.error ?? 'Could not read that photo.'); return; }
 
+      setStage(STAGES.comparing);
       const previewRes = await fetch('/api/sync-staff-sheet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -210,8 +223,24 @@ export default function StaffPage() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not read that photo.');
     } finally {
-      setScanning(false);
+      setStage(null);
     }
+  }
+
+  /**
+   * The sheet as it was read, as a CSV. For a photo this is the converted
+   * spreadsheet — worth keeping, and openable in Excel or Google Sheets to fix
+   * anything the camera got wrong before re-uploading it.
+   */
+  function downloadSheetCsv() {
+    if (!sheet) return;
+    const csv = Papa.unparse(sheet);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `availability-sheet-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   function closeSync() {
@@ -223,6 +252,7 @@ export default function StaffPage() {
   async function applySync() {
     if (!sheet) return;
     setSyncing(true);
+    setStage(STAGES.applying);
     const res = await fetch('/api/sync-staff-sheet', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -230,6 +260,7 @@ export default function StaffPage() {
     });
     const result: SyncPlan = await res.json();
     setSyncing(false);
+    setStage(null);
     closeSync();
 
     const a = result.applied;
@@ -242,27 +273,15 @@ export default function StaffPage() {
     load();
   }
 
+  const busy = stage !== null || syncing;
+  const sheetRowCount = sheet ? sheet.length - 1 : 0;
   const filtered = staff.filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
     <div className="space-y-4">
       <ErrorBanner message={loadError} />
 
-      {(scanning || syncing) && (
-        <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 flex items-center gap-3">
-          <Loader2 size={18} className="animate-spin text-blue-600 shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-blue-900">
-              {scanning ? 'Reading the photo…' : plan ? 'Applying the changes…' : 'Checking the sheet…'}
-            </p>
-            {scanning && (
-              <p className="text-xs text-blue-700">
-                Transcribing the whole sheet takes up to a minute. Keep this page open.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
+      {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
@@ -271,9 +290,9 @@ export default function StaffPage() {
         <div className="flex gap-2 flex-wrap">
           <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
-          <button onClick={() => cameraRef.current?.click()} disabled={scanning || syncing} className="btn-secondary"><Camera size={14} /> {scanning ? 'Reading photo...' : 'Capture'}</button>
+          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary"><Camera size={14} /> Capture</button>
           <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCapture} />
-          <button onClick={() => fileRef.current?.click()} disabled={scanning || syncing} className="btn-secondary"><Upload size={14} /> {syncing ? 'Reading sheet...' : 'Import / Sync Sheet'}</button>
+          <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Import / Sync Sheet</button>
           <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
         </div>
@@ -480,6 +499,49 @@ export default function StaffPage() {
                   {plan.warnings.map((w, i) => <li key={i} className="text-xs text-amber-800">{w}</li>)}
                 </ul>
               </section>
+            )}
+
+            {plan.unchanged.length > 0 && (
+              <details className="rounded-lg border border-slate-200">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {plan.unchanged.length} already up to date
+                </summary>
+                <p className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">{plan.unchanged.join(', ')}</p>
+              </details>
+            )}
+
+            {sheet && (
+              <details className="rounded-lg border border-slate-200">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {sheetRowCount} row{sheetRowCount === 1 ? '' : 's'} read from the {fromPhoto ? 'photo' : 'file'}
+                  <span className="ml-1 font-normal normal-case text-slate-400">— open to check</span>
+                </summary>
+                <div className="border-t border-slate-100 p-3 space-y-3">
+                  <button onClick={downloadSheetCsv} className="btn-secondary text-xs">
+                    <FileSpreadsheet size={13} /> Download as CSV
+                  </button>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs whitespace-nowrap">
+                      <thead>
+                        <tr className="text-slate-400">
+                          {['First', 'Last', 'Mobile', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(h => (
+                            <th key={h} className="px-2 py-1 text-left font-semibold">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sheet.slice(1).map((row, i) => (
+                          <tr key={i} className="text-slate-600">
+                            {Array.from({ length: 10 }, (_, col) => (
+                              <td key={col} className="px-2 py-1">{row[col] ?? ''}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </details>
             )}
 
             {plan.creates.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0 && (
