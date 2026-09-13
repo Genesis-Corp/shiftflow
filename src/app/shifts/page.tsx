@@ -233,6 +233,14 @@ export default function ShiftsPage() {
 
   const busy = stage !== null || applying;
 
+  /** The list reads as a roster, so it is grouped under the day it belongs to. */
+  const byDate = shifts.reduce<{ date: string; items: Shift[] }[]>((groups, shift) => {
+    const group = groups.find(g => g.date === shift.date);
+    if (group) group.items.push(shift);
+    else groups.push({ date: shift.date, items: [shift] });
+    return groups;
+  }, []);
+
   return (
     <div className="space-y-4">
       <ErrorBanner message={loadError} onRetry={load} />
@@ -261,47 +269,88 @@ export default function ShiftsPage() {
         </div>
       </div>
 
-      {loading ? <p className="text-slate-400">Loading...</p> : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                {['Date', 'Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {shifts.map(s => (
-                <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3 text-slate-700">{formatDate(s.date)}</td>
-                  <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
-                  <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
-                  <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className="badge-slate capitalize">{s.required_role}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <button onClick={() => openAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
-                      <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                      <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+      {loading ? <p className="text-slate-400">Loading...</p> : shifts.length === 0 ? (
+        <div className="card p-10 text-center text-slate-400">No shifts found.</div>
+      ) : (
+        <div className="space-y-5">
+          {byDate.map(({ date, items }) => (
+            <section key={date} className="space-y-2">
+              <div className="flex items-baseline justify-between gap-2 px-0.5">
+                <h2 className="font-semibold text-slate-800">{formatDate(date)}</h2>
+                <span className="text-xs text-slate-400">
+                  {items.length} shift{items.length === 1 ? '' : 's'}
+                  {items.filter(s => s.status === 'open').length > 0 && ` · ${items.filter(s => s.status === 'open').length} open`}
+                </span>
+              </div>
+
+              {/* Phones: a card per shift. The table needs more width than a phone has. */}
+              <div className="md:hidden space-y-2">
+                {items.map(s => (
+                  <div key={s.id} className="card p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-mono font-medium text-slate-800">{s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}</p>
+                        <p className="text-xs text-slate-500">
+                          {s.departments?.name ?? 'No department'} · {formatDuration(s.start_time, s.end_time)}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 ${STATUS_BADGE[s.status] ?? 'badge-slate'}`}>{s.status}</span>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-          {shifts.length === 0 && <p className="text-center text-slate-400 py-8">No shifts found.</p>}
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="badge-slate capitalize">{s.required_role}</span>
+                      {s.has_break && <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span>}
+                      {(s as { assigned_staff?: { name: string } }).assigned_staff?.name && (
+                        <span className="text-xs text-slate-600">{(s as { assigned_staff?: { name: string } }).assigned_staff?.name}</span>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end gap-1">
+                      <button onClick={() => openAdjust(s)} aria-label="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={14} /></button>
+                      <button onClick={() => openEdit(s)} aria-label="Edit shift" className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                      <button onClick={() => remove(s)} aria-label="Delete shift" className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="hidden md:block card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                      <tr>
+                        {['Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
+                          <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {items.map(s => (
+                        <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                          <td className="px-4 py-3 font-mono text-slate-800">{s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}</td>
+                          <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
+                          <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
+                          <td className="px-4 py-3"><span className="badge-slate capitalize">{s.required_role}</span></td>
+                          <td className="px-4 py-3">
+                            {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="px-4 py-3"><span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span></td>
+                          <td className="px-4 py-3 text-slate-500 text-xs">{(s as { assigned_staff?: { name: string } }).assigned_staff?.name ?? '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="flex gap-1">
+                              <button onClick={() => openAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
+                              <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                              <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </section>
+          ))}
         </div>
       )}
 
@@ -398,6 +447,7 @@ export default function ShiftsPage() {
               <div>
                 <label className="label">Date of this roster</label>
                 <input type="date" className="input" value={rosterDate} onChange={e => changeRosterTarget(e.target.value, rosterDept)} />
+                <p className="text-xs text-slate-500 mt-1">{rosterDate ? formatDate(rosterDate) : 'Pick the day this roster covers'}</p>
               </div>
               <div>
                 <label className="label">Department</label>
@@ -407,11 +457,21 @@ export default function ShiftsPage() {
               </div>
             </div>
 
+            {rosterPlan && rosterPlan.existingOnDate > 0 && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                <p className="text-xs text-blue-900">
+                  {departments.find(d => d.id === rosterDept)?.name} already has {rosterPlan.existingOnDate} shift
+                  {rosterPlan.existingOnDate === 1 ? '' : 's'} on {formatDate(rosterDate)}.
+                  {' '}If this screenshot is for a different day, change the date above before adding it.
+                </p>
+              </div>
+            )}
+
             {rosterPlan && (
               <>
                 <div className="flex flex-wrap gap-1.5">
                   <span className="badge-green">{rosterPlan.creates.length} to add</span>
-                  {rosterPlan.duplicates.length > 0 && <span className="badge-slate">{rosterPlan.duplicates.length} already rostered</span>}
+                  {rosterPlan.duplicates.length > 0 && <span className="badge-slate">{rosterPlan.duplicates.length} already there</span>}
                   {rosterPlan.unmatched.length > 0 && <span className="badge-amber">{rosterPlan.unmatched.length} not on the staff list</span>}
                   {rosterPlan.noShows.length > 0 && <span className="badge-red">{rosterPlan.noShows.length} no-show{rosterPlan.noShows.length === 1 ? '' : 's'}</span>}
                   {rosterPlan.unreadable.length > 0 && <span className="badge-amber">{rosterPlan.unreadable.length} unreadable</span>}
@@ -451,7 +511,7 @@ export default function ShiftsPage() {
 
                 {rosterPlan.duplicates.length > 0 && (
                   <section>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Already rostered that day</h3>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Already on this date, unchanged</h3>
                     <ul className="rounded-lg border border-slate-200 divide-y divide-slate-100">
                       {rosterPlan.duplicates.map(d => (
                         <li key={d.name} className="px-3 py-2 text-xs text-slate-500 flex justify-between gap-2">

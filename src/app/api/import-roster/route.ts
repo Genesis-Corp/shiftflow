@@ -28,8 +28,10 @@ export interface RosterPlan {
   mode: 'preview' | 'apply';
   date: string;
   creates: PlannedShift[];
-  /** Already rostered that day — importing the same screenshot twice is a no-op. */
+  /** The same shift is already there — importing the same screenshot twice is a no-op. */
   duplicates: { name: string; existing: string }[];
+  /** How many shifts this department already has on this date. */
+  existingOnDate: number;
   /** Names that do not match anyone on the staff list. */
   unmatched: string[];
   /** Read from the screenshot but missing a usable time. */
@@ -64,6 +66,7 @@ export async function POST(req: NextRequest) {
     date,
     creates: [],
     duplicates: [],
+    existingOnDate: 0,
     unmatched: [],
     unreadable: [],
     noShows: [],
@@ -73,7 +76,7 @@ export async function POST(req: NextRequest) {
 
   const [staffRes, shiftRes] = await Promise.all([
     supabase.from('staff').select('id, name, active'),
-    supabase.from('shifts').select('id, assigned_staff_id, start_time, end_time').eq('date', date),
+    supabase.from('shifts').select('id, assigned_staff_id, start_time, end_time, department_id').eq('date', date),
   ]);
 
   if (staffRes.error) {
@@ -86,12 +89,20 @@ export async function POST(req: NextRequest) {
   }
 
   const staff = (staffRes.data ?? []) as { id: string; name: string; active: boolean }[];
-  const rostered = new Map<string, string>();
-  for (const shift of (shiftRes.data ?? []) as { assigned_staff_id: string | null; start_time: string; end_time: string }[]) {
-    if (shift.assigned_staff_id) {
-      rostered.set(shift.assigned_staff_id, `${shift.start_time.slice(0, 5)}–${shift.end_time.slice(0, 5)}`);
-    }
+
+  type ExistingShift = { assigned_staff_id: string | null; start_time: string; end_time: string; department_id: string };
+  const existing = (shiftRes.data ?? []) as ExistingShift[];
+  plan.existingOnDate = existing.filter(shift => shift.department_id === departmentId).length;
+
+  /** Everything each person is already rostered for on this date. */
+  const rostered = new Map<string, ExistingShift[]>();
+  for (const shift of existing) {
+    if (!shift.assigned_staff_id) continue;
+    rostered.set(shift.assigned_staff_id, [...(rostered.get(shift.assigned_staff_id) ?? []), shift]);
   }
+
+  const window = (shift: { start_time: string; end_time: string }) =>
+    `${shift.start_time.slice(0, 5)}–${shift.end_time.slice(0, 5)}`;
 
   for (const entry of entries) {
     if (!entry.start_time || !entry.end_time) {
@@ -105,10 +116,20 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const existing = rostered.get(match.id);
-    if (existing) {
-      plan.duplicates.push({ name: match.name, existing });
+    // The same person at the same start time is the same shift — that is what
+    // makes re-importing a screenshot harmless. A different time on the same
+    // day is a second shift, which is allowed but worth pointing out, since it
+    // is also what a roster imported against the wrong date looks like.
+    const alreadyRostered = rostered.get(match.id) ?? [];
+    const sameShift = alreadyRostered.find(shift => shift.start_time === entry.start_time);
+    if (sameShift) {
+      plan.duplicates.push({ name: match.name, existing: window(sameShift) });
       continue;
+    }
+    if (alreadyRostered.length) {
+      plan.warnings.push(
+        `${match.name} is already rostered ${alreadyRostered.map(window).join(' and ')} on this date — this adds ${window({ start_time: entry.start_time, end_time: entry.end_time })} as well.`
+      );
     }
 
     if (!staff.find(s => s.id === match.id)?.active) {
