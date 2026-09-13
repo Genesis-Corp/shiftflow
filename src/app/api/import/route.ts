@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { syncStaffSheet } from '@/lib/staffSync';
+import { isAvailabilitySheet } from '@/lib/availabilitySheet';
 
 // ── Standard staff CSV format ─────────────────────────────────────────────────
 interface StandardRow {
@@ -10,44 +12,32 @@ interface StandardRow {
   departments?: string;
 }
 
-// ── Availability-sheet format (STORE / NAME / MOBILE # / day columns) ─────────
-type AvailabilityRow = Record<string, string>;
-
-const DAY_COLUMNS: Record<string, number> = {
-  SUNDAY: 0, MONDAY: 1, TUESDAY: 2, WEDNESDAY: 3,
-  THURSDAY: 4, FRIDAY: 5, SATURDAY: 6,
-};
-
-function isAvailabilitySheet(row: AvailabilityRow): boolean {
-  return 'NAME' in row && 'MOBILE #' in row;
+/** Rebuild the raw grid from parsed row objects so the sheet parser can read it. */
+function objectsToMatrix(rows: Record<string, string>[]): string[][] {
+  const headers = Object.keys(rows[0] ?? {});
+  return [headers, ...rows.map(row => headers.map(h => row[h] ?? ''))];
 }
-
-/** Parse "6AM" or "2PM" → "06:00:00" */
-function parseTimePart(t: string): string | null {
-  const m = t.trim().match(/^(\d{1,2})(AM|PM)$/i);
-  if (!m) return null;
-  let h = parseInt(m[1]);
-  const period = m[2].toUpperCase();
-  if (period === 'PM' && h !== 12) h += 12;
-  if (period === 'AM' && h === 12) h = 0;
-  return `${String(h).padStart(2, '0')}:00:00`;
-}
-
-/** Parse "6AM-2PM" → { start: "06:00:00", end: "14:00:00" } or null */
-function parseTimeRange(range: string): { start: string; end: string } | null {
-  const parts = range.trim().split('-');
-  if (parts.length !== 2) return null;
-  const start = parseTimePart(parts[0]);
-  const end = parseTimePart(parts[1]);
-  if (!start || !end) return null;
-  return { start, end };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const { rows }: { rows: AvailabilityRow[] } = await req.json();
+  const { rows }: { rows: Record<string, string>[] } = await req.json();
   if (!rows?.length) return NextResponse.json({ error: 'No rows provided' }, { status: 400 });
+
+  // ── Availability sheet ─────────────────────────────────────────────────────
+  // Handled by the sheet sync so a re-upload updates in place instead of
+  // duplicating everyone. Staff missing from the sheet are left alone here —
+  // removing them is only done from /api/sync-staff-sheet, which previews the
+  // deletions first.
+  const matrix = objectsToMatrix(rows);
+  if (isAvailabilitySheet(matrix)) {
+    const plan = await syncStaffSheet(matrix, { mode: 'apply', deleteMissing: false });
+    return NextResponse.json({
+      created: plan.applied?.staff_created ?? 0,
+      updated: plan.updates.length,
+      unchanged: plan.unchanged.length,
+      errors: plan.errors,
+      warnings: plan.warnings,
+    });
+  }
 
   const { data: departments } = await supabase.from('departments').select('id, name');
   const deptMap = new Map(
@@ -55,82 +45,6 @@ export async function POST(req: NextRequest) {
   );
 
   const results = { created: 0, errors: [] as string[] };
-
-  // ── Detect format from first row ───────────────────────────────────────────
-  if (isAvailabilitySheet(rows[0])) {
-    for (const row of rows) {
-      const name = row['NAME']?.trim();
-      const phone = row['MOBILE #']?.trim() ?? null;
-      const storeName = row['STORE']?.trim();
-
-      if (!name) {
-        results.errors.push(`Skipped row (missing NAME): ${JSON.stringify(row)}`);
-        continue;
-      }
-
-      // Insert staff with sensible defaults for fields not in this sheet
-      const { data: staff, error: staffErr } = await supabase
-        .from('staff')
-        .insert([{
-          name,
-          phone: phone || null,
-          age_group: 'junior',
-          role_type: 'department_only',
-          reliability_score: 50,
-          active: true,
-        }])
-        .select()
-        .single();
-
-      if (staffErr) {
-        results.errors.push(`Failed to import "${name}": ${staffErr.message}`);
-        continue;
-      }
-
-      // Link to department via STORE column if it matches a known department
-      if (storeName) {
-        const deptId = deptMap.get(storeName.toLowerCase());
-        if (deptId) {
-          await supabase.from('staff_departments').insert([{
-            staff_id: staff.id,
-            department_id: deptId,
-            training_level: 'trained',
-          }]);
-        }
-      }
-
-      // Parse day columns into availability_templates
-      const availabilityRows: {
-        staff_id: string;
-        day_of_week: number;
-        start_time: string;
-        end_time: string;
-        available: boolean;
-      }[] = [];
-
-      for (const [col, dayIndex] of Object.entries(DAY_COLUMNS)) {
-        const cellValue = row[col]?.trim() ?? '';
-        if (!cellValue) continue;
-        const parsed = parseTimeRange(cellValue);
-        if (!parsed) continue; // skip cells that aren't valid time ranges (e.g. "MEAT")
-        availabilityRows.push({
-          staff_id: staff.id,
-          day_of_week: dayIndex,
-          start_time: parsed.start,
-          end_time: parsed.end,
-          available: true,
-        });
-      }
-
-      if (availabilityRows.length) {
-        await supabase.from('availability_templates').insert(availabilityRows);
-      }
-
-      results.created++;
-    }
-
-    return NextResponse.json(results);
-  }
 
   // ── Standard format ────────────────────────────────────────────────────────
   for (const row of rows as unknown as StandardRow[]) {

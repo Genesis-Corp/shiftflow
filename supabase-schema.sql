@@ -12,7 +12,9 @@ create table if not exists departments (
 -- 2. Staff
 create table if not exists staff (
   id uuid primary key default gen_random_uuid(),
-  name text not null,
+  name text not null,            -- display name, "first last"
+  first_name text,               -- as listed on the availability sheet
+  last_name text,                -- as listed on the availability sheet
   age_group text not null check (age_group in ('junior', 'senior')),
   role_type text not null check (role_type in ('department_only', 'all_rounder', 'potential_all_rounder')),
   reliability_score integer not null default 50 check (reliability_score between 0 and 100),

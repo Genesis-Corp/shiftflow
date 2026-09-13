@@ -5,6 +5,8 @@ import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX } from 'lucide
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
+import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
+import type { SyncPlan } from '@/lib/staffSync';
 import Papa from 'papaparse';
 
 const ROLE_LABELS: Record<RoleType, string> = {
@@ -27,6 +29,13 @@ export default function StaffPage() {
   const [editing, setEditing] = useState<Staff | null>(null);
   const [filter, setFilter] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Availability-sheet sync: the uploaded grid, the preview of what it changes,
+  // and whether staff missing from it should be removed.
+  const [sheet, setSheet] = useState<string[][] | null>(null);
+  const [plan, setPlan] = useState<SyncPlan | null>(null);
+  const [removeMissing, setRemoveMissing] = useState(true);
+  const [syncing, setSyncing] = useState(false);
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
@@ -109,17 +118,74 @@ export default function StaffPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
+  /**
+   * Availability sheets are synced (preview first, then apply); any other CSV
+   * goes through the plain importer. The sheet is read as a raw grid because
+   * its NAME header spans two columns and it carries section banner rows.
+   */
   function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return;
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true,
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be picked again after a fix
+    if (!file) return;
+
+    Papa.parse<string[]>(file, {
+      skipEmptyLines: 'greedy',
       complete: async (results) => {
-        const res = await fetch('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: results.data }) });
+        const rows = results.data;
+
+        if (isAvailabilitySheet(rows)) {
+          setSyncing(true);
+          const res = await fetch('/api/sync-staff-sheet', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rows, mode: 'preview' }),
+          });
+          const preview = await res.json();
+          setSyncing(false);
+          if (!res.ok) { alert(preview.error ?? 'Could not read that sheet.'); return; }
+          setSheet(rows);
+          setRemoveMissing(true);
+          setPlan(preview);
+          return;
+        }
+
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: matrixToObjects(rows) }),
+        });
         const data = await res.json();
         alert(`Imported ${data.created} staff. ${data.errors?.length ? `Errors: ${data.errors.join(', ')}` : ''}`);
         load();
       }
     });
+  }
+
+  function closeSync() {
+    setPlan(null);
+    setSheet(null);
+  }
+
+  async function applySync() {
+    if (!sheet) return;
+    setSyncing(true);
+    const res = await fetch('/api/sync-staff-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: sheet, mode: 'apply', deleteMissing: removeMissing }),
+    });
+    const result: SyncPlan = await res.json();
+    setSyncing(false);
+    closeSync();
+
+    const a = result.applied;
+    alert([
+      a
+        ? `Sheet synced — ${a.staff_created} added, ${a.staff_updated} detail change(s), ${a.staff_deleted} removed, ${a.availability_written} availability day(s) set, ${a.availability_cleared} cleared.`
+        : 'Nothing was applied.',
+      result.errors?.length ? `\n\nErrors:\n${result.errors.join('\n')}` : '',
+    ].join(''));
+    load();
   }
 
   const filtered = staff.filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
@@ -134,7 +200,7 @@ export default function StaffPage() {
         <div className="flex gap-2 flex-wrap">
           <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
+          <button onClick={() => fileRef.current?.click()} disabled={syncing} className="btn-secondary"><Upload size={14} /> {syncing ? 'Reading sheet...' : 'Import / Sync Sheet'}</button>
           <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
         </div>
@@ -251,6 +317,107 @@ export default function StaffPage() {
           </div>
         </Modal>
       )}
+
+      {plan && (
+        <Modal title="Sync Availability Sheet" onClose={closeSync} size="lg">
+          <div className="space-y-4 text-sm">
+            {plan.layout && <p className="text-xs text-slate-400">Columns read — {plan.layout}</p>}
+
+            <div className="flex flex-wrap gap-1.5">
+              <span className="badge-green">{plan.creates.length} new</span>
+              <span className="badge-blue">{plan.updates.length} changed</span>
+              <span className="badge-slate">{plan.unchanged.length} unchanged</span>
+              {plan.deletes.length > 0 && <span className="badge-red">{plan.deletes.length} no longer listed</span>}
+            </div>
+
+            {plan.errors.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
+                {plan.errors.map((err, i) => <p key={i} className="text-xs text-red-700">{err}</p>)}
+              </div>
+            )}
+
+            {plan.creates.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">New staff</h3>
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {plan.creates.map(c => (
+                    <li key={c.name} className="px-3 py-2 flex items-center justify-between gap-2">
+                      <span className="font-medium text-slate-700">{c.name}</span>
+                      <span className="text-xs text-slate-400">
+                        {c.phone ?? 'no mobile'} · {c.age_group === 'junior' ? 'Junior' : 'Senior'} · {c.available_days} day{c.available_days === 1 ? '' : 's'} available
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {plan.updates.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Changes</h3>
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {plan.updates.map(u => (
+                    <li key={u.id} className="px-3 py-2">
+                      <p className="font-medium text-slate-700">{u.name}</p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {u.changes.map((c, i) => (
+                          <li key={i} className="text-xs text-slate-500">
+                            {c.field}: <span className="text-slate-400 line-through">{c.from ?? 'not set'}</span>
+                            {' → '}
+                            <span className="text-slate-700">{c.to ?? 'unavailable'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {plan.deletes.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Not on this sheet</h3>
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+                  <p className="text-xs text-red-700">
+                    {plan.deletes.map(d => d.name).join(', ')}
+                  </p>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={removeMissing} onChange={e => setRemoveMissing(e.target.checked)} className="mt-0.5 accent-red-600" />
+                    <span className="text-xs text-red-800">
+                      Delete these {plan.deletes.length} staff member(s) and their availability, shifts history and department assignments. This cannot be undone.
+                    </span>
+                  </label>
+                </div>
+              </section>
+            )}
+
+            {plan.warnings.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Needs a look</h3>
+                <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+                  {plan.warnings.map((w, i) => <li key={i} className="text-xs text-amber-800">{w}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {plan.creates.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0 && (
+              <p className="text-slate-500">Everything already matches this sheet — nothing to change.</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={closeSync} className="btn-secondary">Cancel</button>
+              <button
+                onClick={applySync}
+                disabled={syncing || (plan.creates.length === 0 && plan.updates.length === 0 && (plan.deletes.length === 0 || !removeMissing))}
+                className="btn-primary"
+              >
+                {syncing ? 'Applying...' : 'Apply to Staff List'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
     </div>
   );
 }

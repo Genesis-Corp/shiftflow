@@ -9,6 +9,8 @@ export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export interface Staff {
   id: string;
   name: string;
+  first_name?: string | null;
+  last_name?: string | null;
   age_group: AgeGroup;
   role_type: RoleType;
   reliability_score: number;
