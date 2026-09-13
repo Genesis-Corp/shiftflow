@@ -7,13 +7,15 @@ import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
 import { fetchList } from '@/lib/api';
-import { formatDate } from '@/lib/shiftUtils';
+import { formatDate, formatDelta } from '@/lib/shiftUtils';
 
-const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string; delta: string }> = {
-  no_show:  { label: 'No Show',    icon: <UserX size={13} />,      badge: 'badge-red',    delta: '−15' },
-  no_answer:{ label: 'No Answer',  icon: <PhoneMissed size={13} />, badge: 'badge-amber',  delta: '−5'  },
-  rejected: { label: 'Rejected',   icon: <XCircle size={13} />,    badge: 'badge-amber',  delta: '−3'  },
-  covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green',  delta: '+10' },
+// The score each of these moves by comes from RELIABILITY_DELTAS, so the
+// number on screen cannot drift from the number actually applied.
+const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string }> = {
+  no_show:  { label: 'No Show',    icon: <UserX size={13} />,       badge: 'badge-red'   },
+  no_answer:{ label: 'No Answer',  icon: <PhoneMissed size={13} />, badge: 'badge-amber' },
+  rejected: { label: 'Rejected',   icon: <XCircle size={13} />,     badge: 'badge-slate' },
+  covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green' },
 };
 
 export default function ReliabilityPage() {
@@ -149,7 +151,7 @@ export default function ReliabilityPage() {
                 <span className={`${meta.badge} flex items-center gap-1`}>{meta.icon}{meta.label}</span>
                 <span className="font-medium text-slate-700">{inc.staff?.name ?? '—'}</span>
                 <span className="text-slate-400 text-sm">{formatDate(inc.date)}</span>
-                <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{meta.delta}</span>
+                <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{formatDelta(inc.incident_type)}</span>
                 {inc.notes && <span className="text-xs text-slate-400">{inc.notes}</span>}
               </div>
             );
@@ -174,7 +176,7 @@ export default function ReliabilityPage() {
                   <label key={type} className={`flex items-center gap-2 p-2.5 rounded-lg border cursor-pointer transition-colors ${form.incident_type === type ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
                     <input type="radio" name="incident_type" value={type} checked={form.incident_type === type} onChange={() => setForm(f => ({ ...f, incident_type: type }))} className="accent-blue-600" />
                     <span className={meta.badge + ' flex items-center gap-1'}>{meta.icon}{meta.label}</span>
-                    <span className="text-xs text-slate-400 ml-auto">{meta.delta}</span>
+                    <span className="text-xs text-slate-400 ml-auto">{formatDelta(type)}</span>
                   </label>
                 ))}
               </div>

@@ -98,13 +98,25 @@ export function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-/** Reliability score delta for each incident type */
+/**
+ * Reliability score delta for each incident type.
+ *
+ * Turning down a shift is barely a mark against anyone — people are entitled to
+ * their own plans on a day they were never rostered. Not turning up to a shift
+ * they had accepted is the serious one.
+ */
 export const RELIABILITY_DELTAS: Record<string, number> = {
   no_show: -15,
   no_answer: -5,
-  rejected: -3,
+  rejected: -1,
   covered: +10,
 };
+
+/** The same numbers written for display, e.g. "−15" and "+10". */
+export function formatDelta(type: string): string {
+  const delta = RELIABILITY_DELTAS[type] ?? 0;
+  return delta < 0 ? `\u2212${Math.abs(delta)}` : `+${delta}`;
+}
 
 export function clampScore(score: number): number {
   return Math.max(0, Math.min(100, score));
