@@ -140,15 +140,38 @@ export default function StaffPage() {
   }
 
   /**
-   * Availability sheets are synced (preview first, then apply); any other CSV
-   * goes through the plain importer. The sheet is read as a raw grid because
-   * its NAME header spans two columns and it carries section banner rows.
+   * One entry point for everything the sheet can arrive as. Whichever button
+   * was used, a photo is transcribed and a CSV is parsed — picking a photo here
+   * used to fall through to the plain staff importer, which quietly did nothing.
    */
-  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     e.target.value = ''; // let the same file be picked again after a fix
     if (!file) return;
 
+    const name = file.name.toLowerCase();
+    if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/.test(name)) {
+      readPhoto(file);
+      return;
+    }
+    if (/\.(xlsx|xlsm|xls|ods|numbers)$/.test(name)) {
+      alert(
+        `"${file.name}" is a spreadsheet file, which the app cannot open directly.\n\n` +
+        'In Excel or Google Sheets choose File → Download / Save As → CSV, then upload that. ' +
+        'Or photograph the printed sheet with Capture.'
+      );
+      return;
+    }
+    if (/\.pdf$/.test(name)) {
+      alert(`"${file.name}" is a PDF. Photograph the sheet with Capture instead, or export it as a CSV.`);
+      return;
+    }
+
+    readCsv(file);
+  }
+
+  /** Parse a CSV: sync it when it is the availability sheet, import it otherwise. */
+  function readCsv(file: File) {
     setStage(STAGES.parsing);
     Papa.parse<string[]>(file, {
       skipEmptyLines: 'greedy',
@@ -172,28 +195,40 @@ export default function StaffPage() {
           return;
         }
 
+        // Not the availability sheet — try the plain staff CSV format.
         const res = await fetch('/api/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ rows: matrixToObjects(rows) }),
         });
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
+        setStage(null);
+
+        if (!res.ok || !data.created) {
+          alert(
+            `Nothing was imported from "${file.name}".\n\n` +
+            'It does not look like the availability sheet — that needs a header row with the days of the week, ' +
+            'and columns for the first name, last name and mobile number.\n\n' +
+            'If this is a photo of the sheet, use Capture instead.'
+          );
+          return;
+        }
+
         alert(`Imported ${data.created} staff. ${data.errors?.length ? `Errors: ${data.errors.join(', ')}` : ''}`);
         load();
-      }
+      },
+      error: (err: Error) => {
+        setStage(null);
+        alert(`"${file.name}" could not be read: ${err.message}`);
+      },
     });
   }
 
   /**
-   * Photograph the sheet instead of exporting it. The photo is transcribed into
-   * the same grid a CSV produces and then goes through the identical preview,
-   * which is where a misread time or digit gets caught.
+   * Turn a photo of the sheet into the same grid a CSV produces, then run the
+   * identical preview — which is where a misread time or digit gets caught.
    */
-  async function handleCapture(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-
+  async function readPhoto(file: File) {
     try {
       setStage(STAGES.preparing);
       const { base64, mediaType } = await downscalePhoto(file);
@@ -291,9 +326,9 @@ export default function StaffPage() {
           <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
           <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary"><Camera size={14} /> Capture</button>
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleCapture} />
-          <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Import / Sync Sheet</button>
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFilePicked} />
+          <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Upload Photo or CSV</button>
+          <input ref={fileRef} type="file" accept="image/*,.csv,text/csv" className="hidden" onChange={handleFilePicked} />
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
         </div>
       </div>
