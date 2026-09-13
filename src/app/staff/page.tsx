@@ -8,7 +8,7 @@ import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
-import { fetchList } from '@/lib/api';
+import { fetchList, postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
 import type { SyncPlan } from '@/lib/staffSync';
 import Papa from 'papaparse';
@@ -53,6 +53,7 @@ export default function StaffPage() {
   const [syncing, setSyncing] = useState(false);
   const [stage, setStage] = useState<ProgressStage | null>(null);
   const [fromPhoto, setFromPhoto] = useState(false);
+  const [scanSeconds, setScanSeconds] = useState<number | null>(null);
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
@@ -172,6 +173,7 @@ export default function StaffPage() {
 
   /** Parse a CSV: sync it when it is the availability sheet, import it otherwise. */
   function readCsv(file: File) {
+    setScanSeconds(null);
     setStage(STAGES.parsing);
     Papa.parse<string[]>(file, {
       skipEmptyLines: 'greedy',
@@ -180,31 +182,26 @@ export default function StaffPage() {
 
         if (isAvailabilitySheet(rows)) {
           setStage(STAGES.comparing);
-          const res = await fetch('/api/sync-staff-sheet', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rows, mode: 'preview' }),
-          });
-          const preview = await res.json();
+          const preview = await postJson<SyncPlan>('/api/sync-staff-sheet', { rows, mode: 'preview' }, { timeoutMs: 60_000 });
           setStage(null);
-          if (!res.ok) { alert(preview.error ?? 'Could not read that sheet.'); return; }
+          if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not read that sheet.'); return; }
           setSheet(rows);
           setRemoveMissing(true);
           setFromPhoto(false);
-          setPlan(preview);
+          setPlan(preview.data);
           return;
         }
 
         // Not the availability sheet — try the plain staff CSV format.
-        const res = await fetch('/api/import', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ rows: matrixToObjects(rows) }),
-        });
-        const data = await res.json().catch(() => ({}));
+        const imported = await postJson<{ created?: number; errors?: string[] }>(
+          '/api/import',
+          { rows: matrixToObjects(rows) },
+          { timeoutMs: 60_000 }
+        );
+        const data = imported.data ?? {};
         setStage(null);
 
-        if (!res.ok || !data.created) {
+        if (!imported.ok || !data.created) {
           alert(
             `Nothing was imported from "${file.name}".\n\n` +
             'It does not look like the availability sheet — that needs a header row with the days of the week, ' +
@@ -234,27 +231,22 @@ export default function StaffPage() {
       const { base64, mediaType } = await downscalePhoto(file);
 
       setStage(STAGES.reading);
-      const scanRes = await fetch('/api/scan-sheet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: base64, mediaType }),
-      });
-      const scan = await scanRes.json();
-      if (!scanRes.ok) { alert(scan.error ?? 'Could not read that photo.'); return; }
+      const scan = await postJson<{ rows: string[][]; seconds?: number }>(
+        '/api/scan-sheet',
+        { image: base64, mediaType },
+        { timeoutMs: 70_000 } // the server gives up first, at its own budget
+      );
+      if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that photo.'); return; }
 
       setStage(STAGES.comparing);
-      const previewRes = await fetch('/api/sync-staff-sheet', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: scan.rows, mode: 'preview' }),
-      });
-      const preview = await previewRes.json();
-      if (!previewRes.ok) { alert(preview.error ?? 'Could not read that photo as an availability sheet.'); return; }
+      const preview = await postJson<SyncPlan>('/api/sync-staff-sheet', { rows: scan.data.rows, mode: 'preview' }, { timeoutMs: 60_000 });
+      if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not read that photo as an availability sheet.'); return; }
 
-      setSheet(scan.rows);
+      setSheet(scan.data.rows);
       setRemoveMissing(true);
       setFromPhoto(true);
-      setPlan(preview);
+      setScanSeconds(scan.data.seconds ?? null);
+      setPlan(preview.data);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Could not read that photo.');
     } finally {
@@ -288,16 +280,22 @@ export default function StaffPage() {
     if (!sheet) return;
     setSyncing(true);
     setStage(STAGES.applying);
-    const res = await fetch('/api/sync-staff-sheet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: sheet, mode: 'apply', deleteMissing: removeMissing }),
-    });
-    const result: SyncPlan = await res.json();
+    const applied = await postJson<SyncPlan>(
+      '/api/sync-staff-sheet',
+      { rows: sheet, mode: 'apply', deleteMissing: removeMissing },
+      { timeoutMs: 60_000 }
+    );
     setSyncing(false);
     setStage(null);
     closeSync();
 
+    if (!applied.ok || !applied.data) {
+      alert(applied.error ?? 'The changes could not be applied.');
+      load();
+      return;
+    }
+
+    const result = applied.data;
     const a = result.applied;
     alert([
       a
@@ -549,6 +547,7 @@ export default function StaffPage() {
               <details className="rounded-lg border border-slate-200">
                 <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                   {sheetRowCount} row{sheetRowCount === 1 ? '' : 's'} read from the {fromPhoto ? 'photo' : 'file'}
+                  {scanSeconds !== null && ` in ${scanSeconds}s`}
                   <span className="ml-1 font-normal normal-case text-slate-400">— open to check</span>
                 </summary>
                 <div className="border-t border-slate-100 p-3 space-y-3">
