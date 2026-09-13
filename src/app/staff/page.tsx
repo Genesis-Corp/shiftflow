@@ -6,7 +6,8 @@ import ErrorBanner from '@/components/ErrorBanner';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
-import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
+import { Staff, Department, RoleType, AgeGroup, TrainingLevel, AvailabilityTemplate } from '@/lib/types';
+import { DAYS, DAY_SHORT } from '@/lib/shiftUtils';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
 import { fetchList, postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
@@ -28,6 +29,21 @@ const STAGES: Record<string, ProgressStage> = {
   applying: { label: 'Updating the staff list…', from: 20, to: 95, seconds: 8 },
 };
 
+interface DayAvailability {
+  available: boolean;
+  start_time: string;
+  end_time: string;
+}
+
+/** A week with nobody rostered on, used for a new staff member. */
+function emptyWeek(): Record<number, DayAvailability> {
+  const week: Record<number, DayAvailability> = {};
+  for (let day = 0; day < 7; day++) {
+    week[day] = { available: false, start_time: '09:00', end_time: '17:00' };
+  }
+  return week;
+}
+
 const ROLE_BADGE: Record<RoleType, string> = {
   department_only: 'badge-slate',
   all_rounder: 'badge-green',
@@ -37,6 +53,7 @@ const ROLE_BADGE: Record<RoleType, string> = {
 export default function StaffPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [templates, setTemplates] = useState<AvailabilityTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
@@ -58,16 +75,19 @@ export default function StaffPage() {
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
     selectedDepts: [] as { department_id: string; training_level: TrainingLevel }[],
+    availability: emptyWeek(),
   });
 
   async function load() {
-    const [staffRes, deptRes] = await Promise.all([
+    const [staffRes, deptRes, templateRes] = await Promise.all([
       fetchList<Staff>('/api/staff'),
       fetchList<Department>('/api/departments'),
+      fetchList<AvailabilityTemplate>('/api/availability'),
     ]);
     setStaff(staffRes.data);
     setDepartments(deptRes.data);
-    setLoadError(staffRes.error ?? deptRes.error);
+    setTemplates(templateRes.data);
+    setLoadError(staffRes.error ?? deptRes.error ?? templateRes.error);
     setLoading(false);
   }
 
@@ -75,7 +95,7 @@ export default function StaffPage() {
 
   function openAdd() {
     setEditing(null);
-    setForm({ name: '', age_group: 'senior', role_type: 'department_only', phone: '', selectedDepts: [] });
+    setForm({ name: '', age_group: 'senior', role_type: 'department_only', phone: '', selectedDepts: [], availability: emptyWeek() });
     setModal('add');
   }
 
@@ -85,7 +105,12 @@ export default function StaffPage() {
       department_id: d.department_id,
       training_level: (d.training_level ?? 'trained') as TrainingLevel,
     }));
-    setForm({ name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '', selectedDepts: depts });
+    const week = emptyWeek();
+    for (const t of templates) {
+      if (t.staff_id !== s.id || !t.available) continue;
+      week[t.day_of_week] = { available: true, start_time: t.start_time.slice(0, 5), end_time: t.end_time.slice(0, 5) };
+    }
+    setForm({ name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '', selectedDepts: depts, availability: week });
     setModal('edit');
   }
 
@@ -95,6 +120,30 @@ export default function StaffPage() {
       if (exists) return { ...f, selectedDepts: f.selectedDepts.filter(d => d.department_id !== dept_id) };
       return { ...f, selectedDepts: [...f.selectedDepts, { department_id: dept_id, training_level: 'trained' }] };
     });
+  }
+
+  /** The seven days, with the ones this person can work picked out. */
+  function DayStrip({ staffId }: { staffId: string }) {
+    return (
+      <div className="flex gap-0.5">
+        {DAY_SHORT.map((short, day) => {
+          const on = templates.some(t => t.staff_id === staffId && t.day_of_week === day && t.available);
+          return (
+            <span
+              key={short}
+              title={`${DAYS[day]}: ${on ? 'available' : 'not available'}`}
+              className={`text-[10px] leading-none px-1 py-1 rounded ${on ? 'bg-green-100 text-green-700 font-semibold' : 'bg-slate-100 text-slate-300'}`}
+            >
+              {short[0]}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function setDay(day: number, patch: Partial<DayAvailability>) {
+    setForm(f => ({ ...f, availability: { ...f.availability, [day]: { ...f.availability[day], ...patch } } }));
   }
 
   function setTrainingLevel(dept_id: string, level: TrainingLevel) {
@@ -117,6 +166,18 @@ export default function StaffPage() {
     } else return;
 
     await fetch(`/api/staff/${staffId}/departments`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ departments: form.selectedDepts }) });
+
+    await fetch('/api/availability', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        staff_id: staffId,
+        templates: Object.entries(form.availability)
+          .filter(([, day]) => day.available)
+          .map(([day, t]) => ({ day_of_week: Number(day), start_time: t.start_time, end_time: t.end_time, available: true })),
+      }),
+    });
+
     setModal(null);
     load();
   }
@@ -320,23 +381,69 @@ export default function StaffPage() {
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
           <p className="text-sm text-slate-500">{staff.filter(s => s.active).length} active / {staff.length} total</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
-          <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
-          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary"><Camera size={14} /> Capture</button>
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFilePicked} />
-          <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Upload Photo or CSV</button>
-          <input ref={fileRef} type="file" accept="image/*,.csv,text/csv" className="hidden" onChange={handleFilePicked} />
-          <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full sm:w-auto">
+          <input className="input w-full sm:w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
+          <div className="grid grid-cols-2 sm:flex gap-2">
+            <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export CSV</button>
+            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Camera size={14} /> Capture</button>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFilePicked} />
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload</button>
+            <input ref={fileRef} type="file" accept="image/*,.csv,text/csv" className="hidden" onChange={handleFilePicked} />
+            <button onClick={openAdd} className="btn-primary justify-center"><Plus size={16} /> Add Staff</button>
+          </div>
         </div>
       </div>
 
       {loading ? <p className="text-slate-400">Loading...</p> : (
-        <div className="card overflow-hidden">
+        <>
+        {/* Phones: one card per person. The table needs more width than a phone has. */}
+        <div className="md:hidden space-y-2">
+          {filtered.map(s => (
+            <div key={s.id} className={`card p-3 space-y-2.5 ${!s.active ? 'opacity-60' : ''}`}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-800 truncate">{s.name}</p>
+                  {s.phone && <p className="text-xs text-slate-400">{s.phone}</p>}
+                </div>
+                <div className="flex gap-1 shrink-0">
+                  <button onClick={() => openEdit(s)} className="btn-ghost p-1.5" aria-label={`Edit ${s.name}`}><Pencil size={15} /></button>
+                  <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50" aria-label={`Delete ${s.name}`}><Trash2 size={15} /></button>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-1">
+                <span className={s.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
+                  {s.age_group === 'senior' ? 'Senior' : 'Junior'}
+                </span>
+                <span className={ROLE_BADGE[s.role_type]}>{ROLE_LABELS[s.role_type]}</span>
+                <button onClick={() => toggleActive(s)} className={`badge cursor-pointer ${s.active ? 'badge-green' : 'badge-red'}`}>
+                  {s.active ? <><UserCheck size={11} className="mr-1" />Active</> : <><UserX size={11} className="mr-1" />Inactive</>}
+                </button>
+              </div>
+
+              {(s.staff_departments ?? []).length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {(s.staff_departments ?? []).map(d => (
+                    <span key={d.department_id} className="badge-slate text-xs">{d.departments?.name}</span>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-3">
+                <DayStrip staffId={s.id} />
+                <div className="w-28 shrink-0"><ReliabilityBar score={s.reliability_score} /></div>
+              </div>
+            </div>
+          ))}
+          {filtered.length === 0 && <p className="card text-center text-slate-400 py-8">No staff found.</p>}
+        </div>
+
+        <div className="hidden md:block card overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Name', 'Type', 'Role', 'Departments', 'Reliability', 'Status', ''].map(h => (
+                {['Name', 'Type', 'Role', 'Departments', 'Availability', 'Reliability', 'Status', ''].map(h => (
                   <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -360,6 +467,9 @@ export default function StaffPage() {
                       ))}
                     </div>
                   </td>
+                  <td className="px-4 py-3">
+                    <DayStrip staffId={s.id} />
+                  </td>
                   <td className="px-4 py-3 min-w-[140px]">
                     <ReliabilityBar score={s.reliability_score} />
                   </td>
@@ -378,8 +488,10 @@ export default function StaffPage() {
               ))}
             </tbody>
           </table>
+          </div>
           {filtered.length === 0 && <p className="text-center text-slate-400 py-8">No staff found.</p>}
         </div>
+        </>
       )}
 
       {modal && (
@@ -429,6 +541,42 @@ export default function StaffPage() {
                           <option value="advanced">Advanced</option>
                         </select>
                       )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <label className="label">Weekly Availability</label>
+              <p className="text-xs text-slate-400 mb-2">
+                Uploading a new availability sheet overwrites these hours.
+              </p>
+              <div className="space-y-1.5">
+                {DAYS.map((day, i) => {
+                  const t = form.availability[i];
+                  return (
+                    <div key={day} className={`rounded-lg border p-2 transition-colors ${t.available ? 'border-blue-200 bg-blue-50/40' : 'border-slate-200'}`}>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="flex items-center gap-2 w-28 shrink-0 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={t.available}
+                            onChange={e => setDay(i, { available: e.target.checked })}
+                            className="w-4 h-4 accent-blue-600"
+                          />
+                          <span className={`text-sm font-medium ${t.available ? 'text-blue-800' : 'text-slate-400'}`}>{day}</span>
+                        </label>
+                        {t.available && (
+                          <div className="flex items-center gap-1.5">
+                            <input type="time" className="input w-auto py-1 text-sm" value={t.start_time}
+                              onChange={e => setDay(i, { start_time: e.target.value })} />
+                            <span className="text-slate-400 text-sm">to</span>
+                            <input type="time" className="input w-auto py-1 text-sm" value={t.end_time}
+                              onChange={e => setDay(i, { end_time: e.target.value })} />
+                          </div>
+                        )}
+                      </div>
                     </div>
                   );
                 })}

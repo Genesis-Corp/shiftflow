@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -15,6 +16,13 @@ const links = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const activeLink = useRef<HTMLAnchorElement>(null);
+
+  // The row scrolls sideways on a phone, so bring the current page into view
+  // rather than leaving it off the edge.
+  useEffect(() => {
+    activeLink.current?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [pathname]);
   return (
     <nav className="bg-blue-700 text-white shadow-lg">
       <div className="max-w-7xl mx-auto px-4">
@@ -24,6 +32,7 @@ export default function Navbar() {
             <Link
               key={href}
               href={href}
+              ref={pathname === href ? activeLink : undefined}
               className={`px-3 py-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors ${
                 pathname === href
                   ? 'bg-blue-900 text-white'

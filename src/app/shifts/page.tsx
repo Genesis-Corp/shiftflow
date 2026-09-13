@@ -138,6 +138,7 @@ export default function ShiftsPage() {
 
       {loading ? <p className="text-slate-400">Loading...</p> : (
         <div className="card overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -174,6 +175,7 @@ export default function ShiftsPage() {
               ))}
             </tbody>
           </table>
+          </div>
           {shifts.length === 0 && <p className="text-center text-slate-400 py-8">No shifts found.</p>}
         </div>
       )}

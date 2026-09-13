@@ -105,7 +105,8 @@ export default function ReliabilityPage() {
         <div className="px-4 py-3 border-b border-slate-200">
           <h2 className="font-semibold text-slate-800">All Staff Scores</h2>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
               {['Name', 'Reliability', 'No Shows', 'No Answer', 'Rejections', 'Covered'].map(h => (
@@ -129,6 +130,7 @@ export default function ReliabilityPage() {
             })}
           </tbody>
         </table>
+          </div>
       </div>
 
       {/* Incident log */}
