@@ -120,7 +120,7 @@ export default function ShiftsPage() {
 
   return (
     <div className="space-y-4">
-      <ErrorBanner message={loadError} />
+      <ErrorBanner message={loadError} onRetry={load} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>

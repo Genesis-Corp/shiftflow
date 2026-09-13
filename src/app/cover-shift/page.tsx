@@ -27,13 +27,14 @@ export default function CoverShiftPage() {
   const [claimMsg, setClaimMsg] = useState('');
   const [incidentLoading, setIncidentLoading] = useState('');
 
-  useEffect(() => {
-    fetchList<Department>('/api/departments').then(({ data, error }) => {
-      setDepartments(data);
-      setLoadError(error);
-      if (data[0]) setForm(f => ({ ...f, department_id: data[0].id }));
-    });
-  }, []);
+  async function load() {
+    const { data, error } = await fetchList<Department>('/api/departments');
+    setDepartments(data);
+    setLoadError(error);
+    if (data[0]) setForm(f => ({ ...f, department_id: data[0].id }));
+  }
+
+  useEffect(() => { load(); }, []);
 
   async function findCover() {
     if (!form.department_id) return;
@@ -64,7 +65,7 @@ export default function CoverShiftPage() {
 
   return (
     <div className="space-y-6">
-      <ErrorBanner message={loadError} />
+      <ErrorBanner message={loadError} onRetry={load} />
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Find Cover</h1>
         <p className="text-sm text-slate-500">Enter the shift details to find available staff</p>

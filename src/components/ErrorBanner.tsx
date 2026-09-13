@@ -1,12 +1,12 @@
 'use client';
 
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RotateCcw } from 'lucide-react';
 
 /** A failure to reach the database at all, most often a paused Supabase project. */
 const UNREACHABLE = /fetch failed|failed to fetch|not connected|paused|ENOTFOUND|ECONNREFUSED|network|timeout/i;
 
 /** Shown when a page cannot load its data, instead of rendering nothing. */
-export default function ErrorBanner({ message }: { message: string | null }) {
+export default function ErrorBanner({ message, onRetry }: { message: string | null; onRetry?: () => void }) {
   if (!message) return null;
   return (
     <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 flex items-start gap-2">
@@ -23,6 +23,11 @@ export default function ErrorBanner({ message }: { message: string | null }) {
           </>
         ) : (
           <p className="text-sm text-red-700">{message}</p>
+        )}
+        {onRetry && (
+          <button onClick={onRetry} className="btn-secondary mt-1 text-xs py-1">
+            <RotateCcw size={12} /> Try again
+          </button>
         )}
       </div>
     </div>

@@ -20,17 +20,19 @@ export default function AvailabilityPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
+  async function load() {
+    setLoading(true);
+    const [staffRes, templateRes] = await Promise.all([
       fetchList<Staff>('/api/staff'),
       fetchList<AvailabilityTemplate>('/api/availability'),
-    ]).then(([staffRes, templateRes]) => {
-      setStaff(staffRes.data.filter(s => s.active));
-      setTemplates(templateRes.data);
-      setLoadError(staffRes.error ?? templateRes.error);
-      setLoading(false);
-    });
-  }, []);
+    ]);
+    setStaff(staffRes.data.filter(s => s.active));
+    setTemplates(templateRes.data);
+    setLoadError(staffRes.error ?? templateRes.error);
+    setLoading(false);
+  }
+
+  useEffect(() => { load(); }, []);
 
   const rows = staff.map(s => {
     const byDay = new Map<number, AvailabilityTemplate>();
@@ -46,7 +48,7 @@ export default function AvailabilityPage() {
 
   return (
     <div className="space-y-4">
-      <ErrorBanner message={loadError} />
+      <ErrorBanner message={loadError} onRetry={load} />
 
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Availability</h1>

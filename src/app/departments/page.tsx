@@ -54,7 +54,7 @@ export default function DepartmentsPage() {
 
   return (
     <div className="space-y-4">
-      <ErrorBanner message={loadError} />
+      <ErrorBanner message={loadError} onRetry={load} />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Departments</h1>

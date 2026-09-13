@@ -13,12 +13,39 @@ export interface ListResult<T> {
   error: string | null;
 }
 
-export async function fetchList<T>(url: string): Promise<ListResult<T>> {
+/**
+ * Statuses worth trying again: the request never really got anywhere, or the
+ * far end was briefly unwell. A 400 or a 404 will say the same thing twice.
+ */
+function worthRetrying(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+const RETRY_DELAY_MS = 700;
+
+/**
+ * Read a list endpoint, retrying once on a transient failure.
+ *
+ * A phone on mobile data drops requests, and a sleepy database answers the
+ * first query of the day with a gateway timeout — both recover on their own a
+ * second later. Only GETs are retried: repeating a write could apply it twice.
+ */
+export async function fetchList<T>(url: string, attemptsLeft = 1): Promise<ListResult<T>> {
+  const retry = async (): Promise<ListResult<T> | null> => {
+    if (attemptsLeft <= 0) return null;
+    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+    return fetchList<T>(url, attemptsLeft - 1);
+  };
+
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { cache: 'no-store' });
     const body = await res.json().catch(() => null);
 
     if (!res.ok) {
+      if (worthRetrying(res.status)) {
+        const again = await retry();
+        if (again) return again;
+      }
       return { data: [], error: describe(body, `${url} responded with ${res.status}`) };
     }
     if (!Array.isArray(body)) {
@@ -26,6 +53,8 @@ export async function fetchList<T>(url: string): Promise<ListResult<T>> {
     }
     return { data: body as T[], error: null };
   } catch (err) {
+    const again = await retry(); // the request never landed — that is the most retryable failure there is
+    if (again) return again;
     return { data: [], error: err instanceof Error ? err.message : `Could not reach ${url}` };
   }
 }

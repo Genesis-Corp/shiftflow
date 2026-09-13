@@ -373,7 +373,7 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-4">
-      <ErrorBanner message={loadError} />
+      <ErrorBanner message={loadError} onRetry={load} />
 
       {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
