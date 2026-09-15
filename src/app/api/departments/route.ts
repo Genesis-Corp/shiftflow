@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET() {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { data, error } = await supabase
     .from('departments')
     .select('*')
@@ -12,6 +16,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { name, requires_supervisor } = await req.json();
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });
 

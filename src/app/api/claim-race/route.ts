@@ -3,11 +3,15 @@ import { startRace, RaceError } from '@/lib/raceService';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { findEligibleCandidates } from '@/lib/eligibility';
 import { splitContactable } from '@/lib/claimRace';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
 /** GET /api/claim-race?shift_id=… — preview who a race would contact. */
 export async function GET(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const shiftId = new URL(req.url).searchParams.get('shift_id');
   if (!shiftId) return NextResponse.json({ error: 'shift_id required' }, { status: 400 });
 
@@ -41,6 +45,9 @@ export async function GET(req: NextRequest) {
 
 /** POST /api/claim-race { shift_id, force? } — start the race. */
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   try {
     const { shift_id, force } = await req.json();
     if (!shift_id) return NextResponse.json({ error: 'shift_id required' }, { status: 400 });

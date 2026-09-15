@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { toE164AU } from '@/lib/phone';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET() {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { data, error } = await supabase
     .from('staff')
     .select(`
@@ -19,6 +23,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const body = await req.json();
   const { name, age_group, role_type, phone } = body;
 

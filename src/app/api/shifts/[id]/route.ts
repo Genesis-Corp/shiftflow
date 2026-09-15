@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const body = await req.json();
   const { start_time, end_time, department_id, required_role, status, assigned_staff_id, notes } = body;
 
@@ -38,6 +42,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { error } = await supabase.from('shifts').delete().eq('id', params.id);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ success: true });

@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date');
   const status = searchParams.get('status');
@@ -26,6 +30,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const body = await req.json();
   const { date, start_time, end_time, department_id, required_role, notes } = body;
 

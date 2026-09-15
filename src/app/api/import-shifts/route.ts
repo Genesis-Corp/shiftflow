@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 interface ShiftRow {
   date?: string;
@@ -20,6 +21,9 @@ function normaliseTime(t: string): string {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { rows }: { rows: ShiftRow[] } = await req.json();
   if (!rows?.length) return NextResponse.json({ error: 'No rows provided' }, { status: 400 });
 

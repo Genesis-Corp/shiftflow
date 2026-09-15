@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findEligibleCandidates } from '@/lib/eligibility';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,6 +12,9 @@ export const dynamic = 'force-dynamic';
  * whatever the browser posts back.
  */
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const body = await req.json();
   const { date, start_time, end_time, department_id, required_role, shift_id } = body;
 

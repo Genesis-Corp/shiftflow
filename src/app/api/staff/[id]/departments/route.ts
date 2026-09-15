@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 /** Replace all department assignments for a staff member */
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { departments } = await req.json();
   // departments: Array<{ department_id: string; training_level: string }>
 

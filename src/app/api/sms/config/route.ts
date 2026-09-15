@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSmsMode, getTestNumber, getAllowlist, getTimezone, getExpiryMinutes, isQuietHours } from '@/lib/sms/config';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -8,6 +9,9 @@ export const dynamic = 'force-dynamic';
  * decide whether to offer the reply simulator. Never returns credentials.
  */
 export async function GET() {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const mode = getSmsMode();
   return NextResponse.json({
     mode,

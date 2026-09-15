@@ -1,7 +1,9 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { LogOut } from 'lucide-react';
+import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 
 const links = [
   { href: '/',             label: 'Dashboard' },
@@ -11,6 +13,7 @@ const links = [
   { href: '/staff',        label: 'Staff' },
   { href: '/departments',  label: 'Departments' },
   { href: '/reliability',  label: 'Reliability' },
+  { href: '/managers',     label: 'Managers' },
 ];
 
 /**
@@ -43,14 +46,29 @@ function DeployTag() {
   );
 }
 
-export default function Navbar() {
+export default function Navbar({ userEmail }: { userEmail: string | null }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const onLoginPage = pathname === '/login';
+
+  async function logOut() {
+    await fetch('/api/auth/logout', { method: 'POST' });
+    const supabase = createSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    router.push('/login');
+    router.refresh();
+  }
+
   return (
     <nav className="bg-blue-700 text-white shadow-lg">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center gap-1 h-14 overflow-x-auto">
           <span className="font-bold text-lg mr-4 whitespace-nowrap">⚡ ShiftFlow</span>
-          {links.map(({ href, label }) => (
+
+          {/* No nav links pre-login — every one of them is behind the wall
+              this page exists to get past, so showing them is just dead-end
+              clutter until there's a session. */}
+          {!onLoginPage && links.map(({ href, label }) => (
             <Link
               key={href}
               href={href}
@@ -63,6 +81,21 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
+
+          {!onLoginPage && userEmail && (
+            <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+              <span className="hidden md:inline text-xs text-blue-100 truncate max-w-[14rem]" title={userEmail}>
+                {userEmail}
+              </span>
+              <button
+                onClick={logOut}
+                title="Log out"
+                className="p-1.5 rounded-md text-blue-100 hover:bg-blue-600 transition-colors"
+              >
+                <LogOut size={15} />
+              </button>
+            </div>
+          )}
           <DeployTag />
         </div>
       </div>

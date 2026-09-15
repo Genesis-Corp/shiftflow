@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { RELIABILITY_DELTAS, clampScore } from '@/lib/shiftUtils';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { searchParams } = new URL(req.url);
   const staff_id = searchParams.get('staff_id');
 
@@ -19,6 +23,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { staff_id, incident_type, shift_id, date, notes } = await req.json();
   if (!staff_id || !incident_type || !date)
     return NextResponse.json({ error: 'staff_id, incident_type, date required' }, { status: 400 });

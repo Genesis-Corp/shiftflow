@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { toE164AU } from '@/lib/phone';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const body = await req.json();
   const { name, age_group, role_type, phone, active } = body;
 
@@ -18,6 +22,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   // Remove department assignments first
   await supabase.from('staff_departments').delete().eq('staff_id', params.id);
 

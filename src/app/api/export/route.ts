@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { searchParams } = new URL(req.url);
   const type = searchParams.get('type') ?? 'staff';
 

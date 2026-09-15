@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { toE164AU } from '@/lib/phone';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 // ── Standard staff CSV format ─────────────────────────────────────────────────
 interface StandardRow {
@@ -47,6 +48,9 @@ function parseTimeRange(range: string): { start: string; end: string } | null {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { rows }: { rows: AvailabilityRow[] } = await req.json();
   if (!rows?.length) return NextResponse.json({ error: 'No rows provided' }, { status: 400 });
 

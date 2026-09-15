@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { searchParams } = new URL(req.url);
   const staff_id = searchParams.get('staff_id');
 
@@ -14,6 +18,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function PUT(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   const { staff_id, templates } = await req.json();
   // templates: Array<{ day_of_week, start_time, end_time, available }>
   if (!staff_id) return NextResponse.json({ error: 'staff_id required' }, { status: 400 });

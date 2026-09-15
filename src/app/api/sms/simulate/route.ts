@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { handleInboundReply } from '@/lib/raceService';
 import { getSmsMode } from '@/lib/sms/config';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
+import { requireUser, unauthorized } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,9 @@ export const dynamic = 'force-dynamic';
  * real phone. Set SMS_SIMULATE_TOKEN for an extra lock on preview deploys.
  */
 export async function POST(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
   if (getSmsMode() === 'live') {
     return NextResponse.json(
       { error: 'Simulation is disabled when SMS_MODE=live.' }, { status: 403 }
