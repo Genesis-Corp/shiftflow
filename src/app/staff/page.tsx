@@ -1,11 +1,21 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
+import {
+  Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
+  Camera, FileText, FileSpreadsheet,
+} from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
+import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
+import { STAGES } from '@/lib/progressStages';
 import { fetchJson } from '@/lib/apiClient';
+import { postJson } from '@/lib/api';
+import { downscalePhoto } from '@/lib/image';
+import { readPdfAsBase64 } from '@/lib/pdf';
+import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
+import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
 import Papa from 'papaparse';
 
@@ -67,6 +77,18 @@ export default function StaffPage() {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
+
+  // Availability-sheet sync: the uploaded grid, the preview of what it changes,
+  // and whether staff missing from it should be removed.
+  const [sheet, setSheet] = useState<string[][] | null>(null);
+  const [plan, setPlan] = useState<SyncPlan | null>(null);
+  const [removeMissing, setRemoveMissing] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [stage, setStage] = useState<ProgressStage | null>(null);
+  const [fromPhoto, setFromPhoto] = useState(false);
+  const [scanSeconds, setScanSeconds] = useState<number | null>(null);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -167,19 +189,205 @@ export default function StaffPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
-  function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return;
-    Papa.parse(file, {
-      header: true, skipEmptyLines: true,
+  /**
+   * One entry point for everything the sheet can arrive as. Whichever button
+   * was used, a photo or PDF is transcribed and a CSV is parsed — picking a
+   * photo here used to fall through to the plain staff importer, which
+   * quietly did nothing.
+   */
+  function handleFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // let the same file be picked again after a fix
+    if (!file) return;
+
+    const name = file.name.toLowerCase();
+    if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/.test(name)) {
+      readPhoto(file);
+      return;
+    }
+    if (/\.(xlsx|xlsm|xls|ods|numbers)$/.test(name)) {
+      alert(
+        `"${file.name}" is a spreadsheet file, which the app cannot open directly.\n\n` +
+        'In Excel or Google Sheets choose File → Download / Save As → CSV, then upload that. ' +
+        'Or photograph the printed sheet with Capture.'
+      );
+      return;
+    }
+    if (file.type === 'application/pdf' || /\.pdf$/.test(name)) {
+      readPdfFile(file);
+      return;
+    }
+
+    readCsv(file);
+  }
+
+  /** Parse a CSV: sync it when it is the availability sheet, import it otherwise. */
+  function readCsv(file: File) {
+    setScanSeconds(null);
+    setStage(STAGES.parsing);
+    Papa.parse<string[]>(file, {
+      skipEmptyLines: 'greedy',
       complete: async (results) => {
-        const res = await fetch('/api/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: results.data }) });
-        const data = await res.json();
+        const rows = results.data;
+
+        if (isAvailabilitySheet(rows)) {
+          setStage(STAGES.comparing);
+          const preview = await postJson<SyncPlan>('/api/sync-staff-sheet', { rows, mode: 'preview' }, { timeoutMs: 60_000 });
+          setStage(null);
+          if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not read that sheet.'); return; }
+          setSheet(rows);
+          setRemoveMissing(true);
+          setFromPhoto(false);
+          setPlan(preview.data);
+          return;
+        }
+
+        // Not the availability sheet — try the plain staff CSV format.
+        const imported = await postJson<{ created?: number; errors?: string[] }>(
+          '/api/import',
+          { rows: matrixToObjects(rows) },
+          { timeoutMs: 60_000 }
+        );
+        const data = imported.data ?? {};
+        setStage(null);
+
+        if (!imported.ok || !data.created) {
+          alert(
+            `Nothing was imported from "${file.name}".\n\n` +
+            'It does not look like the availability sheet — that needs a header row with the days of the week, ' +
+            'and columns for the first name, last name and mobile number.\n\n' +
+            'If this is a photo of the sheet, use Capture instead.'
+          );
+          return;
+        }
+
         alert(`Imported ${data.created} staff. ${data.errors?.length ? `Errors: ${data.errors.join(', ')}` : ''}`);
         load();
-      }
+      },
+      error: (err: Error) => {
+        setStage(null);
+        alert(`"${file.name}" could not be read: ${err.message}`);
+      },
     });
   }
 
+  /**
+   * Turn a photo of the sheet into the same grid a CSV produces, then run the
+   * identical preview — which is where a misread time or digit gets caught.
+   */
+  async function readPhoto(file: File) {
+    try {
+      setStage(STAGES.preparing);
+      const { base64, mediaType } = await downscalePhoto(file);
+
+      setStage(STAGES.reading);
+      const scan = await postJson<{ rows: string[][]; seconds?: number }>(
+        '/api/scan-sheet',
+        { image: base64, mediaType },
+        { timeoutMs: 70_000 } // the server gives up first, at its own budget
+      );
+      if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that photo.'); return; }
+
+      setStage(STAGES.comparing);
+      const preview = await postJson<SyncPlan>('/api/sync-staff-sheet', { rows: scan.data.rows, mode: 'preview' }, { timeoutMs: 60_000 });
+      if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not read that photo as an availability sheet.'); return; }
+
+      setSheet(scan.data.rows);
+      setRemoveMissing(true);
+      setFromPhoto(true);
+      setScanSeconds(scan.data.seconds ?? null);
+      setPlan(preview.data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read that photo.');
+    } finally {
+      setStage(null);
+    }
+  }
+
+  /** Same flow as readPhoto, for a PDF export of the sheet instead of a photo. */
+  async function readPdfFile(file: File) {
+    try {
+      setStage(STAGES.preparingPdf);
+      const pdf = await readPdfAsBase64(file);
+
+      setStage(STAGES.readingPdf);
+      const scan = await postJson<{ rows: string[][]; seconds?: number }>(
+        '/api/scan-sheet',
+        { pdf },
+        { timeoutMs: 70_000 }
+      );
+      if (!scan.ok || !scan.data) { alert(scan.error ?? 'Could not read that PDF.'); return; }
+
+      setStage(STAGES.comparing);
+      const preview = await postJson<SyncPlan>('/api/sync-staff-sheet', { rows: scan.data.rows, mode: 'preview' }, { timeoutMs: 60_000 });
+      if (!preview.ok || !preview.data) { alert(preview.error ?? 'Could not read that PDF as an availability sheet.'); return; }
+
+      setSheet(scan.data.rows);
+      setRemoveMissing(true);
+      setFromPhoto(false);
+      setScanSeconds(scan.data.seconds ?? null);
+      setPlan(preview.data);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not read that PDF.');
+    } finally {
+      setStage(null);
+    }
+  }
+
+  /**
+   * The sheet as it was read, as a CSV. For a photo or PDF this is the
+   * converted spreadsheet — worth keeping, and openable in Excel or Google
+   * Sheets to fix anything the read got wrong before re-uploading it.
+   */
+  function downloadSheetCsv() {
+    if (!sheet) return;
+    const csv = Papa.unparse(sheet);
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `availability-sheet-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
+  function closeSync() {
+    setPlan(null);
+    setSheet(null);
+    setFromPhoto(false);
+  }
+
+  async function applySync() {
+    if (!sheet) return;
+    setSyncing(true);
+    setStage(STAGES.applying);
+    const applied = await postJson<SyncPlan>(
+      '/api/sync-staff-sheet',
+      { rows: sheet, mode: 'apply', deleteMissing: removeMissing },
+      { timeoutMs: 60_000 }
+    );
+    setSyncing(false);
+    setStage(null);
+    closeSync();
+
+    if (!applied.ok || !applied.data) {
+      alert(applied.error ?? 'The changes could not be applied.');
+      load();
+      return;
+    }
+
+    const result = applied.data;
+    const a = result.applied;
+    alert([
+      a
+        ? `Sheet synced — ${a.staff_created} added, ${a.staff_updated} detail change(s), ${a.staff_deleted} removed, ${a.availability_written} availability day(s) set, ${a.availability_cleared} cleared.`
+        : 'Nothing was applied.',
+      result.errors?.length ? `\n\nErrors:\n${result.errors.join('\n')}` : '',
+    ].join(''));
+    load();
+  }
+
+  const busy = stage !== null || syncing;
+  const sheetRowCount = sheet ? sheet.length - 1 : 0;
   const filtered = staff.filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
 
   const sorted = sortKey
@@ -194,17 +402,24 @@ export default function StaffPage() {
 
   return (
     <div className="space-y-4">
+      {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
           <p className="text-sm text-slate-500">{staff.filter(s => s.active).length} active / {staff.length} total</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <input className="input w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
-          <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export CSV</button>
-          <button onClick={() => fileRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleImportFile} />
-          <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Staff</button>
+        <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full sm:w-auto">
+          <input className="input w-full sm:w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
+          <div className="grid grid-cols-2 sm:flex gap-2">
+            <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export CSV</button>
+            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Camera size={14} /> Capture</button>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFilePicked} />
+            <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload</button>
+            <input ref={fileRef} type="file" accept="image/*,.csv,text/csv" className="hidden" onChange={handleFilePicked} />
+            <button onClick={() => pdfRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><FileText size={14} /> Upload PDF</button>
+            <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={handleFilePicked} />
+            <button onClick={openAdd} className="btn-primary justify-center col-span-2 sm:col-auto"><Plus size={16} /> Add Staff</button>
+          </div>
         </div>
       </div>
 
@@ -321,6 +536,159 @@ export default function StaffPage() {
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
               <button onClick={save} className="btn-primary">Save</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {plan && (
+        <Modal title={fromPhoto ? 'Sync from Photo' : 'Sync Availability Sheet'} onClose={closeSync} size="lg">
+          <div className="space-y-4 text-sm">
+            {fromPhoto && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                <p className="text-xs text-amber-800">
+                  Read from a photo. Check the names, mobile numbers and times below against the sheet before applying —
+                  anything that could not be read clearly was left unchanged.
+                </p>
+              </div>
+            )}
+
+            {plan.layout && <p className="text-xs text-slate-400">Columns read — {plan.layout}</p>}
+
+            <div className="flex flex-wrap gap-1.5">
+              <span className="badge-green">{plan.creates.length} new</span>
+              <span className="badge-blue">{plan.updates.length} changed</span>
+              <span className="badge-slate">{plan.unchanged.length} unchanged</span>
+              {plan.deletes.length > 0 && <span className="badge-red">{plan.deletes.length} no longer listed</span>}
+            </div>
+
+            {plan.errors.length > 0 && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-1">
+                {plan.errors.map((err, i) => <p key={i} className="text-xs text-red-700">{err}</p>)}
+              </div>
+            )}
+
+            {plan.creates.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">New staff</h3>
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {plan.creates.map(c => (
+                    <li key={c.name} className="px-3 py-2 flex items-center justify-between gap-2">
+                      <span className="font-medium text-slate-700">{c.name}</span>
+                      <span className="text-xs text-slate-400">
+                        {c.phone ?? 'no mobile'} · {c.age_group === 'junior' ? 'Junior' : 'Senior'} · {c.available_days} day{c.available_days === 1 ? '' : 's'} available
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {plan.updates.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Changes</h3>
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {plan.updates.map(u => (
+                    <li key={u.id} className="px-3 py-2">
+                      <p className="font-medium text-slate-700">{u.name}</p>
+                      <ul className="mt-0.5 space-y-0.5">
+                        {u.changes.map((c, i) => (
+                          <li key={i} className="text-xs text-slate-500">
+                            {c.field}: <span className="text-slate-400 line-through">{c.from ?? 'not set'}</span>
+                            {' → '}
+                            <span className="text-slate-700">{c.to ?? 'unavailable'}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {plan.deletes.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Not on this sheet</h3>
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+                  <p className="text-xs text-red-700">
+                    {plan.deletes.map(d => d.name).join(', ')}
+                  </p>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={removeMissing} onChange={e => setRemoveMissing(e.target.checked)} className="mt-0.5 accent-red-600" />
+                    <span className="text-xs text-red-800">
+                      Delete these {plan.deletes.length} staff member(s) and their availability, shifts history and department assignments. This cannot be undone.
+                    </span>
+                  </label>
+                </div>
+              </section>
+            )}
+
+            {plan.warnings.length > 0 && (
+              <section>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Needs a look</h3>
+                <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
+                  {plan.warnings.map((w, i) => <li key={i} className="text-xs text-amber-800">{w}</li>)}
+                </ul>
+              </section>
+            )}
+
+            {plan.unchanged.length > 0 && (
+              <details className="rounded-lg border border-slate-200">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {plan.unchanged.length} already up to date
+                </summary>
+                <p className="border-t border-slate-100 px-3 py-2 text-xs text-slate-500">{plan.unchanged.join(', ')}</p>
+              </details>
+            )}
+
+            {sheet && (
+              <details className="rounded-lg border border-slate-200">
+                <summary className="cursor-pointer select-none px-3 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  {sheetRowCount} row{sheetRowCount === 1 ? '' : 's'} read from the {fromPhoto ? 'photo' : 'file'}
+                  {scanSeconds !== null && ` in ${scanSeconds}s`}
+                  <span className="ml-1 font-normal normal-case text-slate-400">— open to check</span>
+                </summary>
+                <div className="border-t border-slate-100 p-3 space-y-3">
+                  <button onClick={downloadSheetCsv} className="btn-secondary text-xs">
+                    <FileSpreadsheet size={13} /> Download as CSV
+                  </button>
+                  <div className="overflow-x-auto">
+                    <table className="text-xs whitespace-nowrap">
+                      <thead>
+                        <tr className="text-slate-400">
+                          {['First', 'Last', 'Mobile', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(h => (
+                            <th key={h} className="px-2 py-1 text-left font-semibold">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sheet.slice(1).map((row, i) => (
+                          <tr key={i} className="text-slate-600">
+                            {Array.from({ length: 10 }, (_, col) => (
+                              <td key={col} className="px-2 py-1">{row[col] ?? ''}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {plan.creates.length === 0 && plan.updates.length === 0 && plan.deletes.length === 0 && (
+              <p className="text-slate-500">Everything already matches this sheet — nothing to change.</p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={closeSync} className="btn-secondary">Cancel</button>
+              <button
+                onClick={applySync}
+                disabled={syncing || (plan.creates.length === 0 && plan.updates.length === 0 && (plan.deletes.length === 0 || !removeMissing))}
+                className="btn-primary"
+              >
+                {syncing ? 'Applying...' : 'Apply to Staff List'}
+              </button>
             </div>
           </div>
         </Modal>

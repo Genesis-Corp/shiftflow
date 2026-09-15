@@ -3,17 +3,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Coffee, Download, Upload, List, GanttChartSquare,
-  History, ChevronLeft, ChevronRight,
+  History, ChevronLeft, ChevronRight, Camera, FileText,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
+import { postJson } from '@/lib/api';
 import { Shift, Department } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays,
 } from '@/lib/shiftUtils';
+import { downscalePhoto } from '@/lib/image';
+import { readPdfAsBase64 } from '@/lib/pdf';
+import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
+import { STAGES } from '@/lib/progressStages';
+import { RosterEntry, RosterJob, matchDepartment } from '@/lib/roster';
+import RosterQueue from '@/components/RosterQueue';
+import type { RosterPlan } from '@/app/api/import-roster/route';
 import Papa from 'papaparse';
+
+/** A roster job in flight, tagged with the source file so it can be re-read
+ *  and with which kind of source it is — a PDF is read whole, a photo is
+ *  downscaled first. */
+type QueuedRosterJob = RosterJob & { file: File; kind: 'image' | 'pdf' };
 
 const STATUS_BADGE: Record<string, string> = {
   open: 'badge-red',
@@ -119,6 +132,17 @@ export default function ShiftsPage() {
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
   const importRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
+
+  // Roster photos/PDFs waiting to become shifts.
+  const [stage, setStage] = useState<ProgressStage | null>(null);
+  const [jobs, setJobs] = useState<RosterJob[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [applying, setApplying] = useState<string | null>(null);
+  /** Sources are read one at a time; this stops a second reader starting. */
+  const reading = useRef(false);
 
   // Load everything once. List/Past/Timeline are all just different slices
   // of the same array — no per-view refetch, and stepping the timeline's day
@@ -140,6 +164,186 @@ export default function ShiftsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  /**
+   * Queue up whatever was picked. Each source is one day in one department, so
+   * each becomes its own job with its own date, department and confirmation —
+   * and each is read in its own request, which is what keeps a batch of them
+   * clear of the hosting platform's per-request time limit.
+   */
+  function queueRosterFiles(e: React.ChangeEvent<HTMLInputElement>, kind: 'image' | 'pdf') {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    if (!files.length) return;
+
+    if (!departments.length) {
+      alert('Add a department before importing a roster — every shift belongs to one.');
+      return;
+    }
+
+    const today = todayStr();
+    setJobs(current => [
+      ...current,
+      ...files.map<QueuedRosterJob>((file, i) => ({
+        id: `${Date.now()}-${i}-${file.name}`,
+        name: file.name,
+        status: 'pending',
+        entries: [],
+        warnings: [],
+        date: today,
+        department_id: departments[0].id,
+        logNoShows: false,
+        file,
+        kind,
+      })),
+    ]);
+    setQueueOpen(true);
+  }
+
+  /** Work through the queue one source at a time. */
+  useEffect(() => {
+    if (reading.current) return;
+    const next = jobs.find(j => j.status === 'pending') as QueuedRosterJob | undefined;
+    if (!next?.file) return;
+
+    reading.current = true;
+    void readJob(next).finally(() => {
+      reading.current = false;
+      setJobs(current => [...current]); // nudge the queue on to the next source
+    });
+  }, [jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function readJob(job: QueuedRosterJob) {
+    const update = (patch: Partial<RosterJob>) =>
+      setJobs(current => current.map(j => (j.id === job.id ? { ...j, ...patch } : j)));
+
+    update({ status: 'reading' });
+    const position = jobs.filter(j => j.status === 'applied' || j.status === 'ready' || j.status === 'failed').length + 1;
+    const label = jobs.length > 1 ? `Reading roster ${position} of ${jobs.length}…` : STAGES.readingRoster.label;
+
+    try {
+      let scan;
+      if (job.kind === 'pdf') {
+        setStage({ ...STAGES.preparingPdf });
+        const pdf = await readPdfAsBase64(job.file);
+        setStage({ ...STAGES.readingRoster, label });
+        scan = await postJson<{
+          department: string | null;
+          date: string | null;
+          entries: RosterEntry[];
+          warnings: string[];
+          seconds?: number;
+        }>('/api/scan-roster', { pdf }, { timeoutMs: 70_000 });
+      } else {
+        setStage({ ...STAGES.preparing });
+        const { base64, mediaType } = await downscalePhoto(job.file);
+        setStage({ ...STAGES.readingRoster, label });
+        scan = await postJson<{
+          department: string | null;
+          date: string | null;
+          entries: RosterEntry[];
+          warnings: string[];
+          seconds?: number;
+        }>('/api/scan-roster', { image: base64, mediaType }, { timeoutMs: 70_000 });
+      }
+
+      if (!scan.ok || !scan.data) {
+        update({ status: 'failed', error: scan.error ?? 'Could not be read.' });
+        return;
+      }
+
+      // Neither the day nor the department is reliably printed on a source, so
+      // each is taken from it when it is there and left to be checked when it
+      // is not.
+      const heading = scan.data.department ?? null;
+      const matched = matchDepartment(heading ?? undefined, departments);
+      const date = scan.data.date ?? job.date;
+      const departmentId = matched?.id ?? job.department_id;
+
+      update({
+        status: 'ready',
+        entries: scan.data.entries,
+        warnings: scan.data.warnings,
+        seconds: scan.data.seconds,
+        heading: heading ? { text: heading, matched: Boolean(matched) } : null,
+        date,
+        department_id: departmentId,
+      });
+
+      await previewJob({ ...job, entries: scan.data.entries, date, department_id: departmentId });
+    } catch (err) {
+      update({ status: 'failed', error: err instanceof Error ? err.message : 'Could not be read.' });
+    } finally {
+      setStage(null);
+    }
+  }
+
+  async function previewJob(job: RosterJob) {
+    const preview = await postJson<RosterPlan>(
+      '/api/import-roster',
+      { date: job.date, department_id: job.department_id, entries: job.entries, mode: 'preview' },
+      { timeoutMs: 60_000 }
+    );
+    setJobs(current =>
+      current.map(j =>
+        j.id === job.id
+          ? { ...j, plan: preview.data ?? undefined, error: preview.ok ? undefined : preview.error ?? undefined }
+          : j
+      )
+    );
+  }
+
+  /** The date and department decide what counts as a duplicate, so re-check on a change. */
+  async function changeJobTarget(id: string, date: string, department_id: string) {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return;
+    setJobs(current => current.map(j => (j.id === id ? { ...j, date, department_id } : j)));
+    await previewJob({ ...job, date, department_id });
+  }
+
+  function toggleJobNoShows(id: string, value: boolean) {
+    setJobs(current => current.map(j => (j.id === id ? { ...j, logNoShows: value } : j)));
+  }
+
+  function removeJob(id: string) {
+    setJobs(current => {
+      const left = current.filter(j => j.id !== id);
+      if (!left.length) setQueueOpen(false);
+      return left;
+    });
+  }
+
+  async function applyJob(id: string): Promise<boolean> {
+    const job = jobs.find(j => j.id === id);
+    if (!job) return false;
+
+    setApplying(id);
+    const applied = await postJson<RosterPlan>(
+      '/api/import-roster',
+      { date: job.date, department_id: job.department_id, entries: job.entries, mode: 'apply', logNoShows: job.logNoShows },
+      { timeoutMs: 60_000 }
+    );
+    setApplying(null);
+
+    if (!applied.ok || !applied.data) {
+      setJobs(current => current.map(j => (j.id === id ? { ...j, error: applied.error ?? 'Could not be added.' } : j)));
+      return false;
+    }
+
+    setJobs(current =>
+      current.map(j => (j.id === id ? { ...j, status: 'applied', applied: applied.data!.applied ?? { shifts_created: 0, incidents_logged: 0 } } : j))
+    );
+    await load();
+    return true;
+  }
+
+  /** Add every roster that has been read and checked, in order. */
+  async function applyAllJobs() {
+    for (const job of jobs.filter(j => j.status === 'ready')) {
+      const ok = await applyJob(job.id);
+      if (!ok) break; // stop at the first failure rather than pressing on blindly
+    }
+  }
 
   function openAdd() {
     setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
@@ -280,8 +484,11 @@ export default function ShiftsPage() {
     );
   }
 
+  const busy = stage !== null || applying !== null;
+
   return (
     <div className="space-y-4">
+      {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>
@@ -336,6 +543,12 @@ export default function ShiftsPage() {
             </>
           )}
 
+          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary"><Camera size={14} /> Capture</button>
+          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => queueRosterFiles(e, 'image')} />
+          <button onClick={() => photoRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Upload Rosters</button>
+          <input ref={photoRef} type="file" accept="image/*" multiple className="hidden" onChange={e => queueRosterFiles(e, 'image')} />
+          <button onClick={() => pdfRef.current?.click()} disabled={busy} className="btn-secondary"><FileText size={14} /> Upload PDF</button>
+          <input ref={pdfRef} type="file" accept="application/pdf" multiple className="hidden" onChange={e => queueRosterFiles(e, 'pdf')} />
           <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
           <button onClick={() => importRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
@@ -504,6 +717,20 @@ export default function ShiftsPage() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {queueOpen && jobs.length > 0 && (
+        <RosterQueue
+          jobs={jobs}
+          departments={departments}
+          applying={applying}
+          onClose={() => setQueueOpen(false)}
+          onChangeTarget={changeJobTarget}
+          onToggleNoShows={toggleJobNoShows}
+          onApply={applyJob}
+          onApplyAll={applyAllJobs}
+          onRemove={removeJob}
+        />
       )}
     </div>
   );
