@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoster, groupRosterEntries, ScannedRosterRow } from '../roster';
+import { parseRoster, groupRosterEntries, hasNameCandidate, ScannedRosterRow, RosterEntry, NamedStaff } from '../roster';
 
 describe('parseRoster', () => {
   it('keeps the same person twice when each occurrence is a different department', () => {
@@ -55,5 +55,32 @@ describe('groupRosterEntries', () => {
     const groups = groupRosterEntries(entries, null);
     expect(groups).toHaveLength(1);
     expect(groups[0].entries).toHaveLength(2);
+  });
+});
+
+describe('hasNameCandidate', () => {
+  const rosterEntry = (name: string): RosterEntry => ({
+    name, start_time: '09:00:00', end_time: '17:00:00', status: null, truncated: false, department: null,
+  });
+  const staff = (name: string): NamedStaff => ({ id: name, name });
+
+  it('is false when nobody on the staff list is remotely similar', () => {
+    const result = hasNameCandidate(rosterEntry('Biniam Abraha'), [staff('Eli Benino'), staff('Jai Black')]);
+    expect(result).toBe(false);
+  });
+
+  it('is true for an exact match', () => {
+    const result = hasNameCandidate(rosterEntry('Eli Benino'), [staff('Eli Benino')]);
+    expect(result).toBe(true);
+  });
+
+  it('is true for an ambiguous prefix match (a truncated name matching more than one person)', () => {
+    const result = hasNameCandidate(rosterEntry('Md Mozammal'), [staff('Md Mozammal Hossain'), staff('Md Mozammal Islam')]);
+    expect(result).toBe(true);
+  });
+
+  it('is true when two people share the exact same name', () => {
+    const result = hasNameCandidate(rosterEntry('Dave Smith'), [{ id: '1', name: 'Dave Smith' }, { id: '2', name: 'Dave Smith' }]);
+    expect(result).toBe(true);
   });
 });

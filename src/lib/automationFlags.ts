@@ -1,7 +1,16 @@
 export interface AutomationFlag {
   /** Which department this flag is about, or null when it's about the whole run. */
   department: string | null;
-  kind: 'unmatched_department' | 'unmatched_staff' | 'unreadable' | 'warning' | 'error' | 'empty_read';
+  kind:
+    | 'unmatched_department'
+    /** Ambiguous — more than one existing staff member could be this name. */
+    | 'unmatched_staff'
+    | 'unreadable'
+    | 'warning'
+    | 'error'
+    | 'empty_read'
+    /** Informational — a name matched nobody at all, so it was added as new staff. */
+    | 'staff_created';
   message: string;
 }
 

@@ -1,5 +1,5 @@
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
-import { RosterEntry, matchStaffName } from '@/lib/roster';
+import { RosterEntry, matchStaffName, hasNameCandidate } from '@/lib/roster';
 import { requiresBreak, BREAK_DURATION_MINUTES, RELIABILITY_DELTAS, clampScore } from '@/lib/shiftUtils';
 
 /**
@@ -19,6 +19,13 @@ interface PlannedShift {
   status: string | null;
 }
 
+export interface NewStaffShift {
+  name: string;
+  start_time: string;
+  end_time: string;
+  status: string | null;
+}
+
 export interface RosterPlan {
   mode: 'preview' | 'apply';
   date: string;
@@ -27,7 +34,13 @@ export interface RosterPlan {
   duplicates: { name: string; existing: string }[];
   /** How many shifts this department already has on this date. */
   existingOnDate: number;
-  /** Names that do not match anyone on the staff list. */
+  /**
+   * Nobody on the staff list is even a candidate for this name — added as a
+   * new staff member (and given this shift) on apply, same as a name the
+   * availability-sheet import doesn't recognise.
+   */
+  newStaff: NewStaffShift[];
+  /** More than one person on the staff list could be this name — needs a person to sort out, not a guess. */
   unmatched: string[];
   /** Read from the source but missing a usable time. */
   unreadable: string[];
@@ -66,6 +79,7 @@ export function buildRosterPlan(
     creates: [],
     duplicates: [],
     existingOnDate: existing.filter(shift => shift.department_id === departmentId).length,
+    newStaff: [],
     unmatched: [],
     unreadable: [],
     noShows: [],
@@ -91,7 +105,15 @@ export function buildRosterPlan(
 
     const match = matchStaffName(entry, staff);
     if (!match) {
-      plan.unmatched.push(entry.name);
+      if (hasNameCandidate(entry, staff)) {
+        // Someone similarly-named already exists — ambiguous, needs a person.
+        plan.unmatched.push(entry.name);
+      } else {
+        // Nobody by this name at all — safe to add as new staff on apply.
+        plan.newStaff.push({
+          name: entry.name, start_time: entry.start_time, end_time: entry.end_time, status: entry.status,
+        });
+      }
       continue;
     }
 
@@ -141,6 +163,8 @@ export async function applyRosterPlan(
   date: string,
   logNoShows: boolean
 ): Promise<{ shifts_created: number; incidents_logged: number }> {
+  if (plan.newStaff.length) await createNewStaffAndShifts(plan);
+
   if (!plan.creates.length) return { shifts_created: 0, incidents_logged: 0 };
 
   const { error } = await supabase.from('shifts').insert(
@@ -167,6 +191,62 @@ export async function applyRosterPlan(
 
   const incidents = logNoShows ? await recordNoShows(plan, date) : 0;
   return { shifts_created: plan.creates.length, incidents_logged: incidents };
+}
+
+/**
+ * Add a new staff record for everyone in plan.newStaff, then queue their
+ * shift alongside the already-matched ones in plan.creates.
+ *
+ * Re-checks the staff list immediately before creating each one — a source
+ * with more than one department can put the same brand-new person in
+ * separate groups applied moments apart (one department's group already
+ * created them by the time this one runs), and this is the one place that
+ * must not just trust the plan it was handed, or it duplicates the person.
+ */
+async function createNewStaffAndShifts(plan: RosterPlan): Promise<void> {
+  const { data, error: staffErr } = await supabase.from('staff').select('id, name, active');
+  if (staffErr) {
+    plan.errors.push(`Could not check the staff list before adding new staff: ${staffErr.message}`);
+    return;
+  }
+  const staff = (data ?? []) as RosterStaff[];
+
+  for (const candidate of plan.newStaff) {
+    const probe: RosterEntry = {
+      name: candidate.name, start_time: candidate.start_time, end_time: candidate.end_time,
+      status: candidate.status, truncated: false, department: null,
+    };
+
+    const already = matchStaffName(probe, staff);
+    const person = already ?? await insertNewStaff(candidate.name, plan);
+    if (!person) continue; // insert failed — already recorded in plan.errors
+
+    if (!already) staff.push({ id: person.id, name: person.name, active: true });
+
+    plan.creates.push({
+      name: person.name,
+      staff_id: person.id,
+      start_time: candidate.start_time,
+      end_time: candidate.end_time,
+      has_break: requiresBreak(candidate.start_time.slice(0, 5), candidate.end_time.slice(0, 5)),
+      status: candidate.status,
+    });
+  }
+}
+
+/** Same defaults the Staff page's "Add Staff" form starts a new person with — nothing about age or role can be read off a roster. */
+async function insertNewStaff(name: string, plan: RosterPlan): Promise<RosterStaff | null> {
+  const { data, error } = await supabase
+    .from('staff')
+    .insert([{ name, age_group: 'senior', role_type: 'department_only', reliability_score: 50, active: true }])
+    .select('id, name, active')
+    .single();
+
+  if (error || !data) {
+    plan.errors.push(`Could not add ${name} as new staff: ${error?.message ?? 'unknown error'}`);
+    return null;
+  }
+  return data as RosterStaff;
 }
 
 /**

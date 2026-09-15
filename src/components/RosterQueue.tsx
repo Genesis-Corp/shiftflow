@@ -132,6 +132,22 @@ export default function RosterQueue({
                     </ul>
                   )}
 
+                  {plan.newStaff.length > 0 && (
+                    <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-1.5">
+                      <p className="text-xs font-semibold text-blue-900">
+                        New to the staff list — will be added automatically:
+                      </p>
+                      <ul className="space-y-0.5">
+                        {plan.newStaff.map(s => (
+                          <li key={s.name} className="text-xs text-blue-800 flex items-center justify-between gap-2">
+                            <span className="truncate">{s.name}</span>
+                            <span className="text-blue-600 shrink-0">{s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
                   {plan.noShows.length > 0 && (
                     <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
                       <p className="text-xs font-semibold text-red-800">Marked as a no-show: {plan.noShows.map(n => n.name).join(', ')}</p>
@@ -154,7 +170,7 @@ export default function RosterQueue({
                     <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
                       {plan.unmatched.map(name => (
                         <li key={name} className="text-xs text-amber-800">
-                          {name} is not on the staff list yet — add them on the Staff page, then read this photo again to give them their shift.
+                          {name} matches more than one person on the staff list (or can't be told apart) — check the Staff page, then read this photo again.
                         </li>
                       ))}
                       {plan.unreadable.map(name => (
@@ -171,8 +187,8 @@ export default function RosterQueue({
                   )}
 
                   <div className="flex justify-end">
-                    <button onClick={() => onApply(job.id)} disabled={applying !== null || !plan.creates.length} className="btn-primary">
-                      {applying === job.id ? 'Adding…' : `Add ${plan.creates.length} shift${plan.creates.length === 1 ? '' : 's'}`}
+                    <button onClick={() => onApply(job.id)} disabled={applying !== null || !toAdd(plan)} className="btn-primary">
+                      {applying === job.id ? 'Adding…' : `Add ${toAdd(plan)} shift${toAdd(plan) === 1 ? '' : 's'}`}
                     </button>
                   </div>
                 </div>
@@ -202,10 +218,16 @@ function StatusIcon({ status }: { status: RosterJob['status'] }) {
   return <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mx-[3px]" />;
 }
 
+/** Total shifts an "Add" click will write — matched staff plus new staff about to be created. */
+function toAdd(plan: RosterPlan): number {
+  return plan.creates.length + plan.newStaff.length;
+}
+
 function summarise(plan: RosterPlan): string {
-  const parts = [`${plan.creates.length} to add`];
+  const parts = [`${toAdd(plan)} to add`];
+  if (plan.newStaff.length) parts.push(`${plan.newStaff.length} new staff`);
   if (plan.duplicates.length) parts.push(`${plan.duplicates.length} already there`);
-  if (plan.unmatched.length) parts.push(`${plan.unmatched.length} not on the staff list`);
+  if (plan.unmatched.length) parts.push(`${plan.unmatched.length} need checking`);
   if (plan.unreadable.length) parts.push(`${plan.unreadable.length} unreadable`);
   return parts.join(' · ');
 }

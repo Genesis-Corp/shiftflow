@@ -109,8 +109,11 @@ export async function POST(req: NextRequest) {
       ];
     }
 
+    for (const s of plan.newStaff) {
+      flags.push({ department: department.name, kind: 'staff_created', message: `${s.name} was new to the staff list — added automatically.` });
+    }
     for (const name of plan.unmatched) {
-      flags.push({ department: department.name, kind: 'unmatched_staff', message: `${name} is not on the staff list.` });
+      flags.push({ department: department.name, kind: 'unmatched_staff', message: `${name} matches more than one person on the staff list — check the Staff page.` });
     }
     for (const name of plan.unreadable) {
       flags.push({ department: department.name, kind: 'unreadable', message: `${name} — the rostered time could not be read.` });

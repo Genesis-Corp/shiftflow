@@ -161,6 +161,20 @@ export function matchStaffName(entry: RosterEntry, staff: NamedStaff[]): NamedSt
   return prefixed.length === 1 ? prefixed[0] : null;
 }
 
+/**
+ * Whether anyone on the staff list is even a candidate for this entry's
+ * name — exact or prefix, matched or ambiguous. False only means nobody
+ * remotely similar exists, which is the one case it's safe to add this
+ * person as new staff rather than ask a human to sort it out: an ambiguous
+ * match (two people sharing a name) must still go to a person, not be
+ * guessed or duplicated.
+ */
+export function hasNameCandidate(entry: RosterEntry, staff: NamedStaff[]): boolean {
+  const key = nameKey(entry.name);
+  if (!key) return true;
+  return staff.some(s => nameKey(s.name) === key || nameKey(s.name).startsWith(key));
+}
+
 /** Pick the department whose name best fits the screenshot's heading. */
 export function matchDepartment<T extends { id: string; name: string }>(
   heading: string | undefined,
