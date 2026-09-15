@@ -269,7 +269,12 @@ export async function handleInboundReply(params: {
   const { data: claimed } = await supabaseAdmin
     .rpc('claim_shift_race', { p_race_id: race.id, p_staff_id: recipient.staff_id });
 
-  const won = Array.isArray(claimed) ? claimed.length > 0 : !!claimed;
+  // The function is SETOF, so a loss is an empty array. The id check is a
+  // second line of defence: if the function were ever redefined without SETOF,
+  // a loss would arrive as a single row of NULLs, which is truthy — and every
+  // late replier would be told they had won the shift.
+  const claimedRows = Array.isArray(claimed) ? claimed : claimed ? [claimed] : [];
+  const won = claimedRows.some((row: { id?: string | null }) => !!row?.id);
 
   if (!won) {
     await supabaseAdmin.from('shift_claim_recipients').update({

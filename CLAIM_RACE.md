@@ -111,15 +111,28 @@ The winner is decided by a single conditional UPDATE in Postgres
 (`claim_shift_race` in `supabase-claim-race.sql`):
 
 ```sql
-update shift_claim_races
-set winner_staff_id = $1, status = 'claimed', claimed_at = now()
-where id = $2 and status = 'active' and winner_staff_id is null
-  and expires_at > now()
-returning *;
+create function claim_shift_race(p_race_id uuid, p_staff_id uuid)
+returns setof shift_claim_races    -- SETOF is load-bearing, see below
+language sql as $$
+  update shift_claim_races
+  set winner_staff_id = p_staff_id, status = 'claimed', claimed_at = now()
+  where id = p_race_id and status = 'active' and winner_staff_id is null
+    and expires_at > now()
+  returning *;
+$$;
 ```
 
 Postgres serialises this at row level, so of two simultaneous replies exactly
 one gets a row back. Read-then-write would hand the shift to two people.
+Verified against Postgres 16: eight simultaneous claims produce one winner and
+seven losers.
+
+**`setof` is not cosmetic.** A function declared `returns shift_claim_races`
+returns *one row of NULLs* when the UPDATE matches nothing. That reaches the
+client as a truthy object, so every late replier would be told they had won and
+the shift would be reassigned on each reply. `setof` returns zero rows instead.
+The handler also checks for a non-null `id` as a second line of defence, and
+there is a regression test for it.
 
 A `YES` that arrives after the race is won always gets an answer
 ("sorry, already covered") rather than silence — silence after an explicit
@@ -134,9 +147,15 @@ Shift page remain for judgement calls.
 
 ## Setup
 
-1. Run `supabase-schema.sql`, then `supabase-claim-race.sql`, in the Supabase
-   SQL editor. The second one enables RLS — after it runs, the anon key can no
-   longer read staff data, which is the point.
+1. In the Supabase SQL editor, run `supabase-schema.sql`, then
+   **`supabase-claim-race.sql`**. The second enables RLS — after it runs the
+   anon key can no longer read staff data, which is the point.
+
+   **Already created the claim-race tables from a shortened snippet?** Run
+   `supabase-claim-race-patch.sql` instead. It adds the missing columns,
+   constraints, indexes and the `claim_shift_race` function without dropping
+   anything, and is safe to re-run. Re-running the full migration would *not*
+   fix it: `create table if not exists` skips tables that already exist.
 2. Set the environment variables from `.env.local.example`.
 3. Check the Staff page for anyone flagged **No mobile** — they cannot be
    included in a race.

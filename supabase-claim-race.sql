@@ -120,8 +120,12 @@ create unique index if not exists sms_messages_provider_sid_uniq
 --    Returns the race row ONLY to the first caller. Postgres serialises the
 --    UPDATE at row level, so simultaneous replies cannot both win.
 -- ---------------------------------------------------------------------------
-create or replace function claim_shift_race(p_race_id uuid, p_staff_id uuid)
-returns shift_claim_races
+-- Dropped first: CREATE OR REPLACE cannot change a function's return type,
+-- so replacing an earlier non-SETOF version would fail without this.
+drop function if exists claim_shift_race(uuid, uuid);
+
+create function claim_shift_race(p_race_id uuid, p_staff_id uuid)
+returns setof shift_claim_races
 language sql
 as $$
   update shift_claim_races

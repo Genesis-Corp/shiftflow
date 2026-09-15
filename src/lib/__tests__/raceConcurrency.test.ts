@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const state = {
   raceWon: false,
+  /** Simulates claim_shift_race declared WITHOUT setof: a row of NULLs. */
+  rpcReturnsNullRow: false,
   shiftUpdates: [] as Record<string, unknown>[],
   recipientUpdates: [] as Record<string, unknown>[],
 };
@@ -81,6 +83,10 @@ vi.mock('@/lib/supabaseAdmin', () => ({
     from: (table: string) => makeQuery(table),
     // The atomic claim: the first caller gets a row, everyone after gets none.
     rpc: async (_fn: string) => {
+      if (state.rpcReturnsNullRow) {
+        // What a non-SETOF function hands back on a no-op UPDATE.
+        return { data: { id: null, shift_id: null, status: null, winner_staff_id: null }, error: null };
+      }
       if (state.raceWon) return { data: [], error: null };
       state.raceWon = true;
       return { data: [{ ...RACE, status: 'claimed' }], error: null };
@@ -98,6 +104,7 @@ const { handleInboundReply } = await import('../raceService');
 describe('simultaneous YES replies', () => {
   beforeEach(() => {
     state.raceWon = false;
+    state.rpcReturnsNullRow = false;
     state.shiftUpdates = [];
     state.recipientUpdates = [];
   });
@@ -139,6 +146,21 @@ describe('simultaneous YES replies', () => {
   it('treats a declining reply as a decline, not a claim', async () => {
     const res = await handleInboundReply({ from: '+61433821798', body: 'NO 4F7K', providerSid: 'SM3' });
     expect(res.result).toBe('declined');
+    expect(state.shiftUpdates.filter(u => u.status === 'covered')).toHaveLength(0);
+  });
+
+  it('does not treat a row of NULLs as a win', async () => {
+    // Regression guard. claim_shift_race must be declared SETOF: without it,
+    // a losing claim returns one row of NULLs, which is a truthy object. If
+    // the handler trusted truthiness, EVERY late replier would be told they
+    // won and the shift would be reassigned on each reply.
+    state.rpcReturnsNullRow = true;
+
+    const res = await handleInboundReply({
+      from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM9',
+    });
+
+    expect(res.result).toBe('too_late');
     expect(state.shiftUpdates.filter(u => u.status === 'covered')).toHaveLength(0);
   });
 
