@@ -1,0 +1,52 @@
+name: Humanforce roster sync
+
+# Pulls the day's roster PDF from Humanforce and applies it to ShiftFlow via
+# /api/automation/roster-pdf. See automation/humanforce-sync.mjs — it will
+# not do anything useful until its TODO blocks are filled in with real
+# Humanforce selectors from `npx playwright codegen`.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   HUMANFORCE_USERNAME, HUMANFORCE_PASSWORD — the Humanforce login.
+#   SHIFTFLOW_URL      — e.g. https://shiftflow-git-<branch>-<team>.vercel.app
+#                         (the stable per-branch alias, not a one-off deploy URL).
+#   AUTOMATION_TOKEN   — must match the AUTOMATION_TOKEN set on that Vercel
+#                         deployment (all environments) — generate with
+#                         `openssl rand -hex 32`, same value both places.
+#
+# If ShiftFlow has Vercel Password Protection enabled, this workflow also
+# needs a way past it (a bypass token in the request, or protection scoped
+# to exclude API routes) — check that separately before relying on this.
+
+on:
+  schedule:
+    # 20:00 UTC = 4:00am AWST (Perth is UTC+8 year-round, no DST). Adjust to
+    # whenever you actually want the day's roster pulled in.
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+    inputs:
+      target_date_offset_days:
+        description: "0 = today, 1 = tomorrow, etc. Leave default for the scheduled run's usual offset."
+        required: false
+        default: '0'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npx playwright install --with-deps chromium
+
+      - run: node automation/humanforce-sync.mjs
+        env:
+          HUMANFORCE_USERNAME: ${{ secrets.HUMANFORCE_USERNAME }}
+          HUMANFORCE_PASSWORD: ${{ secrets.HUMANFORCE_PASSWORD }}
+          SHIFTFLOW_URL: ${{ secrets.SHIFTFLOW_URL }}
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+          TARGET_DATE_OFFSET_DAYS: ${{ inputs.target_date_offset_days || '0' }}

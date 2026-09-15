@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import Navbar from '@/components/Navbar';
+import AutomationFlagsBanner from '@/components/AutomationFlagsBanner';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body className="min-h-screen bg-slate-50">
         <Navbar userEmail={user?.email ?? null} />
+        <AutomationFlagsBanner />
         <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
       </body>
     </html>
