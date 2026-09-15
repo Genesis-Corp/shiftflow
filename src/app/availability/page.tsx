@@ -152,37 +152,35 @@ export default function AvailabilityPage() {
       {view === 'editor' ? (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Staff selector */}
-            <div className="card p-4 space-y-2">
+            {/* Staff selector — compact grid, name + a set/not-set dot only.
+                The times used to be spelled out here too, which pushed the
+                list a long way down the page for no real benefit: they're
+                already visible in full once a name is selected. */}
+            <div className="card p-4">
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Select Staff</p>
-              {staff.map(s => {
-                const tpls = allTemplates.filter(t => t.staff_id === s.id && t.available);
-                const selected = selectedStaff?.id === s.id;
-                return (
-                  <button
-                    key={s.id}
-                    onClick={() => loadStaffTemplates(s)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg transition-colors ${
-                      selected ? 'bg-blue-600 text-white' : 'hover:bg-slate-50 text-slate-700'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">{s.name}</span>
-                      {tpls.length === 0 && (
-                        <span className={`text-xs ${selected ? 'text-blue-200' : 'text-slate-300'}`}>Not set</span>
-                      )}
-                    </div>
-                    {tpls.length > 0 && (
-                      <p className={`text-xs mt-0.5 truncate ${selected ? 'text-blue-100' : 'text-slate-400'}`}>
-                        {tpls
-                          .sort((a, b) => a.day_of_week - b.day_of_week)
-                          .map(t => `${DAY_SHORT[t.day_of_week]} ${formatTimeShort(t.start_time)}-${formatTimeShort(t.end_time)}`)
-                          .join(' · ')}
-                      </p>
-                    )}
-                  </button>
-                );
-              })}
+              <div className="grid grid-cols-3 gap-1.5">
+                {staff.map(s => {
+                  const hasTemplate = allTemplates.some(t => t.staff_id === s.id && t.available);
+                  const selected = selectedStaff?.id === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => loadStaffTemplates(s)}
+                      title={s.name}
+                      className={`flex items-center gap-1.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                        selected ? 'bg-blue-600 text-white' : 'hover:bg-slate-50 text-slate-700'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                          hasTemplate ? (selected ? 'bg-blue-200' : 'bg-green-500') : (selected ? 'bg-blue-300' : 'bg-slate-300')
+                        }`}
+                      />
+                      <span className="text-sm font-medium truncate">{s.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Editor */}

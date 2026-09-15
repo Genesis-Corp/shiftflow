@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
-import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
@@ -21,6 +21,41 @@ const ROLE_BADGE: Record<RoleType, string> = {
   potential_all_rounder: 'badge-blue',
 };
 
+type SortKey = 'name' | 'age_group' | 'role_type' | 'departments' | 'reliability_score' | 'active';
+
+/** First click on a column sorts the way you'd actually want to read it:
+ *  names A-Z, but reliability highest-first, not 0 first. */
+const DEFAULT_SORT_DIR: Record<SortKey, 'asc' | 'desc'> = {
+  name: 'asc', age_group: 'asc', role_type: 'asc',
+  departments: 'desc', reliability_score: 'desc', active: 'desc',
+};
+
+function sortValue(s: Staff, key: SortKey): string | number {
+  switch (key) {
+    case 'name': return s.name.toLowerCase();
+    case 'age_group': return s.age_group;
+    case 'role_type': return s.role_type;
+    case 'departments': return (s.staff_departments ?? []).length;
+    case 'reliability_score': return s.reliability_score;
+    case 'active': return s.active ? 1 : 0;
+  }
+}
+
+function SortableHeader({ label, sortKey, active, dir, onClick }: {
+  label: string; sortKey: SortKey; active: boolean; dir: 'asc' | 'desc'; onClick: (key: SortKey) => void;
+}) {
+  return (
+    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+      <button onClick={() => onClick(sortKey)} className="flex items-center gap-1 hover:text-slate-700 transition-colors">
+        {label}
+        {active
+          ? (dir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+          : <ChevronsUpDown size={12} className="text-slate-300" />}
+      </button>
+    </th>
+  );
+}
+
 export default function StaffPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -29,7 +64,18 @@ export default function StaffPage() {
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [filter, setFilter] = useState('');
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir(DEFAULT_SORT_DIR[key]);
+    }
+  }
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
@@ -136,6 +182,16 @@ export default function StaffPage() {
 
   const filtered = staff.filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
 
+  const sorted = sortKey
+    ? [...filtered].sort((a, b) => {
+        const av = sortValue(a, sortKey), bv = sortValue(b, sortKey);
+        const cmp = typeof av === 'number' && typeof bv === 'number'
+          ? av - bv
+          : String(av).localeCompare(String(bv));
+        return sortDir === 'asc' ? cmp : -cmp;
+      })
+    : filtered;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -159,13 +215,17 @@ export default function StaffPage() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                {['Name', 'Type', 'Role', 'Departments', 'Reliability', 'Status', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
+                <SortableHeader label="Name" sortKey="name" active={sortKey === 'name'} dir={sortDir} onClick={toggleSort} />
+                <SortableHeader label="Type" sortKey="age_group" active={sortKey === 'age_group'} dir={sortDir} onClick={toggleSort} />
+                <SortableHeader label="Role" sortKey="role_type" active={sortKey === 'role_type'} dir={sortDir} onClick={toggleSort} />
+                <SortableHeader label="Departments" sortKey="departments" active={sortKey === 'departments'} dir={sortDir} onClick={toggleSort} />
+                <SortableHeader label="Reliability" sortKey="reliability_score" active={sortKey === 'reliability_score'} dir={sortDir} onClick={toggleSort} />
+                <SortableHeader label="Status" sortKey="active" active={sortKey === 'active'} dir={sortDir} onClick={toggleSort} />
+                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {filtered.map(s => (
+              {sorted.map(s => (
                 <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${!s.active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-medium text-slate-800">{s.name}</td>
                   <td className="px-4 py-3">
@@ -201,7 +261,7 @@ export default function StaffPage() {
               ))}
             </tbody>
           </table>
-          {filtered.length === 0 && <p className="text-center text-slate-400 py-8">No staff found.</p>}
+          {sorted.length === 0 && <p className="text-center text-slate-400 py-8">No staff found.</p>}
         </div>
       )}
 

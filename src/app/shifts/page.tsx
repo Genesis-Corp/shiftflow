@@ -1,13 +1,26 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Coffee, Download, Upload } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Plus, Pencil, Trash2, Coffee, Download, Upload, List, GanttChartSquare } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 import { Shift, Department } from '@/lib/types';
-import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import {
+  formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
+  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12,
+} from '@/lib/shiftUtils';
 import Papa from 'papaparse';
+
+const STATUS_BAR_COLOR: Record<string, string> = {
+  open: 'bg-red-400',
+  covered: 'bg-green-500',
+  cancelled: 'bg-slate-300',
+};
+
+function todayStr(): string {
+  return new Date().toISOString().split('T')[0];
+}
 
 const STATUS_BADGE: Record<string, string> = {
   open: 'badge-red',
@@ -23,6 +36,7 @@ export default function ShiftsPage() {
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
   const [dateFilter, setDateFilter] = useState('');
+  const [view, setView] = useState<'list' | 'timeline'>('list');
 
   const [form, setForm] = useState({
     date: '', start_time: '09:00', end_time: '17:00',
@@ -49,6 +63,12 @@ export default function ShiftsPage() {
   }
 
   useEffect(() => { load(); }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The timeline shows one day at a time — pick today the moment someone
+  // switches to it with no date already chosen, rather than showing nothing.
+  useEffect(() => {
+    if (view === 'timeline' && !dateFilter) setDateFilter(todayStr());
+  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openAdd() {
     setForm({ date: new Date().toISOString().split('T')[0], start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
@@ -123,6 +143,26 @@ export default function ShiftsPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
+  // Shifts already arrive sorted by date, start_time (the API orders both),
+  // so grouping is a single pass with no re-sorting needed.
+  const shiftGroups = useMemo(() => {
+    const groups: { date: string; shifts: Shift[] }[] = [];
+    for (const s of shifts) {
+      const last = groups[groups.length - 1];
+      if (last && last.date === s.date) last.shifts.push(s);
+      else groups.push({ date: s.date, shifts: [s] });
+    }
+    return groups;
+  }, [shifts]);
+
+  const timelineHours = useMemo(
+    () => Array.from(
+      { length: TIMELINE_END_HOUR - TIMELINE_START_HOUR },
+      (_, i) => TIMELINE_START_HOUR + i
+    ),
+    []
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -130,9 +170,27 @@ export default function ShiftsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>
           <p className="text-sm text-slate-500">{shifts.length} shifts {dateFilter ? `on ${formatDate(dateFilter)}` : 'total'}</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex gap-2 flex-wrap items-center">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            <button
+              onClick={() => setView('list')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                view === 'list' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <List size={14} /> List
+            </button>
+            <button
+              onClick={() => setView('timeline')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                view === 'timeline' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <GanttChartSquare size={14} /> Daily Timeline
+            </button>
+          </div>
           <input type="date" className="input w-auto" value={dateFilter} onChange={e => setDateFilter(e.target.value)} />
-          {dateFilter && <button onClick={() => setDateFilter('')} className="btn-secondary text-xs">Clear date</button>}
+          {dateFilter && view === 'list' && <button onClick={() => setDateFilter('')} className="btn-secondary text-xs">Clear date</button>}
           <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
           <button onClick={() => importRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
@@ -142,45 +200,117 @@ export default function ShiftsPage() {
 
       {loadError && <ErrorBanner message={loadError} onRetry={load} />}
 
-      {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : (
-        <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b border-slate-200">
-              <tr>
-                {['Date', 'Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {shifts.map(s => (
-                <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="px-4 py-3 text-slate-700">{formatDate(s.date)}</td>
-                  <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
-                  <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
-                  <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <span className="badge-slate capitalize">{s.required_role}</span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
-                  </td>
-                  <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex gap-1">
-                      <button onClick={() => openAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
-                      <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                      <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+      {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : view === 'list' ? (
+        <div className="space-y-4">
+          {shiftGroups.length === 0 && (
+            <div className="card"><p className="text-center text-slate-400 py-8">No shifts found.</p></div>
+          )}
+          {shiftGroups.map(({ date, shifts: dayShifts }) => (
+            <div key={date} className="card overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                <span className="font-semibold text-slate-800 text-sm">{formatDate(date)}</span>
+                <span className="badge-slate">{dayShifts.length}</span>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="border-b border-slate-100">
+                  <tr>
+                    {['Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
+                      <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {dayShifts.map(s => (
+                    <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
+                      <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
+                      <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <span className="badge-slate capitalize">{s.required_role}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-1">
+                          <button onClick={() => openAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
+                          <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                          <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="card p-4">
+          <h2 className="font-semibold text-slate-800 mb-4">{formatDate(dateFilter)}</h2>
+          {departments.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">No departments set up.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <div className="min-w-[900px]">
+                <div className="flex pl-36">
+                  {timelineHours.map(h => (
+                    <div key={h} className="flex-1 text-[11px] text-slate-400 font-medium border-l border-slate-100 pl-1">
+                      {formatHour12(h)}
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {shifts.length === 0 && <p className="text-center text-slate-400 py-8">No shifts found.</p>}
+                  ))}
+                </div>
+
+                <div className="mt-1 divide-y divide-slate-100">
+                  {departments.map(d => {
+                    const deptShifts = shifts.filter(s => s.department_id === d.id);
+                    return (
+                      <div key={d.id} className="flex items-center py-2">
+                        <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                          {d.name}
+                        </div>
+                        <div className="relative flex-1 h-7 rounded bg-slate-50">
+                          <div className="absolute inset-0 flex pointer-events-none">
+                            {timelineHours.map(h => (
+                              <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                            ))}
+                          </div>
+                          {deptShifts.map(s => {
+                            const pos = timelineBarPosition(s.start_time, s.end_time);
+                            if (!pos) return null;
+                            const assignedName = (s as { assigned_staff?: { name: string } }).assigned_staff?.name;
+                            return (
+                              <div
+                                key={s.id}
+                                title={`${s.start_time}–${s.end_time} · ${s.status}${assignedName ? ` · ${assignedName}` : ''}`}
+                                onClick={() => openEdit(s)}
+                                className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
+                                style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
+                              >
+                                <span className="text-[11px] text-white font-medium whitespace-nowrap">
+                                  {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}{assignedName ? ` · ${assignedName}` : ''}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-4 mt-4 text-xs text-slate-500">
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" /> Open</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-green-500" /> Covered</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-slate-300" /> Cancelled</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
