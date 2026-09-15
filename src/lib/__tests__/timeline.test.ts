@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { timelineBarPosition, formatHour12, TIMELINE_START_HOUR, TIMELINE_END_HOUR } from '../shiftUtils';
+import { timelineBarPosition, formatHour12, addDays, TIMELINE_START_HOUR, TIMELINE_END_HOUR } from '../shiftUtils';
 
 describe('timelineBarPosition', () => {
   it('places a normal daytime shift proportionally within the 5am-10pm span', () => {
@@ -63,5 +63,36 @@ describe('formatHour12', () => {
   it('formats afternoon hours relative to 12, not straight subtraction from 24', () => {
     expect(formatHour12(13)).toBe('1pm');
     expect(formatHour12(21)).toBe('9pm');
+  });
+});
+
+describe('addDays', () => {
+  it('steps forward and backward within a month', () => {
+    expect(addDays('2026-09-15', 1)).toBe('2026-09-16');
+    expect(addDays('2026-09-15', -1)).toBe('2026-09-14');
+  });
+
+  it('crosses a month boundary', () => {
+    expect(addDays('2026-09-30', 1)).toBe('2026-10-01');
+    expect(addDays('2026-10-01', -1)).toBe('2026-09-30');
+  });
+
+  it('crosses a year boundary', () => {
+    expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(addDays('2027-01-01', -1)).toBe('2026-12-31');
+  });
+
+  it('handles February in a leap year correctly', () => {
+    // 2028 is a leap year — Feb has 29 days.
+    expect(addDays('2028-02-28', 1)).toBe('2028-02-29');
+    expect(addDays('2028-02-29', 1)).toBe('2028-03-01');
+  });
+
+  it('handles February in a non-leap year correctly', () => {
+    expect(addDays('2026-02-28', 1)).toBe('2026-03-01');
+  });
+
+  it('delta of 0 is a no-op', () => {
+    expect(addDays('2026-09-15', 0)).toBe('2026-09-15');
   });
 });

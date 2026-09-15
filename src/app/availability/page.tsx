@@ -31,6 +31,16 @@ function formatTimeShort(t: string): string {
   return mStr === '00' ? `${h12}${period}` : `${h12}:${mStr}${period}`;
 }
 
+/** "Aria Benino" -> "Aria B." — the Select Staff grid is packed 3-wide, so a
+ *  full surname reliably means an ellipsis; the first initial is normally
+ *  still enough to tell two Arias apart. Full name stays in the tooltip. */
+function shortenName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return parts[0] ?? '';
+  const lastInitial = parts[parts.length - 1][0]?.toUpperCase() ?? '';
+  return `${parts[0]} ${lastInitial}.`;
+}
+
 export default function AvailabilityPage() {
   const [view, setView] = useState<'editor' | 'timeline'>('editor');
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -176,7 +186,7 @@ export default function AvailabilityPage() {
                           hasTemplate ? (selected ? 'bg-blue-200' : 'bg-green-500') : (selected ? 'bg-blue-300' : 'bg-slate-300')
                         }`}
                       />
-                      <span className="text-sm font-medium truncate">{s.name}</span>
+                      <span className="text-sm font-medium truncate">{shortenName(s.name)}</span>
                     </button>
                   );
                 })}

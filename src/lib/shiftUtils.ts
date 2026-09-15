@@ -58,6 +58,15 @@ export function dayOfWeekFromDate(dateStr: string): number {
   return new Date(dateStr + 'T00:00:00').getDay();
 }
 
+/** Add (or subtract) whole days to a YYYY-MM-DD date string, correctly
+ *  crossing month and year boundaries (used by the Shifts timeline's
+ *  previous/next day arrows). */
+export function addDays(dateStr: string, delta: number): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  return d.toISOString().split('T')[0];
+}
+
 /**
  * Adjust a shift's start/end time.
  * Returns new start, end, and whether a break is now required.

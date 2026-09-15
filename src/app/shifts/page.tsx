@@ -1,16 +1,25 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Plus, Pencil, Trash2, Coffee, Download, Upload, List, GanttChartSquare } from 'lucide-react';
+import {
+  Plus, Pencil, Trash2, Coffee, Download, Upload, List, GanttChartSquare,
+  History, ChevronLeft, ChevronRight,
+} from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 import { Shift, Department } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
-  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12,
+  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays,
 } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
+
+const STATUS_BADGE: Record<string, string> = {
+  open: 'badge-red',
+  covered: 'badge-green',
+  cancelled: 'badge-slate',
+};
 
 const STATUS_BAR_COLOR: Record<string, string> = {
   open: 'bg-red-400',
@@ -22,11 +31,71 @@ function todayStr(): string {
   return new Date().toISOString().split('T')[0];
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  open: 'badge-red',
-  covered: 'badge-green',
-  cancelled: 'badge-slate',
-};
+interface DayGroup { date: string; shifts: Shift[] }
+
+/** Shifts arrive sorted by date, start_time (the API orders both), so a
+ *  filtered subset stays in that order — this is a single grouping pass,
+ *  no re-sorting needed. */
+function groupByDate(list: Shift[]): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const s of list) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === s.date) last.shifts.push(s);
+    else groups.push({ date: s.date, shifts: [s] });
+  }
+  return groups;
+}
+
+function ShiftDayGroup({
+  group, onAdjust, onEdit, onRemove,
+}: {
+  group: DayGroup;
+  onAdjust: (s: Shift) => void; onEdit: (s: Shift) => void; onRemove: (s: Shift) => void;
+}) {
+  return (
+    <div className="card overflow-hidden">
+      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+        <span className="font-semibold text-slate-800 text-sm">{formatDate(group.date)}</span>
+        <span className="badge-slate">{group.shifts.length}</span>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="border-b border-slate-100">
+          <tr>
+            {['Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
+              <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {group.shifts.map(s => (
+            <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+              <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
+              <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
+              <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
+              <td className="px-4 py-3">
+                <span className="badge-slate capitalize">{s.required_role}</span>
+              </td>
+              <td className="px-4 py-3">
+                {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
+              </td>
+              <td className="px-4 py-3">
+                <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
+              </td>
+              <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
+              <td className="px-4 py-3">
+                <div className="flex gap-1">
+                  <button onClick={() => onAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
+                  <button onClick={() => onEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                  <button onClick={() => onRemove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
@@ -35,8 +104,13 @@ export default function ShiftsPage() {
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
-  const [dateFilter, setDateFilter] = useState('');
-  const [view, setView] = useState<'list' | 'timeline'>('list');
+  const [view, setView] = useState<'list' | 'timeline' | 'past'>('list');
+
+  // Timeline is the one view that looks at a single day, so it gets its own
+  // date + department, steppable without touching the network — everything
+  // it needs is already in `shifts` once loaded.
+  const [timelineDate, setTimelineDate] = useState(todayStr());
+  const [timelineDept, setTimelineDept] = useState('');
 
   const [form, setForm] = useState({
     date: '', start_time: '09:00', end_time: '17:00',
@@ -46,11 +120,14 @@ export default function ShiftsPage() {
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
   const importRef = useRef<HTMLInputElement>(null);
 
+  // Load everything once. List/Past/Timeline are all just different slices
+  // of the same array — no per-view refetch, and stepping the timeline's day
+  // is instant instead of a round trip.
   async function load() {
     setLoading(true);
     try {
       const [shiftsData, deptData] = await Promise.all([
-        fetchJson<Shift[]>(`/api/shifts${dateFilter ? `?date=${dateFilter}` : ''}`),
+        fetchJson<Shift[]>('/api/shifts'),
         fetchJson<Department[]>('/api/departments'),
       ]);
       setShifts(shiftsData);
@@ -62,16 +139,10 @@ export default function ShiftsPage() {
     setLoading(false);
   }
 
-  useEffect(() => { load(); }, [dateFilter]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The timeline shows one day at a time — pick today the moment someone
-  // switches to it with no date already chosen, rather than showing nothing.
-  useEffect(() => {
-    if (view === 'timeline' && !dateFilter) setDateFilter(todayStr());
-  }, [view]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
 
   function openAdd() {
-    setForm({ date: new Date().toISOString().split('T')[0], start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
+    setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
     setModal('add');
   }
 
@@ -143,17 +214,19 @@ export default function ShiftsPage() {
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click();
   }
 
-  // Shifts already arrive sorted by date, start_time (the API orders both),
-  // so grouping is a single pass with no re-sorting needed.
-  const shiftGroups = useMemo(() => {
-    const groups: { date: string; shifts: Shift[] }[] = [];
-    for (const s of shifts) {
-      const last = groups[groups.length - 1];
-      if (last && last.date === s.date) last.shifts.push(s);
-      else groups.push({ date: s.date, shifts: [s] });
-    }
-    return groups;
-  }, [shifts]);
+  const today = todayStr();
+
+  // List: today onward. Past: everything before today, most recent day
+  // first (reverse the day GROUPS, not the shifts inside each — morning
+  // still comes before afternoon when you look at a past day).
+  const futureGroups = useMemo(
+    () => groupByDate(shifts.filter(s => s.date >= today)),
+    [shifts, today]
+  );
+  const pastGroups = useMemo(
+    () => [...groupByDate(shifts.filter(s => s.date < today))].reverse(),
+    [shifts, today]
+  );
 
   const timelineHours = useMemo(
     () => Array.from(
@@ -163,12 +236,56 @@ export default function ShiftsPage() {
     []
   );
 
+  // Timeline rows are staff, not departments — an open shift has nobody to
+  // hang a row off, so it gets a dedicated "Unassigned" row up top instead
+  // of disappearing.
+  const timelineShifts = useMemo(
+    () => shifts.filter(s => s.date === timelineDate && (!timelineDept || s.department_id === timelineDept)),
+    [shifts, timelineDate, timelineDept]
+  );
+  const { unassigned, staffRows } = useMemo(() => {
+    const byStaff = new Map<string, { name: string; shifts: Shift[] }>();
+    const open: Shift[] = [];
+    for (const s of timelineShifts) {
+      const assignedName = (s as { assigned_staff?: { name: string } }).assigned_staff?.name;
+      if (s.assigned_staff_id && assignedName) {
+        if (!byStaff.has(s.assigned_staff_id)) byStaff.set(s.assigned_staff_id, { name: assignedName, shifts: [] });
+        byStaff.get(s.assigned_staff_id)!.shifts.push(s);
+      } else {
+        open.push(s);
+      }
+    }
+    return {
+      unassigned: open,
+      staffRows: Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    };
+  }, [timelineShifts]);
+
+  function timelineBar(s: Shift) {
+    const pos = timelineBarPosition(s.start_time, s.end_time);
+    if (!pos) return null;
+    const deptName = s.departments?.name ?? departments.find(d => d.id === s.department_id)?.name;
+    return (
+      <div
+        key={s.id}
+        title={`${s.start_time}–${s.end_time} · ${s.status}${deptName ? ` · ${deptName}` : ''}`}
+        onClick={() => openEdit(s)}
+        className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
+        style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
+      >
+        <span className="text-[11px] text-white font-medium whitespace-nowrap">
+          {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}{deptName ? ` · ${deptName}` : ''}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Shifts</h1>
-          <p className="text-sm text-slate-500">{shifts.length} shifts {dateFilter ? `on ${formatDate(dateFilter)}` : 'total'}</p>
+          <p className="text-sm text-slate-500">{shifts.length} shifts total</p>
         </div>
         <div className="flex gap-2 flex-wrap items-center">
           <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
@@ -188,9 +305,37 @@ export default function ShiftsPage() {
             >
               <GanttChartSquare size={14} /> Daily Timeline
             </button>
+            <button
+              onClick={() => setView('past')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                view === 'past' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              <History size={14} /> Past
+            </button>
           </div>
-          <input type="date" className="input w-auto" value={dateFilter} onChange={e => setDateFilter(e.target.value)} />
-          {dateFilter && view === 'list' && <button onClick={() => setDateFilter('')} className="btn-secondary text-xs">Clear date</button>}
+
+          {view === 'timeline' && (
+            <>
+              <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white">
+                <button onClick={() => setTimelineDate(d => addDays(d, -1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-l-lg" title="Previous day">
+                  <ChevronLeft size={16} />
+                </button>
+                <input
+                  type="date" value={timelineDate} onChange={e => setTimelineDate(e.target.value)}
+                  className="border-x border-slate-200 px-2 py-1.5 text-sm focus:outline-none"
+                />
+                <button onClick={() => setTimelineDate(d => addDays(d, 1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg" title="Next day">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+              <select className="input w-auto" value={timelineDept} onChange={e => setTimelineDept(e.target.value)}>
+                <option value="">All Departments</option>
+                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </>
+          )}
+
           <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
           <button onClick={() => importRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
@@ -202,58 +347,29 @@ export default function ShiftsPage() {
 
       {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : view === 'list' ? (
         <div className="space-y-4">
-          {shiftGroups.length === 0 && (
-            <div className="card"><p className="text-center text-slate-400 py-8">No shifts found.</p></div>
+          {futureGroups.length === 0 && (
+            <div className="card"><p className="text-center text-slate-400 py-8">No upcoming shifts.</p></div>
           )}
-          {shiftGroups.map(({ date, shifts: dayShifts }) => (
-            <div key={date} className="card overflow-hidden">
-              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-                <span className="font-semibold text-slate-800 text-sm">{formatDate(date)}</span>
-                <span className="badge-slate">{dayShifts.length}</span>
-              </div>
-              <table className="w-full text-sm">
-                <thead className="border-b border-slate-100">
-                  <tr>
-                    {['Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
-                      <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {dayShifts.map(s => (
-                    <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
-                      <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
-                      <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
-                      <td className="px-4 py-3">
-                        <span className="badge-slate capitalize">{s.required_role}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex gap-1">
-                          <button onClick={() => openAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
-                          <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                          <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {futureGroups.map(g => (
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} />
+          ))}
+        </div>
+      ) : view === 'past' ? (
+        <div className="space-y-4">
+          {pastGroups.length === 0 && (
+            <div className="card"><p className="text-center text-slate-400 py-8">No past shifts.</p></div>
+          )}
+          {pastGroups.map(g => (
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} />
           ))}
         </div>
       ) : (
         <div className="card p-4">
-          <h2 className="font-semibold text-slate-800 mb-4">{formatDate(dateFilter)}</h2>
-          {departments.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">No departments set up.</p>
+          <h2 className="font-semibold text-slate-800 mb-4">
+            {formatDate(timelineDate)}{timelineDept && ` · ${departments.find(d => d.id === timelineDept)?.name}`}
+          </h2>
+          {timelineShifts.length === 0 ? (
+            <p className="text-slate-400 text-center py-8">No shifts scheduled.</p>
           ) : (
             <div className="overflow-x-auto">
               <div className="min-w-[900px]">
@@ -266,41 +382,37 @@ export default function ShiftsPage() {
                 </div>
 
                 <div className="mt-1 divide-y divide-slate-100">
-                  {departments.map(d => {
-                    const deptShifts = shifts.filter(s => s.department_id === d.id);
-                    return (
-                      <div key={d.id} className="flex items-center py-2">
-                        <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                          {d.name}
-                        </div>
-                        <div className="relative flex-1 h-7 rounded bg-slate-50">
-                          <div className="absolute inset-0 flex pointer-events-none">
-                            {timelineHours.map(h => (
-                              <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
-                            ))}
-                          </div>
-                          {deptShifts.map(s => {
-                            const pos = timelineBarPosition(s.start_time, s.end_time);
-                            if (!pos) return null;
-                            const assignedName = (s as { assigned_staff?: { name: string } }).assigned_staff?.name;
-                            return (
-                              <div
-                                key={s.id}
-                                title={`${s.start_time}–${s.end_time} · ${s.status}${assignedName ? ` · ${assignedName}` : ''}`}
-                                onClick={() => openEdit(s)}
-                                className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
-                                style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
-                              >
-                                <span className="text-[11px] text-white font-medium whitespace-nowrap">
-                                  {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}{assignedName ? ` · ${assignedName}` : ''}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
+                  {unassigned.length > 0 && (
+                    <div className="flex items-center py-2">
+                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-amber-700 italic truncate">
+                        Unassigned
                       </div>
-                    );
-                  })}
+                      <div className="relative flex-1 h-7 rounded bg-amber-50/50">
+                        <div className="absolute inset-0 flex pointer-events-none">
+                          {timelineHours.map(h => (
+                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                          ))}
+                        </div>
+                        {unassigned.map(timelineBar)}
+                      </div>
+                    </div>
+                  )}
+
+                  {staffRows.map(({ name, shifts: rowShifts }) => (
+                    <div key={name} className="flex items-center py-2">
+                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                        {name}
+                      </div>
+                      <div className="relative flex-1 h-7 rounded bg-slate-50">
+                        <div className="absolute inset-0 flex pointer-events-none">
+                          {timelineHours.map(h => (
+                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                          ))}
+                        </div>
+                        {rowShifts.map(timelineBar)}
+                      </div>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="flex items-center gap-4 mt-4 text-xs text-slate-500">

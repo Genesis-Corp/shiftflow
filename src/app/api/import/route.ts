@@ -59,6 +59,29 @@ export async function POST(req: NextRequest) {
     (departments ?? []).map((d: { id: string; name: string }) => [d.name.toLowerCase().trim(), d.id])
   );
 
+  /**
+   * Find the department matching `name`, creating it if this exact name
+   * hasn't been seen before. Rosters get uploaded per department — if the
+   * STORE column doesn't match an existing department (typo, or a store
+   * name nobody has entered as a department yet), the right fallback isn't
+   * "leave this person with no department", it's "the department really is
+   * whatever roster they just came off". Cached in deptMap so a second row
+   * in the same upload with the same STORE value reuses it instead of
+   * creating a duplicate.
+   */
+  async function findOrCreateDepartment(name: string): Promise<string | null> {
+    const key = name.toLowerCase().trim();
+    if (!key) return null;
+    const existing = deptMap.get(key);
+    if (existing) return existing;
+
+    const { data, error } = await supabase
+      .from('departments').insert([{ name: name.trim() }]).select('id').single();
+    if (error || !data) return null;
+    deptMap.set(key, data.id);
+    return data.id;
+  }
+
   const results = { created: 0, errors: [] as string[] };
 
   // ── Detect format from first row ───────────────────────────────────────────
@@ -93,9 +116,12 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      // Link to department via STORE column if it matches a known department
+      // Link to the STORE column's department, creating it if this is the
+      // first time this roster's store name has been seen — a staff member
+      // should never end up with zero departments just because their
+      // roster's STORE label doesn't exactly match one already on file.
       if (storeName) {
-        const deptId = deptMap.get(storeName.toLowerCase());
+        const deptId = await findOrCreateDepartment(storeName);
         if (deptId) {
           await supabase.from('staff_departments').insert([{
             staff_id: staff.id,
