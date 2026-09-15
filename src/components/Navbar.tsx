@@ -16,36 +16,6 @@ const links = [
   { href: '/managers',     label: 'Managers' },
 ];
 
-/**
- * Which branch/commit this deployment was built from, and whether it's
- * Production or a Preview. Set automatically by Vercel's System Environment
- * Variables (see next.config.mjs) — nothing to configure by hand.
- *
- * This exists because the Vercel project has two branches deploying in
- * parallel (this claim-race branch and a separate staff-details branch), both
- * producing shiftflow-*.vercel.app URLs that look identical at a glance. That
- * ambiguity repeatedly cost real time diagnosing "my change isn't showing up"
- * when the real answer was "you're on the other branch." The tag makes that
- * obvious without leaving the page.
- */
-function DeployTag() {
-  const branch = process.env.NEXT_PUBLIC_GIT_BRANCH || 'local';
-  const sha = process.env.NEXT_PUBLIC_GIT_SHA;
-  const env = process.env.NEXT_PUBLIC_VERCEL_ENV;
-  const isProd = env === 'production';
-
-  return (
-    <span
-      title={`${branch}${sha ? ` @ ${sha}` : ''}`}
-      className={`ml-auto flex-shrink-0 hidden sm:inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-mono ${
-        isProd ? 'bg-red-900/60 text-red-100' : 'bg-blue-900/60 text-blue-100'
-      }`}
-    >
-      {isProd ? 'PROD' : 'preview'} · {branch}
-    </span>
-  );
-}
-
 export default function Navbar({ userEmail }: { userEmail: string | null }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -96,7 +66,6 @@ export default function Navbar({ userEmail }: { userEmail: string | null }) {
               </button>
             </div>
           )}
-          <DeployTag />
         </div>
       </div>
     </nav>

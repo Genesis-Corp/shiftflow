@@ -96,3 +96,50 @@ export const RELIABILITY_DELTAS: Record<string, number> = {
 export function clampScore(score: number): number {
   return Math.max(0, Math.min(100, score));
 }
+
+// ── Daily availability timeline ─────────────────────────────────────────────
+// The Availability page's daily view draws one horizontal bar per staff
+// member across a fixed 5am-10pm window. These helpers turn a start/end time
+// into that bar's position, and hour-of-day into its column label.
+
+export const TIMELINE_START_HOUR = 5;  // 5am
+export const TIMELINE_END_HOUR = 22;   // 10pm
+
+/**
+ * Left offset and width, as percentages of the 5am-10pm span, for a bar
+ * representing `start`-`end`. Clips to the visible window rather than
+ * overflowing it, so someone available from 4am still shows a bar starting
+ * at the 5am edge instead of running off the chart.
+ *
+ * Returns null when the range has no overlap with the visible window at all
+ * (e.g. an overnight range that starts exactly at the right-hand edge).
+ */
+export function timelineBarPosition(
+  start: string, end: string
+): { leftPct: number; widthPct: number } | null {
+  const spanStart = TIMELINE_START_HOUR * 60;
+  const spanEnd = TIMELINE_END_HOUR * 60;
+  const spanMinutes = spanEnd - spanStart;
+
+  const startM = timeToMinutes(start);
+  let endM = timeToMinutes(end);
+  if (endM <= startM) endM += 24 * 60; // treat as running past midnight
+
+  const clippedStart = Math.max(startM, spanStart);
+  const clippedEnd = Math.min(endM, spanEnd);
+  if (clippedEnd <= clippedStart) return null;
+
+  return {
+    leftPct: ((clippedStart - spanStart) / spanMinutes) * 100,
+    widthPct: ((clippedEnd - clippedStart) / spanMinutes) * 100,
+  };
+}
+
+/** Hour-of-day (0-23) as a short 12-hour label: 5 -> "5am", 13 -> "1pm". */
+export function formatHour12(hour: number): string {
+  const h = ((hour % 24) + 24) % 24;
+  if (h === 0) return '12am';
+  if (h < 12) return `${h}am`;
+  if (h === 12) return '12pm';
+  return `${h - 12}pm`;
+}
