@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date');
+  const status = searchParams.get('status');
 
   let query = supabase
     .from('shifts')
@@ -17,6 +18,7 @@ export async function GET(req: NextRequest) {
     .order('start_time');
 
   if (date) query = query.eq('date', date);
+  if (status) query = query.eq('status', status);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

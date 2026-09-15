@@ -14,6 +14,8 @@ export interface Staff {
   reliability_score: number;
   active: boolean;
   phone?: string;
+  phone_e164?: string | null;
+  sms_opt_out?: boolean;
   created_at: string;
   // joined fields
   staff_departments?: StaffDepartment[];
@@ -84,8 +86,80 @@ export interface CoverShiftResult {
   candidates: CoverCandidate[];
 }
 
-export interface ClaimRaceResult {
-  message: string;
-  first_contacted?: string;
-  remaining_queue?: string[];
+// ── Claim race ───────────────────────────────────────────────────────────────
+
+export type SmsMode = 'console' | 'redirect' | 'live';
+export type RaceStatus = 'active' | 'claimed' | 'expired' | 'cancelled';
+export type RecipientSendStatus =
+  | 'queued' | 'sent' | 'failed' | 'skipped_no_phone' | 'skipped_opted_out';
+export type RecipientOutcome = 'won' | 'lost' | 'declined' | 'no_response';
+
+export interface ClaimRace {
+  id: string;
+  shift_id: string;
+  status: RaceStatus;
+  winner_staff_id?: string | null;
+  mode: SmsMode;
+  expires_at: string;
+  created_at: string;
+  claimed_at?: string | null;
+  cancelled_at?: string | null;
+  shifts?: Shift & { departments?: Department };
+}
+
+export interface ClaimRecipient {
+  id: string;
+  race_id: string;
+  staff_id: string;
+  claim_code: string;
+  rank?: number | null;
+  computed_score?: number | null;
+  phone_e164?: string | null;
+  send_status: RecipientSendStatus;
+  send_error?: string | null;
+  outcome?: RecipientOutcome | null;
+  responded_at?: string | null;
+  response_body?: string | null;
+  staff?: Pick<Staff, 'id' | 'name' | 'age_group' | 'reliability_score'>;
+}
+
+export interface SmsMessage {
+  id: string;
+  race_id?: string | null;
+  staff_id?: string | null;
+  direction: 'out' | 'in';
+  kind?: string | null;
+  to_phone?: string | null;
+  body: string;
+  mode?: string | null;
+  intended_for?: string | null;
+  status?: string | null;
+  error?: string | null;
+  created_at: string;
+}
+
+export interface RaceDetail {
+  race: ClaimRace;
+  recipients: ClaimRecipient[];
+  messages: SmsMessage[];
+}
+
+export interface RacePreview {
+  shift: Shift & { departments?: Department };
+  contactable: {
+    id: string; name: string; phone_e164: string | null;
+    computed_score: number; age_group: AgeGroup;
+  }[];
+  excluded: { staffId: string; name: string; reason: 'no_phone' | 'opted_out' }[];
+  active_race_id: string | null;
+}
+
+export interface SmsConfig {
+  mode: SmsMode;
+  test_number: string | null;
+  allowlist_size: number;
+  timezone: string;
+  expiry_minutes: number;
+  quiet_hours_now: boolean;
+  simulation_enabled: boolean;
 }

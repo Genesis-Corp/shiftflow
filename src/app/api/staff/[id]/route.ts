@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { toE164AU } from '@/lib/phone';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const body = await req.json();
@@ -7,7 +8,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
   const { data, error } = await supabase
     .from('staff')
-    .update({ name, age_group, role_type, phone, active })
+    .update({ name, age_group, role_type, phone, phone_e164: toE164AU(phone), active })
     .eq('id', params.id)
     .select()
     .single();

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { toE164AU } from '@/lib/phone';
 
 // ── Standard staff CSV format ─────────────────────────────────────────────────
 interface StandardRow {
@@ -74,6 +75,7 @@ export async function POST(req: NextRequest) {
         .insert([{
           name,
           phone: phone || null,
+          phone_e164: toE164AU(phone),
           age_group: 'junior',
           role_type: 'department_only',
           reliability_score: 50,
@@ -146,6 +148,7 @@ export async function POST(req: NextRequest) {
         age_group: row.age_group.toLowerCase().trim(),
         role_type: row.role_type.toLowerCase().replace(/\s+/g, '_').trim(),
         phone: row.phone?.trim() ?? null,
+        phone_e164: toE164AU(row.phone),
         reliability_score: 50,
         active: true,
       }])

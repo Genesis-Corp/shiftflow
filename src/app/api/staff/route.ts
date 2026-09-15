@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
+import { toE164AU } from '@/lib/phone';
 
 export async function GET() {
   const { data, error } = await supabase
@@ -26,7 +27,12 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await supabase
     .from('staff')
-    .insert([{ name, age_group, role_type, phone: phone ?? null, reliability_score: 50, active: true }])
+    .insert([{
+      name, age_group, role_type,
+      phone: phone ?? null,
+      phone_e164: toE164AU(phone),
+      reliability_score: 50, active: true,
+    }])
     .select()
     .single();
 
