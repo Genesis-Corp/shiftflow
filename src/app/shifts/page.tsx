@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Coffee, Download, Upload } from 'lucide-react';
 import Modal from '@/components/Modal';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 import { Shift, Department } from '@/lib/types';
 import { formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
@@ -17,6 +19,7 @@ export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
   const [dateFilter, setDateFilter] = useState('');
@@ -30,12 +33,18 @@ export default function ShiftsPage() {
   const importRef = useRef<HTMLInputElement>(null);
 
   async function load() {
-    const [sRes, dRes] = await Promise.all([
-      fetch(`/api/shifts${dateFilter ? `?date=${dateFilter}` : ''}`),
-      fetch('/api/departments'),
-    ]);
-    setShifts(await sRes.json());
-    setDepartments(await dRes.json());
+    setLoading(true);
+    try {
+      const [shiftsData, deptData] = await Promise.all([
+        fetchJson<Shift[]>(`/api/shifts${dateFilter ? `?date=${dateFilter}` : ''}`),
+        fetchJson<Department[]>('/api/departments'),
+      ]);
+      setShifts(shiftsData);
+      setDepartments(deptData);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load shifts');
+    }
     setLoading(false);
   }
 
@@ -131,7 +140,9 @@ export default function ShiftsPage() {
         </div>
       </div>
 
-      {loading ? <p className="text-slate-400">Loading...</p> : (
+      {loadError && <ErrorBanner message={loadError} onRetry={load} />}
+
+      {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : (
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">

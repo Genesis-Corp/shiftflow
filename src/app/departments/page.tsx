@@ -3,18 +3,26 @@
 import { useEffect, useState } from 'react';
 import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react';
 import Modal from '@/components/Modal';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 import { Department } from '@/lib/types';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
   const [form, setForm] = useState({ name: '', requires_supervisor: false });
 
   async function load() {
-    const res = await fetch('/api/departments');
-    setDepartments(await res.json());
+    setLoading(true);
+    try {
+      setDepartments(await fetchJson<Department[]>('/api/departments'));
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load departments');
+    }
     setLoading(false);
   }
 
@@ -60,9 +68,11 @@ export default function DepartmentsPage() {
         </button>
       </div>
 
+      {loadError && <ErrorBanner message={loadError} onRetry={load} />}
+
       {loading ? (
         <p className="text-slate-400">Loading...</p>
-      ) : departments.length === 0 ? (
+      ) : loadError ? null : departments.length === 0 ? (
         <div className="card p-10 text-center text-slate-400">
           <p>No departments yet. Add your first one.</p>
         </div>

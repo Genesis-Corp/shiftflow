@@ -12,6 +12,8 @@ import RaceStatusPanel from '@/components/RaceStatusPanel';
 import { Department, CoverCandidate, Shift, SmsConfig, RacePreview } from '@/lib/types';
 import { formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 
 interface CoverResult {
   shift: { id: string | null; date: string; start_time: string; end_time: string; department: Department };
@@ -43,20 +45,33 @@ export default function CoverShiftPage() {
   const [starting, setStarting] = useState(false);
   const [raceId, setRaceId] = useState<string | null>(null);
   const [raceError, setRaceError] = useState('');
+  const [loadError, setLoadError] = useState('');
 
   const loadOpenShifts = useCallback(async () => {
-    const res = await fetch('/api/shifts?status=open');
-    if (res.ok) setOpenShifts(await res.json());
+    try {
+      setOpenShifts(await fetchJson<Shift[]>('/api/shifts?status=open'));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load open shifts');
+    }
   }, []);
 
-  useEffect(() => {
-    fetch('/api/departments').then(r => r.json()).then(data => {
+  const loadPageData = useCallback(async () => {
+    try {
+      const data = await fetchJson<Department[]>('/api/departments');
       setDepartments(data);
       if (data[0]) setForm(f => ({ ...f, department_id: data[0].id }));
-    });
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load departments');
+    }
+    // SMS config is best-effort: if it fails, the mode banner just stays
+    // hidden rather than blocking the whole page — races still work, they
+    // just won't show which SMS_MODE is active.
     fetch('/api/sms/config').then(r => r.json()).then(setSmsConfig).catch(() => {});
     loadOpenShifts();
   }, [loadOpenShifts]);
+
+  useEffect(() => { loadPageData(); }, [loadPageData]);
 
   function selectShift(shift: Shift) {
     setSelectedShiftId(shift.id);
@@ -131,6 +146,8 @@ export default function CoverShiftPage() {
       </div>
 
       <SmsModeBanner config={smsConfig} />
+
+      {loadError && <ErrorBanner message={loadError} onRetry={loadPageData} />}
 
       {/* Open shifts — the entry point for a race */}
       <div className="card p-5">

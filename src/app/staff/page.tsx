@@ -4,6 +4,8 @@ import { useEffect, useState, useRef } from 'react';
 import { Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
 import Papa from 'papaparse';
 
@@ -23,6 +25,7 @@ export default function StaffPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Staff | null>(null);
   const [filter, setFilter] = useState('');
@@ -34,9 +37,18 @@ export default function StaffPage() {
   });
 
   async function load() {
-    const [sRes, dRes] = await Promise.all([fetch('/api/staff'), fetch('/api/departments')]);
-    setStaff(await sRes.json());
-    setDepartments(await dRes.json());
+    setLoading(true);
+    try {
+      const [staffData, deptData] = await Promise.all([
+        fetchJson<Staff[]>('/api/staff'),
+        fetchJson<Department[]>('/api/departments'),
+      ]);
+      setStaff(staffData);
+      setDepartments(deptData);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load staff');
+    }
     setLoading(false);
   }
 
@@ -140,7 +152,9 @@ export default function StaffPage() {
         </div>
       </div>
 
-      {loading ? <p className="text-slate-400">Loading...</p> : (
+      {loadError && <ErrorBanner message={loadError} onRetry={load} />}
+
+      {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : (
         <div className="card overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">

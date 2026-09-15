@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Save } from 'lucide-react';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 import { Staff, AvailabilityTemplate, DayOfWeek } from '@/lib/types';
 import { DAYS, DAY_SHORT } from '@/lib/shiftUtils';
 
@@ -24,11 +26,23 @@ export default function AvailabilityPage() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(false);
   const [allTemplates, setAllTemplates] = useState<AvailabilityTemplate[]>([]);
+  const [loadError, setLoadError] = useState('');
 
-  useEffect(() => {
-    fetch('/api/staff').then(r => r.json()).then(data => setStaff((data ?? []).filter((s: Staff) => s.active)));
-    fetch('/api/availability').then(r => r.json()).then(setAllTemplates);
-  }, []);
+  async function load() {
+    try {
+      const [staffData, templateData] = await Promise.all([
+        fetchJson<Staff[]>('/api/staff'),
+        fetchJson<AvailabilityTemplate[]>('/api/availability'),
+      ]);
+      setStaff(staffData.filter(s => s.active));
+      setAllTemplates(templateData);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load availability data');
+    }
+  }
+
+  useEffect(() => { load(); }, []);
 
   function loadStaffTemplates(s: Staff) {
     setSelectedStaff(s);
@@ -85,6 +99,8 @@ export default function AvailabilityPage() {
         <h1 className="text-2xl font-bold text-slate-900">Availability</h1>
         <p className="text-sm text-slate-500">Set weekly availability templates for each staff member</p>
       </div>
+
+      {loadError && <ErrorBanner message={loadError} onRetry={load} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Staff selector */}

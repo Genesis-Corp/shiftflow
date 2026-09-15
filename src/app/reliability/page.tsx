@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { AlertTriangle, PhoneMissed, XCircle, UserX, CheckCircle, Plus } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
+import ErrorBanner from '@/components/ErrorBanner';
+import { fetchJson } from '@/lib/apiClient';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
 import { formatDate } from '@/lib/shiftUtils';
 
@@ -17,14 +19,23 @@ const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode
 export default function ReliabilityPage() {
   const [incidents, setIncidents] = useState<ReliabilityIncident[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState(false);
   const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: new Date().toISOString().split('T')[0], notes: '' });
   const [filterStaff, setFilterStaff] = useState('');
 
   async function load() {
-    const [iRes, sRes] = await Promise.all([fetch('/api/reliability'), fetch('/api/staff')]);
-    setIncidents(await iRes.json());
-    setStaff(await sRes.json());
+    try {
+      const [incidentData, staffData] = await Promise.all([
+        fetchJson<ReliabilityIncident[]>('/api/reliability'),
+        fetchJson<Staff[]>('/api/staff'),
+      ]);
+      setIncidents(incidentData);
+      setStaff(staffData);
+      setLoadError('');
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load reliability data');
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -65,6 +76,8 @@ export default function ReliabilityPage() {
         </div>
         <button onClick={() => setModal(true)} className="btn-primary"><Plus size={16} /> Log Incident</button>
       </div>
+
+      {loadError && <ErrorBanner message={loadError} onRetry={load} />}
 
       {/* Flagged staff */}
       {flagged.length > 0 && (
