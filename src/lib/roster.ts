@@ -1,9 +1,13 @@
 /**
  * Turning a rostering-app screenshot into shifts.
  *
- * The screenshot lists one day of one department: a person per row, with the
- * hours they are rostered. It does not normally show the date, so the date is
- * chosen in the app rather than guessed from the picture.
+ * A source lists one day, but not necessarily one department — a whole-store
+ * report (like a "Daily Coverage By Role" export) lists every department in
+ * one document, each as its own section. Every row carries its own department
+ * where the source has more than one, so those sections can be told apart and
+ * imported separately rather than dumped into a single department. The date
+ * is not normally printed either, so it is chosen in the app rather than
+ * guessed from the source.
  *
  * Pure functions only — the database work lives in the import route.
  */
@@ -18,6 +22,8 @@ export interface ScannedRosterRow {
   e: string;
   /** Status chip, when the screenshot shows one. */
   st?: string;
+  /** This row's own department/role heading, when the source lists more than one. */
+  d?: string;
 }
 
 export interface RosterEntry {
@@ -28,6 +34,8 @@ export interface RosterEntry {
   status: string | null;
   /** The app cut the name off, so it can only be matched on its beginning. */
   truncated: boolean;
+  /** This row's own department/role heading, when the source read one. */
+  department: string | null;
 }
 
 export interface ParsedRoster {
@@ -68,7 +76,13 @@ export function parseRoster(rows: ScannedRosterRow[]): ParsedRoster {
     const name = shown.replace(ELLIPSIS, '').trim();
     if (!name) continue;
 
-    const key = nameKey(name);
+    const department = row.d?.trim() || null;
+
+    // Scoped to this row's own department — the same person can legitimately
+    // appear more than once on the same day (e.g. an early shift in one
+    // department, a later one in another), so only a repeat within the same
+    // section counts as the source listing someone twice.
+    const key = `${nameKey(name)}::${(department ?? '').toLowerCase()}`;
     if (seen.has(key)) {
       warnings.push(`"${name}" is listed twice — only the first shift was kept.`);
       continue;
@@ -87,10 +101,40 @@ export function parseRoster(rows: ScannedRosterRow[]): ParsedRoster {
       end_time,
       status: row.st?.trim() || null,
       truncated: ELLIPSIS.test(shown),
+      department,
     });
   }
 
   return { entries, warnings };
+}
+
+export interface RosterEntryGroup {
+  /** The department this group of entries is for, or null to fall back to
+   *  whatever department the source (or the app) already has picked. */
+  label: string | null;
+  entries: RosterEntry[];
+}
+
+/**
+ * Split entries by department, preserving the order departments first
+ * appear in. A source with only one department (or none at all) still
+ * produces a single group, so callers do not need a separate code path for
+ * the common case.
+ */
+export function groupRosterEntries(entries: RosterEntry[], fallbackLabel: string | null = null): RosterEntryGroup[] {
+  const order: (string | null)[] = [];
+  const buckets = new Map<string | null, RosterEntry[]>();
+
+  for (const entry of entries) {
+    const label = entry.department ?? fallbackLabel;
+    if (!buckets.has(label)) {
+      buckets.set(label, []);
+      order.push(label);
+    }
+    buckets.get(label)!.push(entry);
+  }
+
+  return order.map(label => ({ label, entries: buckets.get(label)! }));
 }
 
 export interface NamedStaff {

@@ -18,7 +18,7 @@ import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
-import { RosterEntry, RosterJob, matchDepartment } from '@/lib/roster';
+import { RosterEntry, RosterJob, matchDepartment, groupRosterEntries } from '@/lib/roster';
 import RosterQueue from '@/components/RosterQueue';
 import type { RosterPlan } from '@/app/api/import-roster/route';
 import Papa from 'papaparse';
@@ -251,26 +251,62 @@ export default function ShiftsPage() {
         update({ status: 'failed', error: scan.error ?? 'Could not be read.' });
         return;
       }
+      const data = scan.data;
 
       // Neither the day nor the department is reliably printed on a source, so
       // each is taken from it when it is there and left to be checked when it
-      // is not.
-      const heading = scan.data.department ?? null;
-      const matched = matchDepartment(heading ?? undefined, departments);
-      const date = scan.data.date ?? job.date;
-      const departmentId = matched?.id ?? job.department_id;
+      // is not. A whole-store report lists more than one department in the
+      // same source — each row then carries its own, and the single job
+      // splits into one per department found so each can be checked and
+      // added on its own.
+      const docHeading = data.department ?? null;
+      const date = data.date ?? job.date;
+      const groups = groupRosterEntries(data.entries, docHeading);
 
-      update({
-        status: 'ready',
-        entries: scan.data.entries,
-        warnings: scan.data.warnings,
-        seconds: scan.data.seconds,
-        heading: heading ? { text: heading, matched: Boolean(matched) } : null,
-        date,
-        department_id: departmentId,
+      if (groups.length <= 1) {
+        const heading = groups[0]?.label ?? docHeading;
+        const matched = matchDepartment(heading ?? undefined, departments);
+        const departmentId = matched?.id ?? job.department_id;
+
+        update({
+          status: 'ready',
+          entries: data.entries,
+          warnings: data.warnings,
+          seconds: data.seconds,
+          heading: heading ? { text: heading, matched: Boolean(matched) } : null,
+          date,
+          department_id: departmentId,
+        });
+
+        await previewJob({ ...job, entries: data.entries, date, department_id: departmentId });
+        return;
+      }
+
+      const splitJobs: QueuedRosterJob[] = groups.map((group, i) => {
+        const matched = matchDepartment(group.label ?? undefined, departments);
+        return {
+          ...job,
+          id: i === 0 ? job.id : `${job.id}-${i}`,
+          name: group.label ? `${job.name} — ${group.label}` : job.name,
+          status: 'ready',
+          entries: group.entries,
+          warnings: data.warnings,
+          seconds: data.seconds,
+          heading: group.label ? { text: group.label, matched: Boolean(matched) } : null,
+          date,
+          department_id: matched?.id ?? departments[0].id,
+        };
       });
 
-      await previewJob({ ...job, entries: scan.data.entries, date, department_id: departmentId });
+      setJobs(current => {
+        const idx = current.findIndex(j => j.id === job.id);
+        if (idx === -1) return [...current, ...splitJobs];
+        return [...current.slice(0, idx), ...splitJobs, ...current.slice(idx + 1)];
+      });
+
+      for (const splitJob of splitJobs) {
+        await previewJob(splitJob);
+      }
     } catch (err) {
       update({ status: 'failed', error: err instanceof Error ? err.message : 'Could not be read.' });
     } finally {

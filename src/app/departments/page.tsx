@@ -1,24 +1,32 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
+import ReliabilityBar from '@/components/ReliabilityBar';
 import { fetchJson } from '@/lib/apiClient';
-import { Department } from '@/lib/types';
+import { Department, Staff } from '@/lib/types';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
   const [form, setForm] = useState({ name: '', requires_supervisor: false });
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
     try {
-      setDepartments(await fetchJson<Department[]>('/api/departments'));
+      const [deptData, staffData] = await Promise.all([
+        fetchJson<Department[]>('/api/departments'),
+        fetchJson<Staff[]>('/api/staff'),
+      ]);
+      setDepartments(deptData);
+      setStaff(staffData);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load departments');
@@ -27,6 +35,19 @@ export default function DepartmentsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Who's assigned to each department, sorted by name — looked up once per
+  // load rather than filtered fresh on every render/expand.
+  const staffByDept = useMemo(() => {
+    const map = new Map<string, Staff[]>();
+    for (const s of staff) {
+      for (const sd of s.staff_departments ?? []) {
+        map.set(sd.department_id, [...(map.get(sd.department_id) ?? []), s]);
+      }
+    }
+    for (const list of map.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+    return map;
+  }, [staff]);
 
   function openAdd() {
     setForm({ name: '', requires_supervisor: false });
@@ -78,22 +99,57 @@ export default function DepartmentsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {departments.map(d => (
-            <div key={d.id} className="card p-4 flex items-start justify-between">
-              <div>
-                <p className="font-semibold text-slate-800">{d.name}</p>
-                {d.requires_supervisor && (
-                  <span className="badge-amber mt-1">
-                    <ShieldCheck size={11} className="mr-1" /> Supervisor required
-                  </span>
+          {departments.map(d => {
+            const assigned = staffByDept.get(d.id) ?? [];
+            const isOpen = expanded === d.id;
+            return (
+              <div key={d.id} className="card overflow-hidden">
+                <div className="p-4 flex items-start justify-between gap-2">
+                  <button
+                    onClick={() => setExpanded(isOpen ? null : d.id)}
+                    className="flex-1 min-w-0 text-left"
+                    aria-expanded={isOpen}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-semibold text-slate-800 truncate">{d.name}</p>
+                      <ChevronDown size={14} className={`text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                      <span className="badge-slate">
+                        <Users size={11} className="mr-1" /> {assigned.length} staff
+                      </span>
+                      {d.requires_supervisor && (
+                        <span className="badge-amber">
+                          <ShieldCheck size={11} className="mr-1" /> Supervisor required
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                  <div className="flex gap-1 shrink-0">
+                    <button onClick={() => openEdit(d)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                    <button onClick={() => remove(d)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+
+                {isOpen && (
+                  <div className="border-t border-slate-100">
+                    {assigned.length === 0 ? (
+                      <p className="px-4 py-3 text-xs text-slate-400">No staff assigned to this department.</p>
+                    ) : (
+                      <ul className="divide-y divide-slate-100">
+                        {assigned.map(s => (
+                          <li key={s.id} className={`px-4 py-2 flex items-center justify-between gap-2 ${!s.active ? 'opacity-50' : ''}`}>
+                            <span className="text-sm text-slate-700 truncate">{s.name}</span>
+                            <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 )}
               </div>
-              <div className="flex gap-1">
-                <button onClick={() => openEdit(d)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                <button onClick={() => remove(d)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
