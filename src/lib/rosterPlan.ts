@@ -163,8 +163,33 @@ export async function applyRosterPlan(
     return { shifts_created: 0, incidents_logged: 0 };
   }
 
+  await linkStaffToDepartment(plan.creates.map(c => c.staff_id), departmentId);
+
   const incidents = logNoShows ? await recordNoShows(plan, date) : 0;
   return { shifts_created: plan.creates.length, incidents_logged: incidents };
+}
+
+/**
+ * A roster upload rosters someone into a department by giving them a shift
+ * there — if they aren't already linked to that department, this is exactly
+ * when they should be, the same "default to whichever department a roster
+ * came off" rule the availability-sheet import already follows for staff
+ * with none at all. Existing links (and their training_level) are left
+ * untouched — this only fills in a missing one, never overwrites.
+ */
+async function linkStaffToDepartment(staffIds: string[], departmentId: string): Promise<void> {
+  const uniqueIds = Array.from(new Set(staffIds));
+  if (!uniqueIds.length) return;
+
+  const { error } = await supabase.from('staff_departments').upsert(
+    uniqueIds.map(staff_id => ({ staff_id, department_id: departmentId, training_level: 'trained' })),
+    { onConflict: 'staff_id,department_id', ignoreDuplicates: true }
+  );
+
+  // A missed link doesn't invalidate the shift that was already written —
+  // logged rather than surfaced as a plan error, same as the audit-log
+  // pattern in sms/send.ts.
+  if (error) console.error('[roster] failed to link staff to department:', error.message);
 }
 
 /** Log a no-show against each person the source marks as one, and dock their score. */
