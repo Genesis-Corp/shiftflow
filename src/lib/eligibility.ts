@@ -1,5 +1,8 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
-import { availabilityCoversShift, dayOfWeekFromDate } from '@/lib/shiftUtils';
+import {
+  availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
+  shiftDurationMinutes, MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES,
+} from '@/lib/shiftUtils';
 
 /**
  * Shared eligibility + scoring.
@@ -28,11 +31,40 @@ export interface ScoredCandidate {
   sms_opt_out: boolean;
   computed_score: number;
   trained_departments: { department_id: string; training_level: string }[];
+  /** Minutes already rostered this Sun–Sat week, before this shift. */
+  weekly_minutes_before: number;
+  /** weekly_minutes_before plus this shift — what taking it would bring them to. */
+  weekly_minutes_after: number;
+}
+
+/** Someone whose existing shift overlaps this one closely enough to extend instead of double-booking. */
+export interface ExtendableCandidate {
+  id: string;
+  name: string;
+  phone: string | null;
+  phone_e164: string | null;
+  existing_shift: { id: string; start_time: string; end_time: string };
+  /** The merged range extending their existing shift would produce. */
+  proposed: { start_time: string; end_time: string };
+}
+
+/** Someone whose existing shift overlaps this one, but merging them would run over the 10h cap. */
+export interface OverlapConflict {
+  id: string;
+  name: string;
+  existing_shift: { start_time: string; end_time: string };
 }
 
 export interface EligibilityResult {
   department: { id: string; name: string; requires_supervisor: boolean };
+  /** Race-eligible: no scheduling conflict, no weekly-hours breach. */
   candidates: ScoredCandidate[];
+  /** Excluded from the race — already rostered overlapping this time, but extending that shift would cover it within the 10h cap. */
+  extendable: ExtendableCandidate[];
+  /** Excluded from the race — already rostered overlapping this time, and extending would exceed the 10h cap. */
+  overlapExcluded: OverlapConflict[];
+  /** Excluded from the race — taking this shift would exceed 38 weekly hours. Shown as a backup option, not raced. */
+  backup: ScoredCandidate[];
 }
 
 export async function findEligibleCandidates(
@@ -90,27 +122,93 @@ export async function findEligibleCandidates(
     return true;
   });
 
-  const candidates: ScoredCandidate[] = eligible.map(s => {
+  // A shift they've already got wins over one they might claim — someone
+  // otherwise eligible can still have a scheduling conflict (an overlapping
+  // shift elsewhere the same day) or already be booked close to the weekly
+  // cap. Both are checked against everyone's actual roster for the week, not
+  // just this one shift.
+  const { weekStart, weekEnd } = weekBounds(date);
+  type WeekShift = { id: string; assigned_staff_id: string; date: string; start_time: string; end_time: string };
+  const shiftsByStaff = new Map<string, WeekShift[]>();
+
+  if (eligible.length > 0) {
+    const { data: weekShiftRows, error: weekShiftErr } = await supabaseAdmin
+      .from('shifts')
+      .select('id, assigned_staff_id, date, start_time, end_time')
+      .eq('status', 'covered')
+      .gte('date', weekStart).lte('date', weekEnd)
+      .in('assigned_staff_id', eligible.map(s => s.id));
+    if (weekShiftErr) throw new Error(weekShiftErr.message);
+
+    for (const row of (weekShiftRows ?? []) as WeekShift[]) {
+      if (!shiftsByStaff.has(row.assigned_staff_id)) shiftsByStaff.set(row.assigned_staff_id, []);
+      shiftsByStaff.get(row.assigned_staff_id)!.push(row);
+    }
+  }
+
+  const scoreOf = (s: (typeof allStaff)[number]): number => {
     let score = s.reliability_score ?? 50;
     if (dept.requires_supervisor && s.age_group === 'senior') score += 10;
     if (s.role_type === 'all_rounder') score += 5;
     if (s.role_type === 'potential_all_rounder') score += 2;
     if (s.role_type === 'department_only') score -= 2;
     if (availMap.has(s.id)) score += 3;
+    return score;
+  };
 
-    return {
-      id: s.id,
-      name: s.name,
-      age_group: s.age_group,
-      role_type: s.role_type,
-      reliability_score: s.reliability_score ?? 50,
-      phone: s.phone ?? null,
-      phone_e164: s.phone_e164 ?? null,
-      sms_opt_out: s.sms_opt_out ?? false,
-      computed_score: score,
-      trained_departments: s.staff_departments ?? [],
-    };
-  }).sort((a, b) => b.computed_score - a.computed_score);
+  const buildCandidate = (s: (typeof allStaff)[number], weeklyBefore: number): ScoredCandidate => ({
+    id: s.id,
+    name: s.name,
+    age_group: s.age_group,
+    role_type: s.role_type,
+    reliability_score: s.reliability_score ?? 50,
+    phone: s.phone ?? null,
+    phone_e164: s.phone_e164 ?? null,
+    sms_opt_out: s.sms_opt_out ?? false,
+    computed_score: scoreOf(s),
+    trained_departments: s.staff_departments ?? [],
+    weekly_minutes_before: weeklyBefore,
+    weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
+  });
 
-  return { department: dept, candidates };
+  const candidates: ScoredCandidate[] = [];
+  const extendable: ExtendableCandidate[] = [];
+  const overlapExcluded: OverlapConflict[] = [];
+  const backup: ScoredCandidate[] = [];
+
+  for (const s of eligible) {
+    const weekShifts = shiftsByStaff.get(s.id) ?? [];
+    const conflict = weekShifts.find(w => w.date === date && shiftsOverlap(w.start_time, w.end_time, start_time, end_time));
+
+    if (conflict) {
+      const merged = mergeShiftRanges(conflict.start_time, conflict.end_time, start_time, end_time);
+      if (shiftDurationMinutes(merged.start_time, merged.end_time) <= MAX_EXTENDED_SHIFT_MINUTES) {
+        extendable.push({
+          id: s.id, name: s.name, phone: s.phone ?? null, phone_e164: s.phone_e164 ?? null,
+          existing_shift: { id: conflict.id, start_time: conflict.start_time, end_time: conflict.end_time },
+          proposed: merged,
+        });
+      } else {
+        overlapExcluded.push({
+          id: s.id, name: s.name,
+          existing_shift: { start_time: conflict.start_time, end_time: conflict.end_time },
+        });
+      }
+      continue;
+    }
+
+    const weeklyBefore = weekShifts.reduce((sum, w) => sum + shiftDurationMinutes(w.start_time, w.end_time), 0);
+    const candidate = buildCandidate(s, weeklyBefore);
+
+    if (candidate.weekly_minutes_after > WEEKLY_HOURS_CAP_MINUTES) {
+      backup.push(candidate);
+    } else {
+      candidates.push(candidate);
+    }
+  }
+
+  candidates.sort((a, b) => b.computed_score - a.computed_score);
+  backup.sort((a, b) => b.computed_score - a.computed_score);
+
+  return { department: dept, candidates, extendable, overlapExcluded, backup };
 }

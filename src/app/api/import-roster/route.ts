@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
 
   const plan = buildRosterPlan(mode, date, departmentId, entries, staff, existing);
 
-  if (mode === 'preview' || !plan.creates.length) {
+  if (mode === 'preview' || (!plan.creates.length && !plan.newStaff.length)) {
     if (mode === 'apply') plan.applied = { shifts_created: 0, incidents_logged: 0 };
     return NextResponse.json(plan);
   }

@@ -8,6 +8,11 @@ export const BREAK_DURATION_MINUTES = 30;
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** A single shift can be extended to cover an overlapping open one only up to this length. */
+export const MAX_EXTENDED_SHIFT_MINUTES = 10 * 60;
+/** Ordinary weekly hours cap (Sunday–Saturday) — going over excludes someone from a claim race. */
+export const WEEKLY_HOURS_CAP_MINUTES = 38 * 60;
+
 /** Convert "HH:MM" to total minutes since midnight */
 export function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
@@ -65,6 +70,40 @@ export function addDays(dateStr: string, delta: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + delta);
   return d.toISOString().split('T')[0];
+}
+
+/** The Sunday–Saturday week (inclusive) a date falls in. */
+export function weekBounds(dateStr: string): { weekStart: string; weekEnd: string } {
+  const dow = dayOfWeekFromDate(dateStr);
+  return { weekStart: addDays(dateStr, -dow), weekEnd: addDays(dateStr, 6 - dow) };
+}
+
+/**
+ * Whether two same-day time ranges overlap. Touching endpoints (one ends
+ * exactly when the other starts) do not count — that's a legitimate back-
+ * to-back pair, not a conflict.
+ */
+export function shiftsOverlap(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
+  const aStartM = timeToMinutes(aStart);
+  let aEndM = timeToMinutes(aEnd);
+  if (aEndM <= aStartM) aEndM += 24 * 60;
+
+  const bStartM = timeToMinutes(bStart);
+  let bEndM = timeToMinutes(bEnd);
+  if (bEndM <= bStartM) bEndM += 24 * 60;
+
+  return aStartM < bEndM && bStartM < aEndM;
+}
+
+/** The smallest single range spanning two overlapping (or touching) shifts. */
+export function mergeShiftRanges(
+  aStart: string, aEnd: string, bStart: string, bEnd: string
+): { start_time: string; end_time: string } {
+  const startM = Math.min(timeToMinutes(aStart), timeToMinutes(bStart));
+  const aEndM = timeToMinutes(aEnd) <= timeToMinutes(aStart) ? timeToMinutes(aEnd) + 24 * 60 : timeToMinutes(aEnd);
+  const bEndM = timeToMinutes(bEnd) <= timeToMinutes(bStart) ? timeToMinutes(bEnd) + 24 * 60 : timeToMinutes(bEnd);
+  const endM = Math.max(aEndM, bEndM);
+  return { start_time: minutesToTime(startM), end_time: minutesToTime(endM) };
 }
 
 /**

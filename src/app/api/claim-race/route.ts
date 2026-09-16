@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     .from('shifts').select(`*, departments ( id, name )`).eq('id', shiftId).single();
   if (error || !shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 });
 
-  const { candidates } = await findEligibleCandidates({
+  const { candidates, extendable, backup } = await findEligibleCandidates({
     date: shift.date,
     start_time: shift.start_time,
     end_time: shift.end_time,
@@ -39,6 +39,8 @@ export async function GET(req: NextRequest) {
       computed_score: c.computed_score, age_group: c.age_group,
     })),
     excluded,
+    extendable,
+    backup,
     active_race_id: active?.id ?? null,
   });
 }

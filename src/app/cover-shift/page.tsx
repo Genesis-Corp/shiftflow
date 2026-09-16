@@ -3,14 +3,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed,
-  CalendarClock, AlertTriangle, Loader2,
+  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert,
 } from 'lucide-react';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
 import SmsModeBanner from '@/components/SmsModeBanner';
 import RaceStatusPanel from '@/components/RaceStatusPanel';
-import { Department, CoverCandidate, Shift, SmsConfig, RacePreview } from '@/lib/types';
-import { formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate } from '@/lib/shiftUtils';
+import {
+  Department, CoverCandidate, Shift, SmsConfig, RacePreview, ExtendableCandidate, OverlapConflict,
+} from '@/lib/types';
+import {
+  formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES,
+} from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
@@ -20,6 +24,16 @@ interface CoverResult {
   eligible_count: number;
   contactable_count: number;
   candidates: CoverCandidate[];
+  extendable: ExtendableCandidate[];
+  overlapExcluded: OverlapConflict[];
+  backup: CoverCandidate[];
+}
+
+/** "543 minutes" -> "9h 3m" */
+function formatMinutes(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
 export default function CoverShiftPage() {
@@ -39,6 +53,7 @@ export default function CoverShiftPage() {
   const [result, setResult] = useState<CoverResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [incidentLoading, setIncidentLoading] = useState('');
+  const [extending, setExtending] = useState<string | null>(null);
 
   const [preview, setPreview] = useState<RacePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -121,6 +136,23 @@ export default function CoverShiftPage() {
     setPreview(null);
     if (!res.ok) { setRaceError(data.error ?? 'Could not start the race'); return; }
     setRaceId(data.raceId);
+  }
+
+  /** Extend someone's existing overlapping shift to cover this one instead of double-booking them. */
+  async function extendShift(staffId: string) {
+    if (!selectedShiftId) return;
+    setExtending(staffId); setRaceError('');
+    const res = await fetch('/api/cover-shift/extend', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shift_id: selectedShiftId, staff_id: staffId }),
+    });
+    const data = await res.json();
+    setExtending(null);
+    if (!res.ok) { setRaceError(data.error ?? 'Could not extend the shift'); return; }
+    // The open shift this result was for no longer exists — back to the list.
+    setResult(null);
+    setSelectedShiftId(null);
+    await loadOpenShifts();
   }
 
   async function logIncident(staffId: string, type: 'no_show' | 'no_answer' | 'rejected' | 'covered') {
@@ -283,12 +315,13 @@ export default function CoverShiftPage() {
             )}
           </div>
 
-          {result.candidates.length === 0 ? (
+          {result.candidates.length === 0 && result.extendable.length === 0 &&
+           result.overlapExcluded.length === 0 && result.backup.length === 0 ? (
             <div className="card p-8 text-center text-slate-400">
               <p className="font-medium">No eligible staff found</p>
               <p className="text-sm mt-1">Try a different time range or check staff availability templates.</p>
             </div>
-          ) : (
+          ) : result.candidates.length === 0 ? null : (
             <div className="space-y-2">
               {result.candidates.map((c, i) => (
                 <div key={c.id} className={`card p-4 flex items-center gap-4 ${i === 0 ? 'border-blue-300 bg-blue-50/50' : ''}`}>
@@ -312,6 +345,100 @@ export default function CoverShiftPage() {
                   <div className="text-right flex-shrink-0">
                     <p className="text-lg font-bold text-slate-700">{c.computed_score}</p>
                     <p className="text-xs text-slate-400">score</p>
+                  </div>
+                  <div className="flex gap-1.5 flex-shrink-0">
+                    <button title="Covered" disabled={!!incidentLoading}
+                      onClick={() => logIncident(c.id, 'covered')}
+                      className="btn-ghost p-1.5 text-green-600 hover:bg-green-50"
+                    ><CheckCircle size={16} /></button>
+                    <button title="Rejected" disabled={!!incidentLoading}
+                      onClick={() => logIncident(c.id, 'rejected')}
+                      className="btn-ghost p-1.5 text-orange-500 hover:bg-orange-50"
+                    ><XCircle size={16} /></button>
+                    <button title="No answer" disabled={!!incidentLoading}
+                      onClick={() => logIncident(c.id, 'no_answer')}
+                      className="btn-ghost p-1.5 text-slate-500 hover:bg-slate-100"
+                    ><PhoneMissed size={16} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Already rostered overlapping this time, but extending covers it within 10h */}
+          {result.extendable.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ArrowRight size={14} className="text-blue-500" />
+                <h3 className="text-sm font-semibold text-slate-700">
+                  Extend an existing shift instead ({result.extendable.length})
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                Already rostered overlapping this time — excluded from the claim race, but stretching their shift covers it without double-booking them.
+              </p>
+              {result.extendable.map(c => (
+                <div key={c.id} className="card p-4 flex items-center gap-4 border-blue-200 bg-blue-50/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-800">{c.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                      {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}
+                      <span className="mx-1.5 text-slate-400">→</span>
+                      <span className="text-blue-700">{c.proposed.start_time.slice(0, 5)}–{c.proposed.end_time.slice(0, 5)}</span>
+                      <span className="ml-1.5 text-slate-400">({formatDuration(c.proposed.start_time, c.proposed.end_time)})</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => extendShift(c.id)}
+                    disabled={extending !== null}
+                    className="btn-primary flex-shrink-0"
+                  >
+                    {extending === c.id ? <Loader2 size={14} className="animate-spin" /> : 'Extend their shift'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Overlapping, but stretching it would run past the 10h cap — no action offered */}
+          {result.overlapExcluded.length > 0 && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
+              <p className="font-medium text-slate-600 mb-1">
+                {result.overlapExcluded.length} already rostered overlapping this time — can't extend without exceeding 10 hours
+              </p>
+              <ul className="text-slate-500 text-xs space-y-0.5">
+                {result.overlapExcluded.map(c => (
+                  <li key={c.id}>{c.name} — {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Would exceed the weekly hours cap — kept as a manual backup, not raced */}
+          {result.backup.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ShieldAlert size={14} className="text-amber-500" />
+                <h3 className="text-sm font-semibold text-slate-700">
+                  Backup — would exceed {WEEKLY_HOURS_CAP_MINUTES / 60}h this week ({result.backup.length})
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                Excluded from the claim race for going over the weekly hours cap. Kept here in case there's no other option — contact them yourself if you decide to.
+              </p>
+              {result.backup.map(c => (
+                <div key={c.id} className="card p-4 flex items-center gap-4 border-amber-200 bg-amber-50/40">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-slate-800">{c.name}</span>
+                      <span className={c.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
+                        {c.age_group === 'senior' ? 'Senior' : 'Junior'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-700 mt-1">
+                      {formatMinutes(c.weekly_minutes_before)} already this week — this shift would bring it to{' '}
+                      <strong>{formatMinutes(c.weekly_minutes_after)}</strong>
+                    </p>
                   </div>
                   <div className="flex gap-1.5 flex-shrink-0">
                     <button title="Covered" disabled={!!incidentLoading}
@@ -375,6 +502,20 @@ export default function CoverShiftPage() {
                     <li key={e.staffId}>
                       {e.name} — {e.reason === 'no_phone' ? 'no valid mobile number' : 'opted out of SMS'}
                     </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {(preview.extendable.length > 0 || preview.backup.length > 0) && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+                <p className="font-medium text-slate-600 mb-1">Not included in this race</p>
+                <ul className="text-slate-500 text-xs space-y-0.5">
+                  {preview.extendable.map(e => (
+                    <li key={e.id}>{e.name} — already rostered overlapping this time (extendable instead — close this and use the option below)</li>
+                  ))}
+                  {preview.backup.map(b => (
+                    <li key={b.id}>{b.name} — would exceed 38h this week (kept as a backup option below)</li>
                   ))}
                 </ul>
               </div>

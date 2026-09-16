@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'date, start_time, end_time, department_id required' }, { status: 400 });
 
   try {
-    const { department, candidates } = await findEligibleCandidates({
+    const { department, candidates, extendable, overlapExcluded, backup } = await findEligibleCandidates({
       date, start_time, end_time, department_id, required_role,
     });
 
@@ -30,6 +30,9 @@ export async function POST(req: NextRequest) {
       shift: { id: shift_id ?? null, date, start_time, end_time, department_id, department, required_role },
       eligible_count: candidates.length,
       candidates,
+      extendable,
+      overlapExcluded,
+      backup,
       contactable_count: candidates.filter(c => c.phone_e164 && !c.sms_opt_out).length,
     });
   } catch (err) {

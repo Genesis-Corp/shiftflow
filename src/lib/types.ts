@@ -78,12 +78,32 @@ export interface ReliabilityIncident {
 export interface CoverCandidate extends Staff {
   computed_score: number;
   trained_departments: Department[];
+  weekly_minutes_before: number;
+  weekly_minutes_after: number;
+}
+
+export interface ExtendableCandidate {
+  id: string;
+  name: string;
+  phone: string | null;
+  phone_e164: string | null;
+  existing_shift: { id: string; start_time: string; end_time: string };
+  proposed: { start_time: string; end_time: string };
+}
+
+export interface OverlapConflict {
+  id: string;
+  name: string;
+  existing_shift: { start_time: string; end_time: string };
 }
 
 export interface CoverShiftResult {
   shift: Shift;
   eligible_count: number;
   candidates: CoverCandidate[];
+  extendable: ExtendableCandidate[];
+  overlapExcluded: OverlapConflict[];
+  backup: CoverCandidate[];
 }
 
 // ── Claim race ───────────────────────────────────────────────────────────────
@@ -151,6 +171,8 @@ export interface RacePreview {
     computed_score: number; age_group: AgeGroup;
   }[];
   excluded: { staffId: string; name: string; reason: 'no_phone' | 'opted_out' }[];
+  extendable: ExtendableCandidate[];
+  backup: CoverCandidate[];
   active_race_id: string | null;
 }
 
