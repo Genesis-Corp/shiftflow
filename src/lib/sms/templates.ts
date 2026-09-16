@@ -72,6 +72,76 @@ export function optOutMessage(): string {
   return `${BUSINESS}: you will not receive any more shift messages from us.`;
 }
 
+// ── Availability flow ───────────────────────────────────────────────────────
+// The store manager picks who covers a shift, so the first message asks
+// whether someone is free — it does not hand them the shift. No claim code
+// (caller ID identifies the replier on a live number) and no "first reply
+// wins", because neither is true any more.
+
+/** Wave one: are you free? Not an offer — nobody is given the shift by replying. */
+export function availabilityMessage(shift: ShiftSummary): string {
+  return `${BUSINESS}: are you available for ${describeShift(shift)}? Reply YES or NO.`;
+}
+
+/** The no-show case, where the shift is running and somebody is needed now. */
+export function urgentAvailabilityMessage(shift: ShiftSummary): string {
+  return `${BUSINESS}: someone can't do their shift ${describeShift(shift)}. ` +
+    `Are you able to come in ASAP? Reply YES or NO.`;
+}
+
+/** Sent to whoever the manager picked. */
+export function acceptedMessage(): string {
+  return `${BUSINESS}: thank you for accepting the shift, see you soon!`;
+}
+
+/** Sent to everyone who offered but wasn't picked. */
+export function notSelectedMessage(): string {
+  return `${BUSINESS}: thank you for offering to cover the shift, unfortunately it has been covered.`;
+}
+
+// ── Manager messages ────────────────────────────────────────────────────────
+// Prefixed differently from staff copy: these arrive on the same number, and
+// the manager is often also a staff member receiving the other kind.
+
+const SYSTEM = 'ShiftFlow';
+
+/**
+ * One available person, as they reply. The number is what she texts back to
+ * give them the shift — names get misspelt, a number doesn't.
+ */
+export function managerOptionMessage(
+  shift: ShiftSummary, name: string, cost: number | null, option: number
+): string {
+  const price = cost === null ? 'no rate set' : `$${cost.toFixed(2)}`;
+  return `${SYSTEM}: ${name} is available for ${describeShift(shift)} - ${price}. ` +
+    `Reply ${option} to give it to them.`;
+}
+
+/** The full list once the gathering window closes and she hasn't picked. */
+export function managerListMessage(
+  shift: ShiftSummary,
+  options: { option: number; name: string; cost: number | null }[]
+): string {
+  if (options.length === 0) {
+    return `${SYSTEM}: nobody is available for ${describeShift(shift)}. It is still uncovered.`;
+  }
+  const lines = options
+    .map(o => `${o.option}. ${o.name} - ${o.cost === null ? 'no rate' : `$${o.cost.toFixed(2)}`}`)
+    .join('\n');
+  return `${SYSTEM}: available for ${describeShift(shift)}:\n${lines}\nReply with a number to pick.`;
+}
+
+/** Junior wave found nobody — ask whether to widen it to seniors. */
+export function managerEscalationMessage(shift: ShiftSummary): string {
+  return `${SYSTEM}: no junior staff available for ${describeShift(shift)}, ` +
+    `and nobody can extend. Reply YES to ask senior staff, or NO to leave it.`;
+}
+
+/** Answers a pick for a shift that has already been filled or closed. */
+export function managerStaleSelectionMessage(): string {
+  return `${SYSTEM}: that option is no longer open — the shift has already been dealt with.`;
+}
+
 /** Characters that are NOT in the GSM-7 alphabet force a 70-char UCS-2 segment. */
 const GSM7 =
   "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
