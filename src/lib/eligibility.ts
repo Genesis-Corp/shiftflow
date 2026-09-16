@@ -5,6 +5,7 @@ import {
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES,
 } from '@/lib/shiftUtils';
 import { calculateShiftCost, PenaltyRule } from '@/lib/wages';
+import { rankCandidates } from '@/lib/coverTiers';
 
 /**
  * Shared eligibility + scoring.
@@ -235,8 +236,13 @@ export async function findEligibleCandidates(
     }
   }
 
-  candidates.sort((a, b) => b.computed_score - a.computed_score);
-  backup.sort((a, b) => b.computed_score - a.computed_score);
-
-  return { department: dept, candidates, extendable, overlapExcluded, backup };
+  // Cheapest first, reliability breaking ties — the store manager picks on
+  // price, so the list is ordered the way she reads it.
+  return {
+    department: dept,
+    candidates: rankCandidates(candidates),
+    extendable,
+    overlapExcluded,
+    backup: rankCandidates(backup),
+  };
 }
