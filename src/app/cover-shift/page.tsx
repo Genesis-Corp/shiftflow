@@ -16,6 +16,7 @@ import {
   formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES,
 } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
+import { formatCost } from '@/lib/wages';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 
@@ -341,6 +342,14 @@ export default function CoverShiftPage() {
                     <div className="mt-1.5 w-48">
                       <ReliabilityBar score={c.reliability_score} />
                     </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="text-sm font-semibold text-slate-700">
+                      {c.shift_cost === null
+                        ? <span className="text-slate-300 font-normal">no rate</span>
+                        : formatCost(c.shift_cost)}
+                    </p>
+                    <p className="text-xs text-slate-400">cost</p>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className="text-lg font-bold text-slate-700">{c.computed_score}</p>

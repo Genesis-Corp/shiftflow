@@ -80,6 +80,8 @@ export interface CoverCandidate extends Staff {
   trained_departments: Department[];
   weekly_minutes_before: number;
   weekly_minutes_after: number;
+  /** Cost of this shift with them on it, or null when they have no rate set. */
+  shift_cost: number | null;
 }
 
 export interface ExtendableCandidate {

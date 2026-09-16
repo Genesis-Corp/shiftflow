@@ -1,8 +1,10 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
-  shiftDurationMinutes, MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES,
+  shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
+  MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES,
 } from '@/lib/shiftUtils';
+import { calculateShiftCost, PenaltyRule } from '@/lib/wages';
 
 /**
  * Shared eligibility + scoring.
@@ -35,6 +37,8 @@ export interface ScoredCandidate {
   weekly_minutes_before: number;
   /** weekly_minutes_before plus this shift — what taking it would bring them to. */
   weekly_minutes_after: number;
+  /** What this shift would cost with them on it, or null if they have no rate set. */
+  shift_cost: number | null;
 }
 
 /** Someone whose existing shift overlaps this one closely enough to extend instead of double-booking. */
@@ -146,6 +150,29 @@ export async function findEligibleCandidates(
     }
   }
 
+  // Rates and loadings, so a manager can weigh cost alongside suitability.
+  // Missing rates are not an error: the person still shows, just without a
+  // figure, which is more honest than costing them at zero.
+  const [wageRes, ruleRes] = await Promise.all([
+    supabaseAdmin.from('staff_wages').select('staff_id, base_hourly_rate'),
+    supabaseAdmin.from('penalty_rules').select('*'),
+  ]);
+  const rates = new Map(
+    (wageRes.data ?? []).map((w: { staff_id: string; base_hourly_rate: number }) =>
+      [w.staff_id, Number(w.base_hourly_rate)])
+  );
+  const penaltyRules = (ruleRes.data ?? []) as PenaltyRule[];
+  const breakMinutes = requiresBreak(start_time.slice(0, 5), end_time.slice(0, 5)) ? BREAK_DURATION_MINUTES : 0;
+
+  const costFor = (staffId: string): number | null => {
+    const rate = rates.get(staffId);
+    if (rate === undefined) return null;
+    return calculateShiftCost(
+      { date, start_time, end_time, unpaid_break_minutes: breakMinutes, base_hourly_rate: rate },
+      penaltyRules
+    ).cost;
+  };
+
   const scoreOf = (s: (typeof allStaff)[number]): number => {
     let score = s.reliability_score ?? 50;
     if (dept.requires_supervisor && s.age_group === 'senior') score += 10;
@@ -169,6 +196,7 @@ export async function findEligibleCandidates(
     trained_departments: s.staff_departments ?? [],
     weekly_minutes_before: weeklyBefore,
     weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
+    shift_cost: costFor(s.id),
   });
 
   const candidates: ScoredCandidate[] = [];

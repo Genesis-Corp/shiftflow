@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { UserPlus, Trash2, Mail, Loader2, ShieldCheck, Clock } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
+import WageTable from '@/components/WageTable';
 import { fetchJson } from '@/lib/apiClient';
 
 interface Manager {
@@ -118,6 +119,10 @@ export default function ManagersPage() {
           ))}
         </div>
       )}
+
+      <div className="pt-2">
+        <WageTable />
+      </div>
     </div>
   );
 }
