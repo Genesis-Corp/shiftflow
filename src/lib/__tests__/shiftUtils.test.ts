@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday } from '../shiftUtils';
+import { describe, it, expect, afterEach } from 'vitest';
+import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays } from '../shiftUtils';
 
 describe('shiftsOverlap', () => {
   it('is true when ranges genuinely overlap', () => {
@@ -65,5 +65,37 @@ describe('isBirthday', () => {
   it('is false when there is no birthday on file', () => {
     expect(isBirthday(null, '2026-09-18')).toBe(false);
     expect(isBirthday(undefined, '2026-09-18')).toBe(false);
+  });
+});
+
+describe('addDays', () => {
+  const originalTZ = process.env.TZ;
+  afterEach(() => { process.env.TZ = originalTZ; });
+
+  it('steps forward and back by one day in UTC', () => {
+    process.env.TZ = 'UTC';
+    expect(addDays('2026-09-18', 1)).toBe('2026-09-19');
+    expect(addDays('2026-09-18', -1)).toBe('2026-09-17');
+  });
+
+  it('steps forward and back by one day in a positive UTC offset (Perth, +8)', () => {
+    // Regression test: round-tripping through toISOString() (always UTC)
+    // used to shift the result by a day here — "next" looked like a no-op
+    // and "previous" landed two days back on the Shifts timeline.
+    process.env.TZ = 'Australia/Perth';
+    expect(addDays('2026-09-18', 1)).toBe('2026-09-19');
+    expect(addDays('2026-09-18', -1)).toBe('2026-09-17');
+  });
+
+  it('steps forward and back by one day in a negative UTC offset (Los Angeles, -7/-8)', () => {
+    process.env.TZ = 'America/Los_Angeles';
+    expect(addDays('2026-09-18', 1)).toBe('2026-09-19');
+    expect(addDays('2026-09-18', -1)).toBe('2026-09-17');
+  });
+
+  it('crosses a month boundary', () => {
+    process.env.TZ = 'Australia/Perth';
+    expect(addDays('2026-09-30', 1)).toBe('2026-10-01');
+    expect(addDays('2026-10-01', -1)).toBe('2026-09-30');
   });
 });

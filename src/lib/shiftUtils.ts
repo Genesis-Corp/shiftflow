@@ -65,11 +65,20 @@ export function dayOfWeekFromDate(dateStr: string): number {
 
 /** Add (or subtract) whole days to a YYYY-MM-DD date string, correctly
  *  crossing month and year boundaries (used by the Shifts timeline's
- *  previous/next day arrows). */
+ *  previous/next day arrows).
+ *
+ *  Stays in local time from construction through to the formatted result.
+ *  Reading it back out via toISOString() (always UTC) silently shifts the
+ *  date by a day for anyone in a positive UTC offset — e.g. Australia —
+ *  which is what broke "next" (rounded back to the same day) and
+ *  "previous" (landed two days back) on the Shifts timeline. */
 export function addDays(dateStr: string, delta: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + delta);
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /** The Sunday–Saturday week (inclusive) a date falls in. */
