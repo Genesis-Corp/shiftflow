@@ -15,7 +15,7 @@ const links = [
   { href: '/reliability',  label: 'Reliability' },
 ];
 
-export default function Navbar({ userEmail }: { userEmail: string | null }) {
+export default function Navbar({ userEmail, userName }: { userEmail: string | null; userName?: string | null }) {
   const pathname = usePathname();
   const router = useRouter();
   const onLoginPage = pathname === '/login';
@@ -54,7 +54,7 @@ export default function Navbar({ userEmail }: { userEmail: string | null }) {
           {!onLoginPage && userEmail && (
             <div className="ml-auto flex items-center gap-2 flex-shrink-0">
               <span className="hidden md:inline text-xs text-blue-100 truncate max-w-[14rem]" title={userEmail}>
-                {userEmail}
+                {userName ?? userEmail}
               </span>
               <Link
                 href="/settings"
