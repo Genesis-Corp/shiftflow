@@ -13,13 +13,14 @@ import { sendSms, logInbound } from '@/lib/sms/send';
 import {
   offerMessage, winnerMessage, coveredMessage, tooLateMessage,
   declinedMessage, optOutMessage, availabilityMessage, availabilityAckMessage,
-  managerListMessage, managerOutcomeMessage, managerInvalidPickMessage,
-  managerStaleSelectionMessage, ShiftSummary,
+  urgentAvailabilityMessage, managerListMessage, managerOutcomeMessage,
+  managerInvalidPickMessage, managerStaleSelectionMessage, ShiftSummary,
 } from '@/lib/sms/templates';
 import {
   getSmsMode, getExpiryMinutes, getMaxRecipients, isQuietHours, getTimezone,
   localDateNow, localTimeNow,
 } from '@/lib/sms/config';
+import { timeToMinutes } from '@/lib/shiftUtils';
 
 export interface StartRaceResult {
   raceId: string;
@@ -108,16 +109,22 @@ function expiryMillisFor(tier: CoverTier, leadMinutes: number, contactableCount:
 
 /** Send the tier's opening message to whichever slice of the ranked,
  *  contactable list is live right now, and record each send's outcome.
- *  `liveSlice` must be a prefix of the full ranked `contactable` list, so
- *  each recipient's index lines up with its claim code in `codes`. */
+ *  Immediate asks urgently ("today"/"tonight" + ASAP); gather and sequential
+ *  both just ask availability, same wording — none of the three show a
+ *  claim code any more, only the gather tier's post-window degrade does
+ *  (see sendBatch), since that's the one case genuinely framed as a race. */
 async function sendToCandidates(
-  liveSlice: ScoredCandidate[], codes: string[], summary: ShiftSummary,
+  liveSlice: ScoredCandidate[], summary: ShiftSummary,
   raceId: string, tier: CoverTier, managerName: string | null
 ): Promise<number> {
+  const body = tier === 'immediate'
+    ? urgentAvailabilityMessage(summary, isPastFivePm(), managerName)
+    : availabilityMessage(summary, managerName);
+
   const results = await Promise.allSettled(
-    liveSlice.map((c, i) => sendSms({
+    liveSlice.map(c => sendSms({
       to: c.phone_e164!,
-      body: tier === 'gather' ? availabilityMessage(summary, managerName) : offerMessage(summary, codes[i], managerName),
+      body,
       kind: tier === 'gather' ? 'availability' : 'offer',
       raceId,
       staffId: c.id,
@@ -284,7 +291,7 @@ export async function startRace(
     tier === 'sequential' ? contactable.slice(0, 1) :
     contactable;
 
-  const contacted = await sendToCandidates(liveSlice, codes, summary, race.id, tier, managerName);
+  const contacted = await sendToCandidates(liveSlice, summary, race.id, tier, managerName);
   return { raceId: race.id, contacted, excluded, mode, tier };
 }
 
@@ -299,12 +306,20 @@ interface RecipientRow {
   staff?: { name: string } | null;
 }
 
-/** Send an offer (claim code, "first reply wins") to a set of recipients
- *  already in the database, reusing each one's own claim code. Used to
+/** Minutes-since-midnight comparison against 5pm local time — the store's
+ *  own rule of thumb for whether to say "today" or "tonight" in the
+ *  immediate tier's ask. */
+function isPastFivePm(): boolean {
+  return timeToMinutes(localTimeNow().slice(0, 5)) >= timeToMinutes('17:00');
+}
+
+/** Send a message to a set of recipients already in the database. The
+ *  caller decides the wording per recipient (it may need that row's own
+ *  claim code, as the gather tier's post-window degrade does). Used to
  *  advance the immediate tier to its next batch, the sequential tier to its
- *  next person, and to send the gather tier's post-window degrade blast. */
-async function sendOfferBatch(
-  rows: RecipientRow[], summary: ShiftSummary, raceId: string, managerName: string | null
+ *  next person, and to send that degrade blast. */
+async function sendBatch(
+  rows: RecipientRow[], raceId: string, bodyFor: (r: RecipientRow) => string
 ): Promise<void> {
   const sendable = rows.filter(r => r.phone_e164);
   if (sendable.length === 0) return;
@@ -312,7 +327,7 @@ async function sendOfferBatch(
   const results = await Promise.allSettled(
     sendable.map(r => sendSms({
       to: r.phone_e164!,
-      body: offerMessage(summary, r.claim_code, managerName),
+      body: bodyFor(r),
       kind: 'offer',
       raceId, staffId: r.staff_id, recipientName: r.staff?.name,
     }))
@@ -416,7 +431,7 @@ async function advanceImmediate(
 
   const manager = await managerProfileFor(race.started_by);
   const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
-  await sendOfferBatch(toSend, summary, race.id, manager?.name ?? null);
+  await sendBatch(toSend, race.id, () => urgentAvailabilityMessage(summary, isPastFivePm(), manager?.name ?? null));
 }
 
 async function advanceGather(
@@ -468,7 +483,7 @@ async function advanceGather(
 
   const manager = await managerProfileFor(race.started_by);
   const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
-  await sendOfferBatch(toSend, summary, race.id, manager?.name ?? null);
+  await sendBatch(toSend, race.id, r => offerMessage(summary, r.claim_code, manager?.name ?? null));
 }
 
 async function advanceSequential(
@@ -500,7 +515,7 @@ async function advanceSequential(
 
   const manager = await managerProfileFor(race.started_by);
   const next = recipients.find(r => r.staff_id === action.recipient.staffId);
-  if (next) await sendOfferBatch([next], summary, race.id, manager?.name ?? null);
+  if (next) await sendBatch([next], race.id, () => availabilityMessage(summary, manager?.name ?? null));
 }
 
 export interface ReplyOutcome {

@@ -91,10 +91,16 @@ export function availabilityAckMessage(): string {
   return `${BUSINESS}: thanks, noted - we'll confirm shortly if you're needed.`;
 }
 
-/** The no-show case, where the shift is running and somebody is needed now. */
-export function urgentAvailabilityMessage(shift: ShiftSummary): string {
-  return `${BUSINESS}: someone can't do their shift ${describeShift(shift)}. ` +
-    `Are you able to come in ASAP? Reply YES or NO.`;
+/** The immediate tier's ask — someone hasn't turned up and this shift is
+ *  running now. `isTonight` says "tonight" instead of "today" once it's
+ *  past 5pm, matching how the store's managers actually phrase this; no
+ *  claim code, no "first reply wins" — same urgency as availabilityMessage,
+ *  just faster. */
+export function urgentAvailabilityMessage(shift: ShiftSummary, isTonight: boolean, managerName?: string | null): string {
+  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
+  const when = isTonight ? 'tonight' : 'today';
+  return `${greeting}${BUSINESS}: are you available to work ${when} at ${formatShiftTimes(shift.start_time, shift.end_time)}, ` +
+    `${shift.departmentName}? Let me know YES or NO ASAP.`;
 }
 
 /** Sent to whoever the manager picked. */

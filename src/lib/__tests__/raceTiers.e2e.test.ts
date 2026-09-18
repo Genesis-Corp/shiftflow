@@ -234,33 +234,33 @@ describe('immediate tier end-to-end', () => {
     expect(result.tier).toBe('immediate');
     expect(result.contacted).toBe(2);
 
-    // Only the first batch (cheapest two) is texted, with the manager's name.
+    // Only the first batch (cheapest two) is texted, with the manager's
+    // name, urgent "today"/"tonight" wording and no claim code — matches
+    // the plain phone-based reply matching, same as the gather tier.
     expect(messagesTo(A.phone_e164)).toHaveLength(1);
     expect(messagesTo(B.phone_e164)).toHaveLength(1);
     expect(messagesTo(C.phone_e164)).toHaveLength(0);
     expect(messagesTo(D.phone_e164)).toHaveLength(0);
-    expect(bodyOf(messagesTo(A.phone_e164)[0])).toContain("Hey it's Jamie");
-
-    const aCode = messagesTo(A.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    const bCode = messagesTo(B.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    expect(aCode).toBeTruthy();
-    expect(bCode).toBeTruthy();
+    const aBody = bodyOf(messagesTo(A.phone_e164)[0]);
+    expect(aBody).toContain("Hey it's Jamie");
+    expect(aBody).toContain('ASAP');
+    expect(aBody).not.toContain('claim');
+    expect(aBody).not.toMatch(/YES [A-Z0-9]{4}/);
 
     // Both decline — the batch should advance immediately, without waiting
     // for the 5-minute timeout, straight to the next pair.
-    const aReply = await handleInboundReply({ from: A.phone_e164, body: `NO ${aCode}` });
+    const aReply = await handleInboundReply({ from: A.phone_e164, body: 'NO' });
     expect(aReply.result).toBe('declined');
     await advanceRace(result.raceId);
     expect(messagesTo(C.phone_e164)).toHaveLength(0); // Bob hasn't answered yet
 
-    const bReply = await handleInboundReply({ from: B.phone_e164, body: `NO ${bCode}` });
+    const bReply = await handleInboundReply({ from: B.phone_e164, body: 'NO' });
     expect(bReply.result).toBe('declined');
     await advanceRace(result.raceId);
     expect(messagesTo(C.phone_e164)).toHaveLength(1);
     expect(messagesTo(D.phone_e164)).toHaveLength(1);
 
-    const cCode = messagesTo(C.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    const won = await handleInboundReply({ from: C.phone_e164, body: `YES ${cCode}` });
+    const won = await handleInboundReply({ from: C.phone_e164, body: 'YES' });
     expect(won.result).toBe('won');
 
     const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
@@ -280,11 +280,9 @@ describe('immediate tier end-to-end', () => {
     seedStaff(A, B);
 
     const result = await startRace('shift-imm2', { startedBy: 'mgr-1' });
-    const aCode = messagesTo(A.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    const bCode = messagesTo(B.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
 
-    await handleInboundReply({ from: A.phone_e164, body: `NO ${aCode}` });
-    await handleInboundReply({ from: B.phone_e164, body: `NO ${bCode}` });
+    await handleInboundReply({ from: A.phone_e164, body: 'NO' });
+    await handleInboundReply({ from: B.phone_e164, body: 'NO' });
     await advanceRace(result.raceId); // no more batches -> exhausted
 
     const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
@@ -403,14 +401,16 @@ describe('sequential tier end-to-end', () => {
     expect(result.tier).toBe('sequential');
     expect(messagesTo(H.phone_e164)).toHaveLength(1);
     expect(messagesTo(I.phone_e164)).toHaveLength(0);
+    const hBody = bodyOf(messagesTo(H.phone_e164)[0]);
+    expect(hBody).toContain('are you available');
+    expect(hBody).not.toMatch(/YES [A-Z0-9]{4}/);
 
     // Past the 4-hour step, with no reply from Hana.
     vi.setSystemTime(new Date(BASE_NOW.getTime() + 4 * 60 * 60_000 + 60_000));
     await advanceRace(result.raceId);
     expect(messagesTo(I.phone_e164)).toHaveLength(1);
 
-    const code = messagesTo(I.phone_e164)[0].body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    const won = await handleInboundReply({ from: I.phone_e164, body: `YES ${code}` });
+    const won = await handleInboundReply({ from: I.phone_e164, body: 'YES' });
     expect(won.result).toBe('won');
 
     const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);

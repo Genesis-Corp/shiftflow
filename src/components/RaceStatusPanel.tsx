@@ -46,8 +46,13 @@ export default function RaceStatusPanel({
 
   async function simulate(recipient: ClaimRecipient, reply: string) {
     setBusy(recipient.id + reply);
+    const simulateToken = process.env.NEXT_PUBLIC_SMS_SIMULATE_TOKEN;
     const res = await fetch('/api/sms/simulate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(simulateToken ? { 'x-simulate-token': simulateToken } : {}),
+      },
       body: JSON.stringify({ recipient_id: recipient.id, body: reply }),
     });
     if (!res.ok) setError((await res.json()).error ?? 'Simulation failed');

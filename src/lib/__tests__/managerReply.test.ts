@@ -81,7 +81,19 @@ describe('availability flow copy', () => {
   });
 
   it('says somebody is needed now in the no-show case', () => {
-    expect(urgentAvailabilityMessage(SHIFT)).toContain('ASAP');
+    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('ASAP');
+    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('today');
+  });
+
+  it('says "tonight" instead of "today" once asked for after 5pm', () => {
+    expect(urgentAvailabilityMessage(SHIFT, true)).toContain('tonight');
+    expect(urgentAvailabilityMessage(SHIFT, true)).not.toContain('today');
+  });
+
+  it('opens with the starting manager\'s name, same as the other tiers', () => {
+    const withName = urgentAvailabilityMessage(SHIFT, false, 'John');
+    expect(withName.startsWith("Hey it's John - ")).toBe(true);
+    expect(urgentAvailabilityMessage(SHIFT, false).startsWith("Hey it's")).toBe(false);
   });
 
   it('uses the wording the store manager asked for', () => {
@@ -91,7 +103,7 @@ describe('availability flow copy', () => {
 
   it('keeps every staff-facing message to one segment', () => {
     for (const m of [
-      availabilityMessage(SHIFT), urgentAvailabilityMessage(SHIFT),
+      availabilityMessage(SHIFT), urgentAvailabilityMessage(SHIFT, false), urgentAvailabilityMessage(SHIFT, true),
       acceptedMessage(), notSelectedMessage(),
     ]) {
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
