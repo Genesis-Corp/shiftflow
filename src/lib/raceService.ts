@@ -251,6 +251,8 @@ export async function startRace(
       shift_cost: c.shift_cost,
       phone_e164: c.phone_e164,
       send_status: 'queued',
+      outcome: null,
+      is_available: null,
     }))
   );
   if (recErr) throw new RaceError(recErr.message, 500);
@@ -638,6 +640,13 @@ export async function handleInboundReply(params: {
 
   const { data: staff } = await supabaseAdmin
     .from('staff').select('name').eq('id', recipient.staff_id).single();
+
+  // The manager finds out here, not just when nobody's available — a staff
+  // YES resolving the race (immediate, sequential, or gather post-degrade)
+  // is exactly the "who accepted" half of the outcome-only notification
+  // requested for those tiers. The manager's own pick (handleManagerPick)
+  // already confirms itself in that reply, so it doesn't duplicate this.
+  await notifyManagerOutcome(race, summary, staff?.name ?? null);
 
   return {
     handled: true,
