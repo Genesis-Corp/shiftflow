@@ -1,76 +1,59 @@
 /**
- * The palette a department's color is picked from, for the Shifts roster
- * (List and Daily Timeline). Written out per-color rather than built from a
- * template string so Tailwind's scanner — which only sees literal class
- * names, not `bg-${color}-500` — can find every one of them.
+ * A department's color is any hex value the manager picks, not a fixed
+ * palette — the Shifts roster (List and Daily Timeline) needs one per
+ * department and a store can easily have more departments than any small
+ * preset covers. Rendered via inline styles rather than Tailwind classes,
+ * since the color is only known at runtime.
  */
-export const DEPARTMENT_COLORS = [
-  'blue', 'green', 'amber', 'purple', 'teal', 'pink', 'indigo', 'cyan', 'orange', 'rose',
-] as const;
 
-export type DepartmentColor = typeof DEPARTMENT_COLORS[number];
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
-const BADGE: Record<DepartmentColor, string> = {
-  blue: 'bg-blue-100 text-blue-800',
-  green: 'bg-green-100 text-green-800',
-  amber: 'bg-amber-100 text-amber-800',
-  purple: 'bg-purple-100 text-purple-800',
-  teal: 'bg-teal-100 text-teal-800',
-  pink: 'bg-pink-100 text-pink-800',
-  indigo: 'bg-indigo-100 text-indigo-800',
-  cyan: 'bg-cyan-100 text-cyan-800',
-  orange: 'bg-orange-100 text-orange-800',
-  rose: 'bg-rose-100 text-rose-800',
+/** Quick-pick swatches shown alongside the custom hex picker — a starting
+ *  point, not a limit. Also what new departments cycle through by default. */
+export const PRESET_DEPARTMENT_COLORS = [
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#f59e0b', // amber
+  '#a855f7', // purple
+  '#14b8a6', // teal
+  '#ec4899', // pink
+  '#6366f1', // indigo
+  '#06b6d4', // cyan
+  '#f97316', // orange
+  '#f43f5e', // rose
+  '#84cc16', // lime
+  '#d946ef', // fuchsia
+];
+
+const DEFAULT_COLOR = '#64748b'; // slate-500
+
+// Departments created before the hex picker stored one of these names —
+// mapped here so they keep showing a sensible color instead of falling
+// back to the default the moment this shipped.
+const LEGACY_NAMES: Record<string, string> = {
+  blue: '#3b82f6', green: '#22c55e', amber: '#f59e0b', purple: '#a855f7',
+  teal: '#14b8a6', pink: '#ec4899', indigo: '#6366f1', cyan: '#06b6d4',
+  orange: '#f97316', rose: '#f43f5e',
 };
 
-const SOLID: Record<DepartmentColor, string> = {
-  blue: 'bg-blue-500',
-  green: 'bg-green-500',
-  amber: 'bg-amber-500',
-  purple: 'bg-purple-500',
-  teal: 'bg-teal-500',
-  pink: 'bg-pink-500',
-  indigo: 'bg-indigo-500',
-  cyan: 'bg-cyan-500',
-  orange: 'bg-orange-500',
-  rose: 'bg-rose-500',
-};
-
-const BORDER: Record<DepartmentColor, string> = {
-  blue: 'border-blue-400',
-  green: 'border-green-400',
-  amber: 'border-amber-400',
-  purple: 'border-purple-400',
-  teal: 'border-teal-400',
-  pink: 'border-pink-400',
-  indigo: 'border-indigo-400',
-  cyan: 'border-cyan-400',
-  orange: 'border-orange-400',
-  rose: 'border-rose-400',
-};
-
-function deptColorKey(color: string | null | undefined): DepartmentColor {
-  return (DEPARTMENT_COLORS as readonly string[]).includes(color ?? '')
-    ? (color as DepartmentColor)
-    : 'blue';
+/** A department's color, coerced to a valid hex string. */
+export function normalizeDeptColor(color: string | null | undefined): string {
+  if (color && HEX_RE.test(color)) return color;
+  if (color && LEGACY_NAMES[color]) return LEGACY_NAMES[color];
+  return DEFAULT_COLOR;
 }
 
-/** Badge classes (light background, dark text) for a department chip. */
-export function deptBadgeClass(color: string | null | undefined): string {
-  return BADGE[deptColorKey(color)];
+/** Cycle through the presets so each new department starts out visually distinct. */
+export function autoDeptColor(existingCount: number): string {
+  return PRESET_DEPARTMENT_COLORS[existingCount % PRESET_DEPARTMENT_COLORS.length];
 }
 
-/** Solid classes for a dot or bar. */
-export function deptSolidClass(color: string | null | undefined): string {
-  return SOLID[deptColorKey(color)];
-}
-
-/** Left-border accent for a grouped section header. */
-export function deptBorderClass(color: string | null | undefined): string {
-  return BORDER[deptColorKey(color)];
-}
-
-/** Cycle through the palette so each new department starts out visually distinct. */
-export function autoDeptColor(existingCount: number): DepartmentColor {
-  return DEPARTMENT_COLORS[existingCount % DEPARTMENT_COLORS.length];
+/** Black or white, whichever reads better on this background. */
+export function deptTextColor(color: string | null | undefined): string {
+  const hex = normalizeDeptColor(color);
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance > 0.6 ? '#0f172a' : '#ffffff';
 }

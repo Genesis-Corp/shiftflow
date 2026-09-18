@@ -16,7 +16,7 @@ import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday,
 } from '@/lib/shiftUtils';
-import { deptBadgeClass, deptBorderClass } from '@/lib/deptColors';
+import { normalizeDeptColor, deptTextColor } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
@@ -36,12 +36,6 @@ const STATUS_BADGE: Record<string, string> = {
   open: 'badge-red',
   covered: 'badge-green',
   cancelled: 'badge-slate',
-};
-
-const STATUS_BAR_COLOR: Record<string, string> = {
-  open: 'bg-red-400',
-  covered: 'bg-green-500',
-  cancelled: 'bg-slate-300',
 };
 
 function todayStr(): string {
@@ -104,9 +98,14 @@ function ShiftDayGroup({
         <span className="badge-slate">{group.shifts.length}</span>
       </div>
       {groupByDepartment(group.shifts).map(dg => (
-        <div key={dg.department_id} className={`border-l-4 ${deptBorderClass(dg.color)}`}>
+        <div key={dg.department_id} className="border-l-4" style={{ borderLeftColor: normalizeDeptColor(dg.color) }}>
           <div className="px-4 py-1.5 bg-slate-50/60 border-b border-slate-100 flex items-center gap-2">
-            <span className={deptBadgeClass(dg.color)}>{dg.name}</span>
+            <span
+              className="badge"
+              style={{ backgroundColor: normalizeDeptColor(dg.color), color: deptTextColor(dg.color) }}
+            >
+              {dg.name}
+            </span>
           </div>
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100">
@@ -552,22 +551,31 @@ export default function ShiftsPage() {
     };
   }, [timelineShifts]);
 
-  /** Each bar carries its own department's color as a left accent, so someone
-   *  working two departments the same day shows both colors on their one row
-   *  — the bar's fill stays the status color (open/covered/cancelled). */
+  /** Each bar fills with its own department's color, so someone working two
+   *  departments the same day shows both colors on their one row. Open
+   *  shifts still stand out with a red ring, cancelled ones are faded. */
   function timelineBar(s: Shift) {
     const pos = timelineBarPosition(s.start_time, s.end_time);
     if (!pos) return null;
     const deptName = s.departments?.name ?? departments.find(d => d.id === s.department_id)?.name;
+    const isCancelled = s.status === 'cancelled';
+    const isOpen = s.status === 'open';
+    const fill = isCancelled ? '#cbd5e1' : normalizeDeptColor(s.departments?.color);
+    const textColor = isCancelled ? '#334155' : deptTextColor(s.departments?.color);
     return (
       <div
         key={s.id}
         title={`${s.start_time}–${s.end_time} · ${s.status}${deptName ? ` · ${deptName}` : ''}`}
         onClick={() => openEdit(s)}
-        className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer border-l-4 ${deptBorderClass(s.departments?.color)} ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
-        style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
+        className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${
+          isOpen ? 'ring-2 ring-red-500 ring-offset-1' : ''
+        } ${isCancelled ? 'opacity-60' : ''}`}
+        style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%`, backgroundColor: fill }}
       >
-        <span className="text-[11px] text-white font-medium whitespace-nowrap">
+        <span
+          className={`text-[11px] font-medium whitespace-nowrap ${isCancelled ? 'line-through' : ''}`}
+          style={{ color: textColor }}
+        >
           {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}{deptName ? ` · ${deptName}` : ''}
         </span>
       </div>
@@ -754,10 +762,14 @@ export default function ShiftsPage() {
                   ))}
                 </div>
 
-                <div className="flex items-center gap-4 mt-4 text-xs text-slate-500">
-                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-red-400" /> Open</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-green-500" /> Covered</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-slate-300" /> Cancelled</span>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-4 text-xs text-slate-500">
+                  {departments.map(d => (
+                    <span key={d.id} className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: normalizeDeptColor(d.color) }} /> {d.name}
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm ring-2 ring-red-500" /> Open</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-sm bg-slate-300 opacity-60" /> Cancelled</span>
                 </div>
               </div>
             </div>

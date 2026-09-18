@@ -7,7 +7,7 @@ import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { fetchJson } from '@/lib/apiClient';
 import { Department, Staff } from '@/lib/types';
-import { DEPARTMENT_COLORS, DepartmentColor, deptSolidClass } from '@/lib/deptColors';
+import { PRESET_DEPARTMENT_COLORS, normalizeDeptColor, autoDeptColor } from '@/lib/deptColors';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -16,8 +16,8 @@ export default function DepartmentsPage() {
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
-  const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; color: DepartmentColor }>({
-    name: '', requires_supervisor: false, color: 'blue',
+  const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; color: string }>({
+    name: '', requires_supervisor: false, color: PRESET_DEPARTMENT_COLORS[0],
   });
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -53,15 +53,15 @@ export default function DepartmentsPage() {
   }, [staff]);
 
   function openAdd() {
-    const used = new Set(departments.map(d => d.color));
-    const next = DEPARTMENT_COLORS.find(c => !used.has(c)) ?? DEPARTMENT_COLORS[departments.length % DEPARTMENT_COLORS.length];
+    const used = new Set(departments.map(d => normalizeDeptColor(d.color)));
+    const next = PRESET_DEPARTMENT_COLORS.find(c => !used.has(c)) ?? autoDeptColor(departments.length);
     setForm({ name: '', requires_supervisor: false, color: next });
     setModal('add');
   }
 
   function openEdit(d: Department) {
     setEditing(d);
-    setForm({ name: d.name, requires_supervisor: d.requires_supervisor, color: (d.color as DepartmentColor) ?? 'blue' });
+    setForm({ name: d.name, requires_supervisor: d.requires_supervisor, color: normalizeDeptColor(d.color) });
     setModal('edit');
   }
 
@@ -124,7 +124,7 @@ export default function DepartmentsPage() {
                     aria-expanded={isOpen}
                   >
                     <div className="flex items-center gap-1.5">
-                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${deptSolidClass(d.color)}`} />
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: normalizeDeptColor(d.color) }} />
                       <p className="font-semibold text-slate-800 truncate">{d.name}</p>
                       <ChevronDown size={14} className={`text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                     </div>
@@ -188,18 +188,42 @@ export default function DepartmentsPage() {
             </div>
             <div>
               <label className="label">Color</label>
-              <div className="flex flex-wrap gap-2">
-                {DEPARTMENT_COLORS.map(c => (
+              <div className="flex flex-wrap items-center gap-2">
+                {PRESET_DEPARTMENT_COLORS.map(c => (
                   <button
                     key={c}
                     type="button"
                     onClick={() => setForm(f => ({ ...f, color: c }))}
                     title={c}
-                    className={`w-7 h-7 rounded-full ${deptSolidClass(c)} ${
-                      form.color === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''
+                    style={{ backgroundColor: c }}
+                    className={`w-7 h-7 rounded-full ${
+                      normalizeDeptColor(form.color) === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''
                     }`}
                   />
                 ))}
+                <label
+                  title="Pick a custom color"
+                  className="w-7 h-7 rounded-full border-2 border-dashed border-slate-300 flex items-center justify-center cursor-pointer overflow-hidden relative"
+                  style={{ backgroundColor: PRESET_DEPARTMENT_COLORS.includes(normalizeDeptColor(form.color)) ? undefined : normalizeDeptColor(form.color) }}
+                >
+                  {PRESET_DEPARTMENT_COLORS.includes(normalizeDeptColor(form.color)) && (
+                    <Plus size={14} className="text-slate-400" />
+                  )}
+                  <input
+                    type="color"
+                    value={normalizeDeptColor(form.color)}
+                    onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                </label>
+                <input
+                  type="text"
+                  value={normalizeDeptColor(form.color)}
+                  onChange={e => setForm(f => ({ ...f, color: e.target.value }))}
+                  className="input w-24 font-mono text-xs py-1.5"
+                  placeholder="#3b82f6"
+                  maxLength={7}
+                />
               </div>
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
