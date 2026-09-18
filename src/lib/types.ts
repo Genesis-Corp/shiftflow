@@ -14,6 +14,10 @@ export interface Staff {
   role_type: RoleType;
   reliability_score: number;
   active: boolean;
+  /** Left the store — kept (not deleted) so a future roster or CSV upload
+   *  that still lists them matches this record instead of duplicating it. */
+  archived: boolean;
+  archived_at?: string | null;
   phone?: string;
   phone_e164?: string | null;
   sms_opt_out?: boolean;

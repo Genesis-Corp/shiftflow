@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
-  Camera, FileText, FileSpreadsheet, Eye, EyeOff, Star,
+  Camera, FileText, FileSpreadsheet, Eye, EyeOff, Star, Archive, ArchiveRestore,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
@@ -18,7 +18,7 @@ import { postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
-import { todayStr } from '@/lib/shiftUtils';
+import { todayStr, formatDate } from '@/lib/shiftUtils';
 import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
 import { ageBracketFor, seniorityFromBirthday, AgeBracket, TimeLoading } from '@/lib/wages';
@@ -94,6 +94,7 @@ export default function StaffPage() {
   const [filter, setFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
+  const [showArchive, setShowArchive] = useState(false);
 
   // Availability-sheet sync: the uploaded grid, the preview of what it changes,
   // and whether staff missing from it should be removed.
@@ -264,8 +265,29 @@ export default function StaffPage() {
     load();
   }
 
-  async function remove(s: Staff) {
-    if (!confirm(`Delete ${s.name}? This cannot be undone.`)) return;
+  /** Left the store — kept, not deleted, so a future roster or CSV upload
+   *  that still lists them matches this record instead of duplicating it. */
+  async function archiveStaff(s: Staff) {
+    if (!confirm(`Archive ${s.name}? They'll come off the active staff list, but everything about them — departments, availability, shift and reliability history — is kept, and reinstating them is one click from the Archive.`)) return;
+    await fetch(`/api/staff/${s.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: true }),
+    });
+    load();
+  }
+
+  async function reinstateStaff(s: Staff) {
+    await fetch(`/api/staff/${s.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archived: false }),
+    });
+    load();
+  }
+
+  /** Permanently gone — only offered from within the Archive, for a record
+   *  that genuinely shouldn't exist (a duplicate, a mistaken add), since a
+   *  real hard delete is exactly what re-creates staff who left as
+   *  "new hires" the next time an old roster or CSV still lists them. */
+  async function permanentlyDelete(s: Staff) {
+    if (!confirm(`Permanently delete ${s.name}? Unlike archiving, this cannot be undone — their history goes with it.`)) return;
     await fetch(`/api/staff/${s.id}`, { method: 'DELETE' });
     load();
   }
@@ -477,7 +499,7 @@ export default function StaffPage() {
     const a = result.applied;
     alert([
       a
-        ? `Sheet synced — ${a.staff_created} added, ${a.staff_updated} detail change(s), ${a.staff_deleted} removed, ${a.availability_written} availability day(s) set, ${a.availability_cleared} cleared.`
+        ? `Sheet synced — ${a.staff_created} added, ${a.staff_updated} detail change(s), ${a.staff_deleted} archived, ${a.availability_written} availability day(s) set, ${a.availability_cleared} cleared.`
         : 'Nothing was applied.',
       result.errors?.length ? `\n\nErrors:\n${result.errors.join('\n')}` : '',
     ].join(''));
@@ -486,7 +508,10 @@ export default function StaffPage() {
 
   const busy = stage !== null || syncing;
   const sheetRowCount = sheet ? sheet.length - 1 : 0;
-  const filtered = staff.filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
+  const archivedStaff = staff.filter(s => s.archived);
+  const filtered = staff
+    .filter(s => !s.archived)
+    .filter(s => s.name.toLowerCase().includes(filter.toLowerCase()));
 
   const sorted = sortKey
     ? [...filtered].sort((a, b) => {
@@ -509,11 +534,17 @@ export default function StaffPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Staff</h1>
-          <p className="text-sm text-slate-500">{staff.filter(s => s.active).length} active / {staff.length} total</p>
+          <p className="text-sm text-slate-500">
+            {staff.filter(s => s.active && !s.archived).length} active / {staff.length - archivedStaff.length} total
+            {archivedStaff.length > 0 && ` · ${archivedStaff.length} archived`}
+          </p>
         </div>
         <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 w-full sm:w-auto">
           <input className="input w-full sm:w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <div className="grid grid-cols-2 sm:flex gap-2">
+            <button onClick={() => setShowArchive(true)} className="btn-secondary justify-center">
+              <Archive size={14} /> Archive{archivedStaff.length > 0 && ` (${archivedStaff.length})`}
+            </button>
             <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export CSV</button>
             <UploadMenu
               disabled={busy}
@@ -612,7 +643,7 @@ export default function StaffPage() {
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                      <button onClick={() => remove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                      <button onClick={() => archiveStaff(s)} title="Archive" className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Archive size={14} /></button>
                     </div>
                   </td>
                 </tr>
@@ -621,6 +652,45 @@ export default function StaffPage() {
           </table>
           {sorted.length === 0 && <p className="text-center text-slate-400 py-8">No staff found.</p>}
         </div>
+      )}
+
+      {showArchive && (
+        <Modal title="Archive" onClose={() => setShowArchive(false)} size="lg">
+          <div className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Staff who&apos;ve left the store. They&apos;re kept out of the active list and out of claim races, but
+              their departments, availability and history are all still here — reinstating puts them straight back.
+            </p>
+            {archivedStaff.length === 0 ? (
+              <p className="text-sm text-slate-400 py-6 text-center">Nobody&apos;s archived.</p>
+            ) : (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                {archivedStaff.map(s => (
+                  <li key={s.id} className="px-3 py-2.5 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-slate-700">{s.name}</p>
+                      <p className="text-xs text-slate-400">
+                        Archived {s.archived_at ? formatDate(s.archived_at.slice(0, 10)) : ''}
+                      </p>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      <button onClick={() => reinstateStaff(s)} className="btn-secondary text-xs px-2 py-1.5">
+                        <ArchiveRestore size={13} /> Reinstate
+                      </button>
+                      <button
+                        onClick={() => permanentlyDelete(s)}
+                        title="Permanently delete"
+                        className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </Modal>
       )}
 
       {modal && (
@@ -738,7 +808,7 @@ export default function StaffPage() {
               <span className="badge-green">{plan.creates.length} new</span>
               <span className="badge-blue">{plan.updates.length} changed</span>
               <span className="badge-slate">{plan.unchanged.length} unchanged</span>
-              {plan.deletes.length > 0 && <span className="badge-red">{plan.deletes.length} no longer listed</span>}
+              {plan.deletes.length > 0 && <span className="badge-amber">{plan.deletes.length} no longer listed</span>}
             </div>
 
             {plan.errors.length > 0 && (
@@ -788,14 +858,16 @@ export default function StaffPage() {
             {plan.deletes.length > 0 && (
               <section>
                 <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Not on this sheet</h3>
-                <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
-                  <p className="text-xs text-red-700">
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                  <p className="text-xs text-amber-800">
                     {plan.deletes.map(d => d.name).join(', ')}
                   </p>
                   <label className="flex items-start gap-2 cursor-pointer">
-                    <input type="checkbox" checked={removeMissing} onChange={e => setRemoveMissing(e.target.checked)} className="mt-0.5 accent-red-600" />
-                    <span className="text-xs text-red-800">
-                      Delete these {plan.deletes.length} staff member(s) and their availability, shifts history and department assignments. This cannot be undone.
+                    <input type="checkbox" checked={removeMissing} onChange={e => setRemoveMissing(e.target.checked)} className="mt-0.5 accent-amber-600" />
+                    <span className="text-xs text-amber-800">
+                      Archive these {plan.deletes.length} staff member(s) — they&apos;ll come off the active list, but
+                      nothing is deleted. Reinstating them from the Archive brings back everything instantly, and
+                      they&apos;re reinstated automatically if they reappear on a later sheet.
                     </span>
                   </label>
                 </div>

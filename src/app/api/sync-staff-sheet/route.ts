@@ -13,8 +13,8 @@ import { requireUser, unauthorized } from '@/lib/auth';
  * section banner rows would otherwise be read as people.
  *
  * `mode` defaults to 'preview', which reports what would change without
- * touching anything — staff missing from the sheet are deleted on apply, so the
- * caller is expected to confirm the preview first.
+ * touching anything — staff missing from the sheet are archived (not deleted)
+ * on apply, so the caller is expected to confirm the preview first.
  */
 export async function POST(req: NextRequest) {
   const user = await requireUser();

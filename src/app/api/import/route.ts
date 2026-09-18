@@ -137,15 +137,19 @@ export async function POST(req: NextRequest) {
     return data.id;
   }
 
-  const results = { created: 0, updated: 0, errors: [] as string[] };
+  const results = { created: 0, updated: 0, archived_skipped: 0, errors: [] as string[] };
   const EMPLOYMENT_TYPES = new Set(['casual', 'part_time', 'full_time', 'salary']);
 
   // ── Detect format from first row ───────────────────────────────────────────
   if (isFullStaffSheet(rows[0] as unknown as Record<string, string>)) {
     // Whole-of-store export — most rows likely already exist, so match by
-    // name and update rather than re-inserting duplicates.
+    // name and update rather than re-inserting duplicates. Matching still
+    // includes archived staff (people who've left) so they're never
+    // recreated as a new hire — their record just isn't touched; bringing
+    // someone back is a deliberate Reinstate on the Staff page, not
+    // something a passive CSV re-upload should do on its own.
     const { data: existingRows } = await supabase
-      .from('staff').select('id, name, birthday, employment_type, age_group, phone, phone_e164');
+      .from('staff').select('id, name, birthday, employment_type, age_group, phone, phone_e164, archived');
     const existingByName = new Map(
       (existingRows ?? []).map((s: { name: string }) => [nameKey(s.name ?? ''), s])
     );
@@ -176,7 +180,12 @@ export async function POST(req: NextRequest) {
       const phoneE164 = toE164AU(phone);
 
       const existing = existingByName.get(nameKey(name)) as
-        { id: string; birthday: string | null; employment_type: string | null; age_group: string | null; phone: string | null } | undefined;
+        { id: string; birthday: string | null; employment_type: string | null; age_group: string | null; phone: string | null; archived: boolean } | undefined;
+
+      if (existing?.archived) {
+        results.archived_skipped++;
+        continue;
+      }
 
       if (existing) {
         // These staff already exist — this sheet is the current export of
@@ -221,6 +230,13 @@ export async function POST(req: NextRequest) {
       }
 
       results.created++;
+    }
+
+    if (results.archived_skipped) {
+      results.errors.push(
+        `${results.archived_skipped} row(s) matched an archived staff member and were left unchanged — ` +
+        'reinstate them from the Archive on the Staff page first if they\'re back.'
+      );
     }
 
     return NextResponse.json(results);

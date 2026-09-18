@@ -7,8 +7,11 @@
  * value is only written when it actually differs from what is already stored —
  * so re-uploading an unchanged sheet is a no-op.
  *
- * Staff who no longer appear on the sheet are removed, which is why the route
- * runs a preview first and only applies once the change has been confirmed.
+ * Staff who no longer appear on the sheet are archived, not deleted — their
+ * department links, availability and history stay intact, so if they show
+ * up on a later sheet they're reinstated automatically instead of being
+ * re-created as a duplicate. The route runs a preview first and only
+ * applies once the change has been confirmed.
  */
 
 import { supabaseAdmin as supabase } from './supabaseAdmin';
@@ -72,6 +75,7 @@ interface DbStaff {
   id: string;
   name: string;
   phone: string | null;
+  archived: boolean;
   first_name?: string | null;
   last_name?: string | null;
 }
@@ -150,7 +154,7 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
     );
   }
 
-  const columns = withNameParts ? 'id, name, phone, first_name, last_name' : 'id, name, phone';
+  const columns = withNameParts ? 'id, name, phone, archived, first_name, last_name' : 'id, name, phone, archived';
   const [staffRes, availRes] = await Promise.all([
     supabase.from('staff').select(columns),
     supabase.from('availability_templates').select('staff_id, day_of_week, start_time, end_time, available'),
@@ -220,6 +224,17 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
     const changes: FieldChange[] = [];
     const payload: Record<string, unknown> = {};
 
+    // Showing up on a currently-worked roster is about as strong a signal
+    // as there is that someone archived (marked as having left) is back —
+    // reinstate them as part of applying this sheet rather than leaving
+    // their shifts unmatched until a manager notices and does it by hand.
+    if (existing.archived) {
+      payload.archived = false;
+      payload.archived_at = null;
+      payload.active = true;
+      changes.push({ field: 'Status', from: 'Archived', to: 'Active (reinstated)' });
+    }
+
     if (existing.name !== row.name) {
       payload.name = row.name;
       changes.push({ field: 'Name', from: existing.name, to: row.name });
@@ -280,7 +295,9 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
     else plan.unchanged.push(row.name);
   }
 
-  const missing = existingStaff.filter(s => !claimed.has(s.id));
+  // Someone already archived not appearing on this sheet says nothing new —
+  // they're already known to have left. Only flag people newly missing.
+  const missing = existingStaff.filter(s => !claimed.has(s.id) && !s.archived);
   if (deleteMissing) {
     plan.deletes = missing.map(s => ({ id: s.id, name: s.name }));
   } else if (missing.length) {
@@ -354,11 +371,16 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
   }
 
   if (plan.deletes.length) {
+    // Archived, not deleted — their department links, availability and
+    // shift/reliability history stay intact so reinstating them (by hand,
+    // or automatically above if they reappear on a later sheet) restores
+    // everything instantly instead of re-entering them from scratch.
     const ids = plan.deletes.map(d => d.id);
-    await supabase.from('staff_departments').delete().in('staff_id', ids);
-    await supabase.from('availability_templates').delete().in('staff_id', ids);
-    const { error } = await supabase.from('staff').delete().in('id', ids);
-    if (error) plan.errors.push(`Could not remove staff who left the sheet: ${error.message}`);
+    const { error } = await supabase
+      .from('staff')
+      .update({ archived: true, archived_at: new Date().toISOString(), active: false })
+      .in('id', ids);
+    if (error) plan.errors.push(`Could not archive staff who left the sheet: ${error.message}`);
     else applied.staff_deleted = ids.length;
   }
 

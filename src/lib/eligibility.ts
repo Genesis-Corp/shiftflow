@@ -90,7 +90,8 @@ export async function findEligibleCandidates(
   const { data: allStaff, error: staffErr } = await supabaseAdmin
     .from('staff')
     .select(`*, staff_departments ( department_id, training_level )`)
-    .eq('active', true);
+    .eq('active', true)
+    .eq('archived', false);
   if (staffErr) throw new Error(staffErr.message);
 
   // The stored age_group column goes stale the moment someone has a
