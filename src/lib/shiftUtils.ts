@@ -63,6 +63,17 @@ export function dayOfWeekFromDate(dateStr: string): number {
   return new Date(dateStr + 'T00:00:00').getDay();
 }
 
+/** Whole calendar days from `a` to `b` (negative if `b` is earlier). Both
+ *  parsed as UTC midnight consistently on each side — a pure calendar diff,
+ *  not a real-instant conversion, so this is safe regardless of timezone. */
+export function daysBetween(a: string, b: string): number {
+  const toUTC = (s: string) => {
+    const [y, m, d] = s.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUTC(b) - toUTC(a)) / 86_400_000);
+}
+
 /** A Date's own calendar date, as the device sees it — never toISOString(),
  *  which is always UTC and silently reports the wrong day whenever the
  *  local calendar date and the UTC one don't match (any time outside

@@ -57,7 +57,12 @@ export async function POST(req: NextRequest) {
       body: outcome.reply,
       kind: outcome.result === 'won' ? 'winner'
         : outcome.result === 'too_late' ? 'too_late'
-        : outcome.result === 'declined' ? 'declined_ack' : 'opt_out_ack',
+        : outcome.result === 'declined' ? 'declined_ack'
+        : outcome.result === 'available_ack' ? 'availability_ack'
+        : outcome.result === 'manager_picked' ? 'manager_outcome'
+        : outcome.result === 'manager_invalid_pick' ? 'manager_invalid_pick'
+        : outcome.result === 'manager_stale_pick' ? 'manager_stale_pick'
+        : 'opt_out_ack',
       raceId: outcome.raceId ?? null,
       staffId: outcome.staffId ?? null,
     });

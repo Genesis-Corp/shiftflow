@@ -74,15 +74,21 @@ export function optOutMessage(): string {
   return `${BUSINESS}: you will not receive any more shift messages from us.`;
 }
 
-// ── Availability flow ───────────────────────────────────────────────────────
-// The store manager picks who covers a shift, so the first message asks
-// whether someone is free — it does not hand them the shift. No claim code
-// (caller ID identifies the replier on a live number) and no "first reply
-// wins", because neither is true any more.
+// ── Availability flow (the "gather" cover tier) ─────────────────────────────
+// Enough notice to collect options: the manager who started the race picks
+// from who's free, rather than it going to whoever replies first. The
+// message itself carries no claim code and makes no "first reply wins"
+// promise — replying YES here only records that someone is available.
 
 /** Wave one: are you free? Not an offer — nobody is given the shift by replying. */
-export function availabilityMessage(shift: ShiftSummary): string {
-  return `${BUSINESS}: are you available for ${describeShift(shift)}? Reply YES or NO.`;
+export function availabilityMessage(shift: ShiftSummary, managerName?: string | null): string {
+  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
+  return `${greeting}${BUSINESS}: are you available for ${describeShift(shift)}? Reply YES or NO.`;
+}
+
+/** Acknowledges a YES during the gather window — it does not win them the shift. */
+export function availabilityAckMessage(): string {
+  return `${BUSINESS}: thanks, noted - we'll confirm shortly if you're needed.`;
 }
 
 /** The no-show case, where the shift is running and somebody is needed now. */
@@ -141,7 +147,20 @@ export function managerEscalationMessage(shift: ShiftSummary): string {
 
 /** Answers a pick for a shift that has already been filled or closed. */
 export function managerStaleSelectionMessage(): string {
-  return `${SYSTEM}: that option is no longer open — the shift has already been dealt with.`;
+  return `${SYSTEM}: that option is no longer open - the shift has already been dealt with.`;
+}
+
+/** Answers a manager's reply that isn't one of the numbers on the list they were sent. */
+export function managerInvalidPickMessage(): string {
+  return `${SYSTEM}: that's not one of the numbers on the list - reply with one from the options sent.`;
+}
+
+/** The outcome-only notification for the immediate and sequential tiers — no
+ *  decision for the manager to make, just what happened. */
+export function managerOutcomeMessage(shift: ShiftSummary, winnerName: string | null): string {
+  return winnerName
+    ? `${SYSTEM}: ${winnerName} will cover ${describeShift(shift)}.`
+    : `${SYSTEM}: nobody was available for ${describeShift(shift)}. It is still uncovered.`;
 }
 
 /** Characters that are NOT in the GSM-7 alphabet force a 70-char UCS-2 segment. */

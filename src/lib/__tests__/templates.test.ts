@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   offerMessage, winnerMessage, coveredMessage, tooLateMessage,
   declinedMessage, smsSegments, isGsm7, formatShiftTimes,
+  availabilityMessage, availabilityAckMessage, managerListMessage, managerStaleSelectionMessage,
+  managerInvalidPickMessage, managerOutcomeMessage,
 } from '../sms/templates';
 
 const SHIFT = {
@@ -51,6 +53,65 @@ describe('message templates', () => {
 
     const withNullName = offerMessage(SHIFT, '4F7K', null);
     expect(withNullName).toBe(withoutName);
+  });
+});
+
+describe('gather-tier and manager-pick messages', () => {
+  const OPTIONS = [
+    { option: 1, name: 'Alice', cost: 28.69 },
+    { option: 2, name: 'Bob', cost: null },
+  ];
+
+  it('asks availability without a claim code or "first reply wins"', () => {
+    const msg = availabilityMessage(SHIFT);
+    expect(msg).not.toContain('claim');
+    expect(msg).toContain('YES or NO');
+  });
+
+  it('opens the availability ask with the manager\'s name too, same as the offer', () => {
+    const withName = availabilityMessage(SHIFT, 'John');
+    expect(withName.startsWith("Hey it's John - ")).toBe(true);
+    expect(availabilityMessage(SHIFT).startsWith("Hey it's")).toBe(false);
+  });
+
+  it('acknowledges a gather-tier yes without implying it won the shift', () => {
+    const msg = availabilityAckMessage();
+    expect(msg.toLowerCase()).not.toContain('yours');
+    expect(msg.toLowerCase()).not.toContain('win');
+  });
+
+  it('lists options with a dollar figure or "no rate" when unset', () => {
+    const msg = managerListMessage(SHIFT, OPTIONS);
+    expect(msg).toContain('1. Alice - $28.69');
+    expect(msg).toContain('2. Bob - no rate');
+  });
+
+  it('says nobody is available when the options list is empty', () => {
+    expect(managerListMessage(SHIFT, [])).toContain('nobody is available');
+  });
+
+  it('reports who is covering, or that nobody is', () => {
+    expect(managerOutcomeMessage(SHIFT, 'Christopher')).toContain('Christopher will cover');
+    expect(managerOutcomeMessage(SHIFT, null)).toContain('nobody was available');
+  });
+
+  it('keeps every manager-facing message to a single SMS segment', () => {
+    // These previously used an em dash outside the GSM-7 alphabet, which
+    // silently doubled the segment count — plain hyphens keep them GSM-7.
+    const messages = [
+      availabilityMessage(SHIFT),
+      availabilityAckMessage(),
+      managerListMessage(SHIFT, OPTIONS),
+      managerListMessage(SHIFT, []),
+      managerStaleSelectionMessage(),
+      managerInvalidPickMessage(),
+      managerOutcomeMessage(SHIFT, 'Christopher'),
+      managerOutcomeMessage(SHIFT, null),
+    ];
+    for (const m of messages) {
+      expect(isGsm7(m), `"${m}" is not GSM-7`).toBe(true);
+      expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
+    }
   });
 });
 

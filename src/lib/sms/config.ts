@@ -66,6 +66,13 @@ export function localTimeNow(now: Date = new Date()): string {
   }).format(now);
 }
 
+/** Current calendar date in the configured timezone, as "YYYY-MM-DD". */
+export function localDateNow(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: getTimezone(), year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+}
+
 /**
  * Whether we are currently inside the configured quiet hours. Windows that
  * wrap past midnight (21:00-07:00) are handled.

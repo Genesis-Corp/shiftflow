@@ -31,12 +31,15 @@ export default function RaceStatusPanel({
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll only while the race can still change.
+  // Poll only while the race can still change — including while it's
+  // waiting on the manager's pick, since that resolves by SMS reply, not by
+  // anything happening in this browser tab.
+  const inProgress = (status?: string) => status === 'active' || status === 'awaiting_pick';
   useEffect(() => {
-    if (detail?.race.status !== 'active') return;
+    if (!inProgress(detail?.race.status)) return;
     const t = setInterval(async () => {
       const next = await load();
-      if (next && next.race.status !== 'active') onFinished?.();
+      if (next && !inProgress(next.race.status)) onFinished?.();
     }, POLL_MS);
     return () => clearInterval(t);
   }, [detail?.race.status, load, onFinished]);
@@ -101,6 +104,7 @@ export default function RaceStatusPanel({
               {failed.length > 0 && ` · ${failed.length} failed`}
               {race.status === 'active' && ` · expires ${new Date(race.expires_at).toLocaleTimeString()}`}
             </p>
+            <p className="text-xs text-slate-400 mt-0.5">{tierNote(race)}</p>
             {winner && (
               <p className="text-sm text-green-800 mt-2 flex items-center gap-1.5 font-medium">
                 <Trophy size={14} className="text-amber-500" />
@@ -196,12 +200,39 @@ export default function RaceStatusPanel({
   );
 }
 
+/** One line explaining what the tier is currently doing — the immediate and
+ *  sequential tiers only text a few people at a time, so without this a
+ *  manager could easily read "2 contacted" out of 8 eligible as a bug. */
+function tierNote(race: RaceDetail['race']): string {
+  if (race.status === 'awaiting_pick') {
+    return 'Waiting on your pick — reply with a number from the list you were sent.';
+  }
+  if (race.status !== 'active') return '';
+
+  if (race.tier === 'immediate') {
+    const batch = (race.current_batch ?? 0) + 1;
+    return `Immediate — asking in pairs, batch ${batch}. Escalates automatically if there's no answer.`;
+  }
+  if (race.tier === 'sequential') {
+    const position = (race.sequential_index ?? 0) + 1;
+    return `Sequential — asking one at a time (cheapest first), currently #${position}.`;
+  }
+  if (race.degraded_at) {
+    return 'Gather — nobody was available, now first reply wins.';
+  }
+  if (race.gather_deadline) {
+    return `Gather — collecting replies until ${new Date(race.gather_deadline).toLocaleTimeString()}, then you'll be sent a list to pick from.`;
+  }
+  return '';
+}
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     active: 'badge-blue', claimed: 'badge-green',
-    expired: 'badge-amber', cancelled: 'badge-slate',
+    expired: 'badge-amber', cancelled: 'badge-slate', awaiting_pick: 'badge-blue',
   };
-  return <span className={`${map[status] ?? 'badge-slate'} capitalize`}>{status}</span>;
+  const label = status === 'awaiting_pick' ? 'Awaiting manager pick' : status;
+  return <span className={`${map[status] ?? 'badge-slate'} capitalize`}>{label}</span>;
 }
 
 function SendStatusBadge({ recipient }: { recipient: ClaimRecipient }) {

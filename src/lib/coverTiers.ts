@@ -23,6 +23,8 @@
  * a step that would land at 3am) are directly testable.
  */
 
+import { daysBetween, timeToMinutes } from './shiftUtils';
+
 export type CoverTier = 'immediate' | 'gather' | 'sequential';
 
 /** How many people the immediate tier asks at a time. */
@@ -37,6 +39,15 @@ export const SEQUENTIAL_LEAD_MINUTES = 48 * 60;
 export const MIN_GATHER_LEAD_MINUTES = 30;
 /** Never let a gather window run right up to the shift — they have to get there. */
 export const ARRIVAL_BUFFER_MINUTES = 10;
+
+/** Minutes from `nowDate`/`nowTime` (both local, same timezone as the shift)
+ *  until the shift starts. Negative once the shift has started. */
+export function leadMinutesFor(
+  shiftDate: string, shiftStartTime: string, nowDate: string, nowTime: string
+): number {
+  return daysBetween(nowDate, shiftDate) * 24 * 60
+    + (timeToMinutes(shiftStartTime.slice(0, 5)) - timeToMinutes(nowTime.slice(0, 5)));
+}
 
 /**
  * `leadMinutes` is how long until the shift starts; zero or negative means it
@@ -91,6 +102,90 @@ export function batchesOf<T>(items: T[], size: number = IMMEDIATE_BATCH_SIZE): T
   const batches: T[][] = [];
   for (let i = 0; i < items.length; i += size) batches.push(items.slice(i, i + size));
   return batches;
+}
+
+/**
+ * What raceService.ts's lazy advance step decides for a running race, kept
+ * as pure functions over a state snapshot so the escalation rules (when a
+ * tier moves on, when it gives up) are directly testable — the same reason
+ * expireIfDue's own timing logic lives in tests, not just production traffic.
+ */
+export interface TierRecipient {
+  staffId: string;
+  outcome: 'won' | 'lost' | 'declined' | 'no_response' | null;
+  isAvailable?: boolean | null;
+}
+
+export type ImmediateAction =
+  | { type: 'wait' }
+  | { type: 'advance'; batchIndex: number; recipients: TierRecipient[] }
+  | { type: 'exhausted' };
+
+/**
+ * `recipients` is every contactable candidate for the race, in rank order
+ * (cheapest first) — the same order they were inserted in. A batch is done
+ * once its deadline passes, or once everyone in it has explicitly declined;
+ * either way the next batch (if any) is asked next.
+ */
+export function nextImmediateAction(
+  recipients: TierRecipient[], currentBatch: number, batchDeadline: Date, now: Date
+): ImmediateAction {
+  const batches = batchesOf(recipients);
+  const active = batches[currentBatch] ?? [];
+  const batchDone = now.getTime() >= batchDeadline.getTime()
+    || (active.length > 0 && active.every(r => r.outcome === 'declined'));
+  if (!batchDone) return { type: 'wait' };
+
+  const nextBatch = batches[currentBatch + 1];
+  if (!nextBatch || nextBatch.length === 0) return { type: 'exhausted' };
+  return { type: 'advance', batchIndex: currentBatch + 1, recipients: nextBatch };
+}
+
+export type GatherAction =
+  | { type: 'wait' }
+  | { type: 'notify_manager'; available: TierRecipient[] }
+  | { type: 'degrade'; recipients: TierRecipient[] };
+
+/**
+ * `recipients` is every contactable candidate, ranked. While the window is
+ * open, nothing happens here — replies are just recorded as they arrive.
+ * Once it closes: anyone who said they're available goes to the manager to
+ * pick from (cheapest first); if nobody did, it degrades to first-yes-wins
+ * for everyone who hasn't explicitly said no, so the shift still gets a shot
+ * at being filled.
+ */
+export function nextGatherAction(recipients: TierRecipient[], gatherDeadline: Date, now: Date): GatherAction {
+  if (now.getTime() < gatherDeadline.getTime()) return { type: 'wait' };
+
+  const available = recipients.filter(r => r.isAvailable === true && r.outcome === null);
+  if (available.length > 0) return { type: 'notify_manager', available };
+
+  const remaining = recipients.filter(r => r.outcome === null && r.isAvailable !== false);
+  return { type: 'degrade', recipients: remaining };
+}
+
+export type SequentialAction =
+  | { type: 'wait' }
+  | { type: 'advance'; index: number; recipient: TierRecipient }
+  | { type: 'exhausted' };
+
+/**
+ * `recipients` is every contactable candidate, ranked — one is "live" at a
+ * time. Their step ends on an explicit decline or the step deadline; either
+ * way the next person in line (if any) is asked next.
+ */
+export function nextSequentialAction(
+  recipients: TierRecipient[], currentIndex: number, stepDeadline: Date, now: Date
+): SequentialAction {
+  const current = recipients[currentIndex];
+  if (!current) return { type: 'exhausted' };
+
+  const stepDone = now.getTime() >= stepDeadline.getTime() || current.outcome === 'declined';
+  if (!stepDone) return { type: 'wait' };
+
+  const next = recipients[currentIndex + 1];
+  if (!next) return { type: 'exhausted' };
+  return { type: 'advance', index: currentIndex + 1, recipient: next };
 }
 
 /**

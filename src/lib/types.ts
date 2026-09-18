@@ -121,7 +121,8 @@ export interface CoverShiftResult {
 // ── Claim race ───────────────────────────────────────────────────────────────
 
 export type SmsMode = 'console' | 'redirect' | 'live';
-export type RaceStatus = 'active' | 'claimed' | 'expired' | 'cancelled';
+export type RaceStatus = 'active' | 'claimed' | 'expired' | 'cancelled' | 'awaiting_pick';
+export type RaceTier = 'immediate' | 'gather' | 'sequential';
 export type RecipientSendStatus =
   | 'queued' | 'sent' | 'failed' | 'skipped_no_phone' | 'skipped_opted_out';
 export type RecipientOutcome = 'won' | 'lost' | 'declined' | 'no_response';
@@ -132,10 +133,18 @@ export interface ClaimRace {
   status: RaceStatus;
   winner_staff_id?: string | null;
   mode: SmsMode;
+  tier: RaceTier;
   expires_at: string;
   created_at: string;
   claimed_at?: string | null;
   cancelled_at?: string | null;
+  started_by?: string | null;
+  current_batch?: number | null;
+  batch_deadline?: string | null;
+  gather_deadline?: string | null;
+  degraded_at?: string | null;
+  sequential_index?: number | null;
+  step_deadline?: string | null;
   shifts?: Shift & { departments?: Department };
 }
 
@@ -146,10 +155,13 @@ export interface ClaimRecipient {
   claim_code: string;
   rank?: number | null;
   computed_score?: number | null;
+  shift_cost?: number | null;
   phone_e164?: string | null;
   send_status: RecipientSendStatus;
   send_error?: string | null;
   outcome?: RecipientOutcome | null;
+  is_available?: boolean | null;
+  option_number?: number | null;
   responded_at?: string | null;
   response_body?: string | null;
   staff?: Pick<Staff, 'id' | 'name' | 'age_group' | 'reliability_score'>;
