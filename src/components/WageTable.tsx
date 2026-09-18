@@ -380,12 +380,6 @@ export default function WageTable() {
           in touch if these ever need to change.
         </p>
 
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 mb-4">
-          Weekly overtime (38h/week) and &quot;in charge&quot; premiums aren&apos;t computed yet — only per-shift
-          overtime (past 9 hours, rates configured below) and the age/time-of-week rates above are. A shift relying
-          on either of those will show as slightly under its real cost.
-        </div>
-
         <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Age brackets</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
           {(data?.age_brackets ?? []).map(b => (
