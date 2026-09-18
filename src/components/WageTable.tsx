@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign } from 'lucide-react';
+import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign, CalendarDays } from 'lucide-react';
 import Modal from '@/components/Modal';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
@@ -12,56 +12,62 @@ import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import { postJson } from '@/lib/api';
 import { fetchJson } from '@/lib/apiClient';
-import { DAY_SHORT } from '@/lib/shiftUtils';
+import { DAY_SHORT, formatDate } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
-import type { PenaltyRule } from '@/lib/wages';
+import type { AgeBracket, TimeLoading } from '@/lib/wages';
 
-interface WageStaff {
+interface BaseRate {
   id: string;
+  adult_hourly_rate: number;
+  updated_at: string;
+}
+
+interface PublicHoliday {
+  date: string;
   name: string;
-  age_group: 'junior' | 'senior';
-  active: boolean;
-  base_hourly_rate: number | null;
 }
 
-interface ScanPlan {
-  matched: { staff_id: string; name: string; rate: number; current_rate: number | null }[];
-  unmatched: { name: string; rate: number }[];
-  warnings: string[];
+interface WagesData {
+  base_rate: BaseRate | null;
+  age_brackets: AgeBracket[];
+  time_loadings: TimeLoading[];
+  public_holidays: PublicHoliday[];
 }
 
-const NEW_RULE = { name: '', days: [] as number[], start_time: '00:00', end_time: '24:00', multiplier: '1.25' };
+interface ScanResult {
+  rate: number;
+  current_rate: number | null;
+}
+
+const EMPTY_HOLIDAY = { date: '', name: '' };
 
 /**
- * Hourly rates and the loadings applied on top of them.
+ * The award wage structure Farmer Jack's staff are paid against: one base
+ * rate, the age and time-of-week percentages it's multiplied by, and the
+ * public holiday calendar.
  *
- * These numbers decide who a manager calls in, so the sheet can be read from
- * a photo but never applied straight from one — the scan is always previewed
- * against the current rates first.
+ * Nobody's individual pay is stored here — it's computed for each staff
+ * member from their birthday, employment type and (for the 20-21 bracket)
+ * commencement date, against this structure. That's what decides who a
+ * manager calls in, so a scanned base rate is always previewed before it's
+ * applied.
  */
 export default function WageTable() {
-  const [staff, setStaff] = useState<WageStaff[]>([]);
-  const [rules, setRules] = useState<PenaltyRule[]>([]);
+  const [data, setData] = useState<WagesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState<string | null>(null);
 
   const [stage, setStage] = useState<ProgressStage | null>(null);
-  const [plan, setPlan] = useState<ScanPlan | null>(null);
+  const [scanned, setScanned] = useState<ScanResult | null>(null);
   const [applying, setApplying] = useState(false);
 
-  const [newRule, setNewRule] = useState(NEW_RULE);
-  const [addingRule, setAddingRule] = useState(false);
+  const [newHoliday, setNewHoliday] = useState(EMPTY_HOLIDAY);
+  const [addingHoliday, setAddingHoliday] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await fetchJson<{ staff: WageStaff[]; rules: PenaltyRule[] }>('/api/wages');
-      setStaff(data.staff);
-      setRules(data.rules);
-      setDrafts(Object.fromEntries(
-        data.staff.map(s => [s.id, s.base_hourly_rate === null ? '' : String(s.base_hourly_rate)])
-      ));
+      const result = await fetchJson<WagesData>('/api/wages');
+      setData(result);
       setError('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load wages');
@@ -70,27 +76,6 @@ export default function WageTable() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  async function saveRate(id: string) {
-    const value = drafts[id] ?? '';
-    const original = staff.find(s => s.id === id)?.base_hourly_rate;
-    if (value === (original === null || original === undefined ? '' : String(original))) return;
-
-    setSaving(id);
-    const put = await fetch('/api/wages', {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ staff_id: id, base_hourly_rate: value === '' ? null : value }),
-    });
-    setSaving(null);
-    if (!put.ok) {
-      const data = await put.json().catch(() => ({}));
-      setError(data.error ?? 'Could not save that rate');
-      return;
-    }
-    setStaff(current => current.map(s =>
-      s.id === id ? { ...s, base_hourly_rate: value === '' ? null : Number(value) } : s
-    ));
-  }
 
   function pickFile(file: File) {
     const name = file.name.toLowerCase();
@@ -108,10 +93,10 @@ export default function WageTable() {
       header: true,
       skipEmptyLines: true,
       complete: async (result) => {
-        const scan = await postJson<ScanPlan>('/api/scan-wages', { csv: result.data }, { timeoutMs: 30_000 });
+        const scan = await postJson<ScanResult>('/api/scan-wages', { csv: result.data }, { timeoutMs: 30_000 });
         setStage(null);
         if (!scan.ok || !scan.data) { setError(scan.error ?? 'Could not read that CSV.'); return; }
-        setPlan(scan.data);
+        setScanned(scan.data);
       },
       error: (err: Error) => {
         setStage(null);
@@ -129,67 +114,71 @@ export default function WageTable() {
         setStage(STAGES.preparingPdf);
         const pdf = await readPdfAsBase64(file);
         setStage(STAGES.readingPdf);
-        scan = await postJson<ScanPlan>('/api/scan-wages', { pdf }, { timeoutMs: 70_000 });
+        scan = await postJson<ScanResult>('/api/scan-wages', { pdf }, { timeoutMs: 70_000 });
       } else {
         setStage(STAGES.preparing);
         const { base64, mediaType } = await downscalePhoto(file);
         setStage(STAGES.reading);
-        scan = await postJson<ScanPlan>('/api/scan-wages', { image: base64, mediaType }, { timeoutMs: 70_000 });
+        scan = await postJson<ScanResult>('/api/scan-wages', { image: base64, mediaType }, { timeoutMs: 70_000 });
       }
-      if (!scan.ok || !scan.data) { setError(scan.error ?? 'Could not read that wage sheet.'); return; }
-      setPlan(scan.data);
+      if (!scan.ok || !scan.data) { setError(scan.error ?? 'Could not read that wage table.'); return; }
+      setScanned(scan.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not read that wage sheet.');
+      setError(err instanceof Error ? err.message : 'Could not read that wage table.');
     } finally {
       setStage(null);
     }
   }
 
-  async function applyPlan() {
-    if (!plan) return;
+  async function applyScanned() {
+    if (!scanned) return;
     setApplying(true);
-    const res = await postJson<{ applied: number }>('/api/wages', {
-      rates: plan.matched.map(m => ({ staff_id: m.staff_id, base_hourly_rate: m.rate })),
+    const res = await fetch('/api/wages', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adult_hourly_rate: scanned.rate }),
     });
     setApplying(false);
-    setPlan(null);
-    if (!res.ok) { setError(res.error ?? 'Could not apply those rates'); return; }
+    setScanned(null);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? 'Could not save that rate.');
+      return;
+    }
     load();
   }
 
-  async function toggleRule(rule: PenaltyRule) {
-    await fetch('/api/wages/rules', {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: rule.id, active: !rule.active }),
-    });
-    load();
-  }
-
-  async function deleteRule(rule: PenaltyRule) {
-    if (!confirm(`Delete the "${rule.name}" loading?`)) return;
-    await fetch(`/api/wages/rules?id=${rule.id}`, { method: 'DELETE' });
-    load();
-  }
-
-  async function addRule(e: React.FormEvent) {
+  async function addHoliday(e: React.FormEvent) {
     e.preventDefault();
-    setAddingRule(true);
-    const res = await postJson('/api/wages/rules', { ...newRule, multiplier: Number(newRule.multiplier), active: true });
-    setAddingRule(false);
-    if (!res.ok) { setError(res.error ?? 'Could not add that loading'); return; }
-    setNewRule(NEW_RULE);
+    setAddingHoliday(true);
+    const res = await postJson('/api/wages/holidays', newHoliday);
+    setAddingHoliday(false);
+    if (!res.ok) { setError(res.error ?? 'Could not add that holiday'); return; }
+    setNewHoliday(EMPTY_HOLIDAY);
     load();
   }
 
-  const missingRates = staff.filter(s => s.active && s.base_hourly_rate === null).length;
+  async function removeHoliday(date: string) {
+    await fetch(`/api/wages/holidays?date=${date}`, { method: 'DELETE' });
+    load();
+  }
 
   const { dragging, dropHandlers } = useFileDrop(files => {
     for (const file of files) pickFile(file);
   }, stage !== null);
 
+  const ftPtLoadings = (data?.time_loadings ?? []).filter(l => l.employment_category === 'ft_pt');
+  const casualLoadings = (data?.time_loadings ?? []).filter(l => l.employment_category === 'casual');
+
+  function loadingLabel(l: TimeLoading): string {
+    if (l.is_public_holiday) return 'Public holiday';
+    if (l.is_overtime) return 'Overtime (after 9h in a shift)';
+    const days = l.days.length === 6 ? 'Mon-Sat' : l.days.map(d => DAY_SHORT[d]).join(', ');
+    return `${l.label} — ${days} ${l.start_time.slice(0, 5)}–${l.end_time.slice(0, 5)}`;
+  }
+
   return (
     <div className="space-y-6" {...dropHandlers}>
-      <DropOverlay active={dragging} label="Drop a wage sheet photo or PDF to import" />
+      <DropOverlay active={dragging} label="Drop the wage table photo, PDF or CSV to read its base rate" />
       {stage && <ProgressBar stage={stage} />}
 
       {error && (
@@ -198,215 +187,172 @@ export default function WageTable() {
         </div>
       )}
 
-      {/* ── Hourly rates ─────────────────────────────────────────────────── */}
+      {/* ── Award base rate ──────────────────────────────────────────────── */}
       <div className="card p-5">
         <div className="flex flex-wrap items-start justify-between gap-2 mb-3">
           <div>
             <h2 className="font-semibold text-slate-800 flex items-center gap-2">
-              <DollarSign size={16} className="text-slate-400" /> Hourly rates
+              <DollarSign size={16} className="text-slate-400" /> Award Base Rate
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              What each person is paid per ordinary hour. Used to cost a shift when finding cover.
+              The adult ordinary Mon-Fri rate — everyone&apos;s pay is computed from this, their age and their
+              employment type. There&apos;s no separate rate to set per person.
             </p>
           </div>
           <UploadMenu
             disabled={stage !== null}
             options={[
               {
-                key: 'capture',
-                label: 'Capture',
-                icon: <Camera size={14} />,
-                accept: 'image/*',
-                capture: 'environment',
+                key: 'capture', label: 'Capture', icon: <Camera size={14} />, accept: 'image/*', capture: 'environment',
                 onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
               },
               {
-                key: 'upload',
-                label: 'Upload',
-                icon: <FileText size={14} />,
-                accept: 'image/*',
+                key: 'upload', label: 'Upload', icon: <FileText size={14} />, accept: 'image/*',
                 onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
               },
               {
-                key: 'pdf',
-                label: 'Upload PDF',
-                icon: <FileSpreadsheet size={14} />,
-                accept: 'application/pdf',
+                key: 'pdf', label: 'Upload PDF', icon: <FileSpreadsheet size={14} />, accept: 'application/pdf',
                 onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
               },
               {
-                key: 'csv',
-                label: 'Upload CSV',
-                icon: <Table2 size={14} />,
-                accept: '.csv,text/csv',
+                key: 'csv', label: 'Upload CSV', icon: <Table2 size={14} />, accept: '.csv,text/csv',
                 onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
               },
             ]}
           />
         </div>
 
-        {missingRates > 0 && (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
-            {missingRates} active staff have no rate set — they&apos;ll show as &quot;no rate&quot; instead of a cost when finding cover.
-          </p>
-        )}
-
         {loading ? <p className="text-slate-400 text-sm">Loading…</p> : (
-          <div className="divide-y divide-slate-100">
-            {staff.map(s => (
-              <div key={s.id} className={`py-2 flex items-center gap-3 ${!s.active ? 'opacity-50' : ''}`}>
-                <div className="flex-1 min-w-0">
-                  <span className="text-sm font-medium text-slate-800">{s.name}</span>
-                  <span className={`ml-2 ${s.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}`}>
-                    {s.age_group === 'senior' ? 'Senior' : 'Junior'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-slate-400 text-sm">$</span>
-                  <input
-                    type="number" step="0.01" min="0" placeholder="—"
-                    className="input w-24 text-right py-1"
-                    value={drafts[s.id] ?? ''}
-                    onChange={e => setDrafts(d => ({ ...d, [s.id]: e.target.value }))}
-                    onBlur={() => saveRate(s.id)}
-                  />
-                  <span className="text-slate-400 text-xs w-8">
-                    {saving === s.id ? <Loader2 size={12} className="animate-spin" /> : '/hr'}
-                  </span>
-                </div>
-              </div>
-            ))}
+          <div className="flex items-baseline gap-2">
+            <span className="text-3xl font-bold text-slate-800">
+              {data?.base_rate ? `$${Number(data.base_rate.adult_hourly_rate).toFixed(2)}` : '—'}
+            </span>
+            <span className="text-sm text-slate-400">/hr</span>
+            {data?.base_rate && (
+              <span className="text-xs text-slate-400 ml-2">
+                effective from {formatDate(data.base_rate.updated_at.slice(0, 10))}
+              </span>
+            )}
           </div>
+        )}
+        {!loading && !data?.base_rate && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
+            No base rate set yet — nobody&apos;s shift cost can be computed until one is uploaded or entered.
+          </p>
         )}
       </div>
 
-      {/* ── Penalty loadings ─────────────────────────────────────────────── */}
+      {/* ── Age brackets & time loadings ─────────────────────────────────── */}
       <div className="card p-5">
-        <h2 className="font-semibold text-slate-800 mb-1">Penalty loadings</h2>
+        <h2 className="font-semibold text-slate-800 mb-1">Award structure</h2>
         <p className="text-xs text-slate-500 mb-3">
-          When a higher rate applies. Two loadings covering the same hour don&apos;t stack — the higher one wins.
+          The age and time-of-week percentages every rate is computed from. Fixed by the enterprise agreement — get
+          in touch if these ever need to change.
         </p>
 
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 mb-3">
-          <strong>Check these against your actual agreement.</strong> They were seeded with ordinary retail-award
-          shapes as a starting point, not Farmer Jack&apos;s real rates. A wrong multiplier here produces a wrong
-          cost, and the cost is what someone picks on.
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900 mb-4">
+          Weekly overtime (38h/week) and &quot;in charge&quot; premiums aren&apos;t computed yet — only per-shift
+          overtime (past 9 hours) and the age/time-of-week rates above are. A shift relying on either of those will
+          show as slightly under its real cost.
         </div>
 
+        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Age brackets</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
+          {(data?.age_brackets ?? []).map(b => (
+            <div key={b.id} className="rounded-lg border border-slate-200 px-3 py-2">
+              <p className="text-xs text-slate-500 truncate">{b.label}</p>
+              <p className="text-sm font-semibold text-slate-800">{b.percentage}%</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Full &amp; part-time</p>
+            <ul className="divide-y divide-slate-100 text-xs">
+              {ftPtLoadings.map(l => (
+                <li key={l.id} className="py-1.5 flex items-center justify-between gap-2">
+                  <span className="text-slate-600">{loadingLabel(l)}</span>
+                  <span className="badge-slate font-mono shrink-0">{l.percentage}%</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Casual</p>
+            <ul className="divide-y divide-slate-100 text-xs">
+              {casualLoadings.map(l => (
+                <li key={l.id} className="py-1.5 flex items-center justify-between gap-2">
+                  <span className="text-slate-600">{loadingLabel(l)}</span>
+                  <span className="badge-slate font-mono shrink-0">{l.percentage}%</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Public holidays ──────────────────────────────────────────────── */}
+      <div className="card p-5">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-1">
+          <CalendarDays size={16} className="text-slate-400" /> Public Holidays
+        </h2>
+        <p className="text-xs text-slate-500 mb-3">
+          A shift on one of these dates is costed at the public-holiday rate, whatever day of the week it falls on.
+        </p>
+
         <div className="divide-y divide-slate-100">
-          {rules.map(r => (
-            <div key={r.id} className={`py-2.5 flex items-center gap-3 ${!r.active ? 'opacity-50' : ''}`}>
+          {(data?.public_holidays ?? []).map(h => (
+            <div key={h.date} className="py-2 flex items-center gap-3">
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800">{r.name}</p>
-                <p className="text-xs text-slate-500">
-                  {r.days.length === 7 ? 'Every day' : r.days.map(d => DAY_SHORT[d]).join(', ')}
-                  {' · '}{r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
-                </p>
+                <span className="text-sm font-medium text-slate-800">{h.name}</span>
+                <span className="text-xs text-slate-500 ml-2">{formatDate(h.date)}</span>
               </div>
-              <span className="badge-slate font-mono">×{Number(r.multiplier).toFixed(2)}</span>
-              <button onClick={() => toggleRule(r)} className="btn-ghost text-xs px-2">
-                {r.active ? 'On' : 'Off'}
-              </button>
-              <button onClick={() => deleteRule(r)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
+              <button onClick={() => removeHoliday(h.date)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
                 <Trash2 size={14} />
               </button>
             </div>
           ))}
-          {rules.length === 0 && !loading && (
-            <p className="text-sm text-slate-400 py-2">No loadings — every hour is costed at the ordinary rate.</p>
+          {(data?.public_holidays ?? []).length === 0 && !loading && (
+            <p className="text-sm text-slate-400 py-2">No public holidays added yet.</p>
           )}
         </div>
 
-        <form onSubmit={addRule} className="mt-4 pt-4 border-t border-slate-100 space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <input
-              className="input col-span-2 sm:col-span-1" placeholder="Name, e.g. Sunday" required
-              value={newRule.name} onChange={e => setNewRule(r => ({ ...r, name: e.target.value }))}
-            />
-            <input
-              type="time" className="input" value={newRule.start_time}
-              onChange={e => setNewRule(r => ({ ...r, start_time: e.target.value }))}
-            />
-            <input
-              type="time" className="input" value={newRule.end_time}
-              onChange={e => setNewRule(r => ({ ...r, end_time: e.target.value }))}
-            />
-            <input
-              type="number" step="0.01" min="0.01" className="input" placeholder="1.25" required
-              value={newRule.multiplier} onChange={e => setNewRule(r => ({ ...r, multiplier: e.target.value }))}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {DAY_SHORT.map((label, day) => (
-              <button
-                key={label} type="button"
-                onClick={() => setNewRule(r => ({
-                  ...r,
-                  days: r.days.includes(day) ? r.days.filter(d => d !== day) : [...r.days, day].sort(),
-                }))}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
-                  newRule.days.includes(day)
-                    ? 'border-blue-400 bg-blue-50 text-blue-700'
-                    : 'border-slate-200 text-slate-500 hover:bg-slate-50'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-            <button type="submit" disabled={addingRule || !newRule.days.length} className="btn-primary ml-auto">
-              {addingRule ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add loading
-            </button>
-          </div>
+        <form onSubmit={addHoliday} className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
+          <input
+            type="date" className="input w-auto" required
+            value={newHoliday.date} onChange={e => setNewHoliday(h => ({ ...h, date: e.target.value }))}
+          />
+          <input
+            className="input flex-1 min-w-[160px]" placeholder="e.g. Labour Day" required
+            value={newHoliday.name} onChange={e => setNewHoliday(h => ({ ...h, name: e.target.value }))}
+          />
+          <button type="submit" disabled={addingHoliday} className="btn-primary">
+            {addingHoliday ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+          </button>
         </form>
       </div>
 
       {/* ── Scan preview ─────────────────────────────────────────────────── */}
-      {plan && (
-        <Modal title="Rates read from the sheet" onClose={() => setPlan(null)} size="lg">
+      {scanned && (
+        <Modal title="Base rate read from the wage table" onClose={() => setScanned(null)}>
           <div className="space-y-4 text-sm">
             <p className="text-xs text-slate-500">
-              Check every figure against the sheet before applying — a misread digit here changes who gets called in.
+              Check this against the sheet before applying — every rate the app computes is worked out from this
+              one figure.
             </p>
 
-            {plan.matched.length > 0 && (
-              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
-                {plan.matched.map(m => (
-                  <li key={m.staff_id} className="px-3 py-2 flex items-center justify-between gap-2">
-                    <span className="font-medium text-slate-700 truncate">{m.name}</span>
-                    <span className="text-xs shrink-0">
-                      {m.current_rate !== null && m.current_rate !== m.rate && (
-                        <span className="text-slate-400 line-through mr-1.5">${m.current_rate.toFixed(2)}</span>
-                      )}
-                      <span className={m.current_rate === m.rate ? 'text-slate-400' : 'font-semibold text-slate-800'}>
-                        ${m.rate.toFixed(2)}/hr
-                      </span>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {plan.unmatched.length > 0 && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                <p className="text-xs font-semibold text-amber-900 mb-1">
-                  Not on the staff list — set these by hand:
-                </p>
-                <ul className="text-xs text-amber-800 space-y-0.5">
-                  {plan.unmatched.map(u => <li key={u.name}>{u.name} — ${u.rate.toFixed(2)}/hr</li>)}
-                </ul>
-              </div>
-            )}
-
-            {plan.warnings.length > 0 && (
-              <ul className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1">
-                {plan.warnings.map((w, i) => <li key={i} className="text-xs text-amber-800">{w}</li>)}
-              </ul>
-            )}
+            <div className="rounded-lg border border-slate-200 p-4 flex items-center justify-between">
+              {scanned.current_rate !== null && scanned.current_rate !== scanned.rate && (
+                <span className="text-slate-400 line-through mr-2">${scanned.current_rate.toFixed(2)}/hr</span>
+              )}
+              <span className="text-2xl font-bold text-slate-800">${scanned.rate.toFixed(2)}/hr</span>
+            </div>
 
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setPlan(null)} className="btn-secondary">Cancel</button>
-              <button onClick={applyPlan} disabled={applying || !plan.matched.length} className="btn-primary">
-                {applying ? 'Applying…' : `Apply ${plan.matched.length} rate${plan.matched.length === 1 ? '' : 's'}`}
+              <button onClick={() => setScanned(null)} className="btn-secondary">Cancel</button>
+              <button onClick={applyScanned} disabled={applying} className="btn-primary">
+                {applying ? 'Applying…' : 'Apply'}
               </button>
             </div>
           </div>

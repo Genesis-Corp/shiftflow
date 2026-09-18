@@ -4,7 +4,7 @@ import {
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday,
 } from '@/lib/shiftUtils';
-import { calculateShiftCost, PenaltyRule } from '@/lib/wages';
+import { calculateShiftCost, ageBracketFor, AgeBracket, TimeLoading, EmploymentCategory } from '@/lib/wages';
 import { rankCandidates } from '@/lib/coverTiers';
 
 /**
@@ -158,26 +158,33 @@ export async function findEligibleCandidates(
     }
   }
 
-  // Rates and loadings, so a manager can weigh cost alongside suitability.
-  // Missing rates are not an error: the person still shows, just without a
-  // figure, which is more honest than costing them at zero.
-  const [wageRes, ruleRes] = await Promise.all([
-    supabaseAdmin.from('staff_wages').select('staff_id, base_hourly_rate'),
-    supabaseAdmin.from('penalty_rules').select('*'),
+  // The award structure, so a manager can weigh cost alongside suitability.
+  // A missing birthday isn't an error: the person still shows, just without
+  // a figure, which is more honest than costing them at zero.
+  const [baseRes, bracketsRes, loadingsRes, holidayRes] = await Promise.all([
+    supabaseAdmin.from('wage_base_rate').select('adult_hourly_rate').eq('id', 'current').maybeSingle(),
+    supabaseAdmin.from('age_brackets').select('*'),
+    supabaseAdmin.from('time_loadings').select('*'),
+    supabaseAdmin.from('public_holidays').select('date').eq('date', date).maybeSingle(),
   ]);
-  const rates = new Map(
-    (wageRes.data ?? []).map((w: { staff_id: string; base_hourly_rate: number }) =>
-      [w.staff_id, Number(w.base_hourly_rate)])
-  );
-  const penaltyRules = (ruleRes.data ?? []) as PenaltyRule[];
+  const adultBaseRate = baseRes.data?.adult_hourly_rate ? Number(baseRes.data.adult_hourly_rate) : null;
+  const ageBrackets = (bracketsRes.data ?? []) as AgeBracket[];
+  const timeLoadings = (loadingsRes.data ?? []) as TimeLoading[];
+  const isPublicHoliday = !!holidayRes.data;
   const breakMinutes = requiresBreak(start_time.slice(0, 5), end_time.slice(0, 5)) ? BREAK_DURATION_MINUTES : 0;
 
-  const costFor = (staffId: string): number | null => {
-    const rate = rates.get(staffId);
-    if (rate === undefined) return null;
+  const costFor = (s: (typeof allStaff)[number]): number | null => {
+    if (adultBaseRate === null) return null;
+    if (s.employment_type === 'salary') return null;
+    const category: EmploymentCategory = s.employment_type === 'casual' ? 'casual' : 'ft_pt';
+    const bracket = ageBracketFor(s.birthday, date, s.commencement_date, ageBrackets);
+    if (!bracket) return null;
     return calculateShiftCost(
-      { date, start_time, end_time, unpaid_break_minutes: breakMinutes, base_hourly_rate: rate },
-      penaltyRules
+      {
+        date, start_time, end_time, unpaid_break_minutes: breakMinutes,
+        employment_category: category, age_percentage: bracket.percentage,
+      },
+      adultBaseRate, timeLoadings, isPublicHoliday
     ).cost;
   };
 
@@ -204,7 +211,7 @@ export async function findEligibleCandidates(
     trained_departments: s.staff_departments ?? [],
     weekly_minutes_before: weeklyBefore,
     weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
-    shift_cost: costFor(s.id),
+    shift_cost: costFor(s),
   });
 
   const candidates: ScoredCandidate[] = [];

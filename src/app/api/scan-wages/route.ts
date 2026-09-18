@@ -2,56 +2,42 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
 import { readImage, readImageRequest, readPdf, readPdfRequest, visionErrorResponse } from '@/lib/vision';
-import { parseWageRows, csvRowsToScannedWageRows, ScannedWageRow } from '@/lib/wages';
-import { matchStaffName, hasNameCandidate, RosterEntry } from '@/lib/roster';
+import { parseDollarAmount, csvRowsToBaseRate } from '@/lib/wages';
 
 /**
- * Reads a printed wage sheet — photo or PDF — into hourly rates, matched
- * against the staff list. Nothing is written here: the Managers page previews
- * the result first, because a misread digit in a pay rate is the kind of
- * mistake that decides who gets called in to work.
+ * Reads the one figure that matters off a wage table — the adult ordinary
+ * hourly rate (Monday-Friday, full/part-time) — rather than matching
+ * individual staff names against it. Everyone's actual rate is computed
+ * from this figure plus their age and employment type, never typed in
+ * separately, so the only thing this ever needs to find is that one cell.
+ *
+ * Nothing is written here: the Managers page previews the read figure
+ * first, since it decides every wage the app computes from here on.
  */
 
 export const maxDuration = 60;
 
-const TEXT = { type: 'string' } as const;
-
-const WAGE_SCHEMA = {
+const RATE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['rows'],
+  required: ['rate'],
   properties: {
-    rows: {
-      type: 'array',
-      description: 'One entry per person listed, top to bottom.',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['n', 'r'],
-        properties: {
-          n: { ...TEXT, description: 'Name exactly as printed.' },
-          r: { ...TEXT, description: 'That person\'s hourly rate exactly as printed, including any $ sign.' },
-        },
-      },
-    },
+    rate: { type: 'string', description: 'The adult ordinary hourly rate exactly as printed, including any $ sign.' },
   },
 };
 
 function instructionsFor(kind: 'photograph' | 'PDF'): string {
-  return `This is a ${kind} of a staff wage sheet from a supermarket.
+  return `This is a ${kind} of an award wage table from a supermarket.
 
-Transcribe it row by row, exactly as printed. Do not interpret, tidy, convert or calculate anything.
+Find the ADULT, ORDINARY, MONDAY-TO-FRIDAY, FULL-TIME/PART-TIME hourly rate — the base figure the rest of the
+table's loadings (Saturday, Sunday, public holiday, evening, junior percentages, etc.) are worked out from. It is
+usually the first dollar figure in the row labelled "Adult" or "100%", under a column labelled something like
+"Ordinary Hourly Rate" for full-time or part-time employees (not the casual column, which already includes a
+loading on top of it).
 
-For each person listed return:
-- n: their name exactly as printed.
-- r: their ORDINARY HOURLY rate exactly as printed, including the $ if shown.
-
-Rules:
-- If the sheet has several rate columns (for example ordinary, Saturday, Sunday, public holiday), return only the ordinary/base hourly rate.
-- If a row shows a weekly or annual salary rather than an hourly rate, return that figure as printed and do not convert it.
-- Copy every digit as printed, including cents.
-- If any character of a rate is not clearly legible, use "?" for that rate rather than guessing. Never invent a digit in someone's pay.
-- Skip heading rows, totals, and any row that is not a person.`;
+Return only that one figure, exactly as printed including the $ if shown. If you cannot find a row clearly
+labelled for adult ordinary full-time/part-time pay, or more than one figure could plausibly be it, return "?"
+rather than guessing — a wrong base rate would misprice every wage the app computes from it.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -63,72 +49,40 @@ export async function POST(req: NextRequest) {
   const isPdf = !isCsv && !!(body && typeof body === 'object' && 'pdf' in body);
   const kind = isCsv ? 'CSV' : isPdf ? 'PDF' : 'photo';
 
-  let data: { rows?: ScannedWageRow[] };
+  let rate: number | null = null;
+
   if (isCsv) {
     const csvRows = (body as { csv?: Record<string, string>[] }).csv;
     if (!Array.isArray(csvRows) || !csvRows.length) {
       return NextResponse.json({ error: 'That CSV had no rows.' }, { status: 400 });
     }
-    data = { rows: csvRowsToScannedWageRows(csvRows) };
+    rate = csvRowsToBaseRate(csvRows);
   } else {
+    let data: { rate?: string };
     try {
       if (isPdf) {
         const request = readPdfRequest(body);
         if (request instanceof NextResponse) return request;
-        ({ data } = await readPdf<{ rows?: ScannedWageRow[] }>(request, instructionsFor('PDF'), WAGE_SCHEMA));
+        ({ data } = await readPdf<{ rate?: string }>(request, instructionsFor('PDF'), RATE_SCHEMA));
       } else {
         const request = readImageRequest(body);
         if (request instanceof NextResponse) return request;
-        ({ data } = await readImage<{ rows?: ScannedWageRow[] }>(request, instructionsFor('photograph'), WAGE_SCHEMA));
+        ({ data } = await readImage<{ rate?: string }>(request, instructionsFor('photograph'), RATE_SCHEMA));
       }
     } catch (err) {
       return visionErrorResponse(err, kind);
     }
+    rate = parseDollarAmount(data.rate ?? '');
   }
 
-  const { wages, warnings } = parseWageRows(data.rows ?? []);
-  if (!wages.length) {
+  if (!rate) {
     return NextResponse.json(
-      { error: `No rates could be read from that ${kind}. ${isCsv ? 'Check it has a name column and a rate column.' : 'Try again with the whole sheet in frame.'}`, warnings },
+      { error: `Could not find a clear adult ordinary hourly rate in that ${kind}. Check the whole table is in frame, or enter the rate by hand.` },
       { status: 422 }
     );
   }
 
-  const [staffRes, existingRes] = await Promise.all([
-    supabase.from('staff').select('id, name, active'),
-    supabase.from('staff_wages').select('staff_id, base_hourly_rate'),
-  ]);
-  if (staffRes.error) {
-    return NextResponse.json({ error: `Could not read the staff list: ${staffRes.error.message}` }, { status: 500 });
-  }
+  const { data: current } = await supabase.from('wage_base_rate').select('adult_hourly_rate').eq('id', 'current').maybeSingle();
 
-  const staff = (staffRes.data ?? []) as { id: string; name: string; active: boolean }[];
-  const current = new Map(
-    (existingRes.data ?? []).map((w: { staff_id: string; base_hourly_rate: number }) => [w.staff_id, Number(w.base_hourly_rate)])
-  );
-
-  const matched: { staff_id: string; name: string; rate: number; current_rate: number | null }[] = [];
-  const unmatched: { name: string; rate: number }[] = [];
-
-  for (const wage of wages) {
-    const probe: RosterEntry = {
-      name: wage.name, start_time: null, end_time: null, status: null, truncated: false, department: null,
-    };
-    const person = matchStaffName(probe, staff);
-    if (!person) {
-      unmatched.push({ name: wage.name, rate: wage.rate });
-      if (hasNameCandidate(probe, staff)) {
-        warnings.push(`${wage.name} matches more than one person on the staff list — set their rate by hand.`);
-      }
-      continue;
-    }
-    matched.push({
-      staff_id: person.id,
-      name: person.name,
-      rate: wage.rate,
-      current_rate: current.get(person.id) ?? null,
-    });
-  }
-
-  return NextResponse.json({ matched, unmatched, warnings });
+  return NextResponse.json({ rate, current_rate: current?.adult_hourly_rate ?? null });
 }

@@ -8,12 +8,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, age_group, role_type, phone, active, birthday, employment_type, pay_rate } = body;
+  const { name, age_group, role_type, phone, active, birthday, employment_type, commencement_date } = body;
 
   const updates: Record<string, unknown> = { name, age_group, role_type, phone, phone_e164: toE164AU(phone), active };
   if (birthday !== undefined) updates.birthday = birthday || null;
   if (employment_type !== undefined) updates.employment_type = employment_type || null;
-  if (pay_rate !== undefined) updates.pay_rate = pay_rate === '' || pay_rate === null ? null : pay_rate;
+  if (commencement_date !== undefined) updates.commencement_date = commencement_date || null;
 
   const { data, error } = await supabase
     .from('staff')

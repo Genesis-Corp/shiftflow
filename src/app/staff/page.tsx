@@ -21,7 +21,14 @@ import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
 import { todayStr } from '@/lib/shiftUtils';
 import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
+import { ageBracketFor, AgeBracket, TimeLoading } from '@/lib/wages';
 import Papa from 'papaparse';
+
+interface WagesData {
+  base_rate: { adult_hourly_rate: number } | null;
+  age_brackets: AgeBracket[];
+  time_loadings: TimeLoading[];
+}
 
 const ROLE_LABELS: Record<RoleType, string> = {
   department_only: 'Department Only',
@@ -102,11 +109,11 @@ export default function StaffPage() {
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
-    birthday: '', employment_type: '' as EmploymentType | '', pay_rate: '',
+    birthday: '', employment_type: '' as EmploymentType | '', commencement_date: '',
     selectedDepts: [] as { department_id: string; training_level: TrainingLevel; is_default: boolean }[],
   });
 
-  const [rates, setRates] = useState<Record<string, number | null>>({});
+  const [wages, setWages] = useState<WagesData | null>(null);
   const [revealedRates, setRevealedRates] = useState<Set<string>>(new Set());
 
   function toggleRateRevealed(staffId: string) {
@@ -117,19 +124,32 @@ export default function StaffPage() {
     });
   }
 
+  /** Their current ordinary (weekday, daytime) $/hr, computed from age,
+   *  employment type and the award structure — never stored per person. */
+  function ordinaryRateFor(s: Staff): number | null {
+    if (!wages?.base_rate || !s.employment_type || s.employment_type === 'salary') return null;
+    const category = s.employment_type === 'casual' ? 'casual' : 'ft_pt';
+    const bracket = ageBracketFor(s.birthday, todayStr(), s.commencement_date, wages.age_brackets);
+    if (!bracket) return null;
+    const ordinary = wages.time_loadings.find(l =>
+      l.employment_category === category && !l.is_public_holiday && !l.is_overtime && l.days.includes(1)
+    );
+    if (!ordinary) return null;
+    const rate = wages.base_rate.adult_hourly_rate * (bracket.percentage / 100) * (ordinary.percentage / 100);
+    return Math.round(rate * 100) / 100;
+  }
+
   async function load() {
     setLoading(true);
     try {
       const [staffData, deptData, wagesData] = await Promise.all([
         fetchJson<Staff[]>('/api/staff'),
         fetchJson<Department[]>('/api/departments'),
-        fetchJson<{ staff: { id: string; base_hourly_rate: number | null }[] }>('/api/wages').catch(() => null),
+        fetchJson<WagesData>('/api/wages').catch(() => null),
       ]);
       setStaff(staffData);
       setDepartments(deptData);
-      if (wagesData) {
-        setRates(Object.fromEntries(wagesData.staff.map(s => [s.id, s.base_hourly_rate])));
-      }
+      setWages(wagesData);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load staff');
@@ -143,7 +163,7 @@ export default function StaffPage() {
     setEditing(null);
     setForm({
       name: '', age_group: 'senior', role_type: 'department_only', phone: '',
-      birthday: '', employment_type: '', pay_rate: '', selectedDepts: [],
+      birthday: '', employment_type: '', commencement_date: '', selectedDepts: [],
     });
     setModal('add');
   }
@@ -158,7 +178,7 @@ export default function StaffPage() {
     setForm({
       name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '',
       birthday: s.birthday ?? '', employment_type: s.employment_type ?? '',
-      pay_rate: s.pay_rate === null || s.pay_rate === undefined ? '' : String(s.pay_rate),
+      commencement_date: s.commencement_date ?? '',
       selectedDepts: depts,
     });
     setModal('edit');
@@ -199,7 +219,7 @@ export default function StaffPage() {
       name: form.name, age_group: form.age_group, role_type: form.role_type, phone: form.phone,
       birthday: form.birthday || null,
       employment_type: form.employment_type || null,
-      pay_rate: form.pay_rate === '' ? null : Number(form.pay_rate),
+      commencement_date: form.commencement_date || null,
     };
     let staffId: string;
     if (modal === 'add') {
@@ -512,13 +532,13 @@ export default function StaffPage() {
                 <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${!s.active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-medium text-slate-800">
                     <div>{s.name}</div>
-                    {rates[s.id] !== undefined && rates[s.id] !== null && (
+                    {ordinaryRateFor(s) !== null && (
                       <button
                         onClick={() => toggleRateRevealed(s.id)}
                         className="mt-0.5 flex items-center gap-1 text-xs font-normal text-slate-400 hover:text-slate-600"
                       >
                         {revealedRates.has(s.id) ? (
-                          <><EyeOff size={11} /> ${Number(rates[s.id]).toFixed(2)}/hr</>
+                          <><EyeOff size={11} /> ${ordinaryRateFor(s)!.toFixed(2)}/hr ordinary</>
                         ) : (
                           <><Eye size={11} /> Reveal rate</>
                         )}
@@ -607,13 +627,15 @@ export default function StaffPage() {
                 </select>
               </div>
               <div className="col-span-2">
-                <label className="label">Pay Rate (optional)</label>
+                <label className="label">Commencement Date (optional)</label>
                 <input
-                  type="number" step="0.01" min="0" className="input" value={form.pay_rate}
-                  onChange={e => setForm(f => ({ ...f, pay_rate: e.target.value }))} placeholder="$/hr, for reference only"
+                  type="date" className="input" value={form.commencement_date}
+                  onChange={e => setForm(f => ({ ...f, commencement_date: e.target.value }))}
                 />
                 <p className="text-xs text-slate-400 mt-1">
-                  Informational only — shift cost always comes from the Wage Matrix on the Managers page.
+                  Only matters between ages 20 and 21, where pay steps up from 90% to 100% of the adult rate at 6
+                  months&apos; service. Pay is otherwise computed automatically from birthday, employment type and
+                  the Award Base Rate on the Managers page.
                 </p>
               </div>
             </div>

@@ -12,7 +12,7 @@ interface StandardRow {
   departments?: string;
   birthday?: string;
   employment_type?: string;
-  pay_rate?: string;
+  commencement_date?: string;
 }
 
 // ── Availability-sheet format (STORE / NAME / MOBILE # / day columns) ─────────
@@ -181,7 +181,6 @@ export async function POST(req: NextRequest) {
     if (employmentType && !EMPLOYMENT_TYPES.has(employmentType)) {
       results.errors.push(`"${row.name}": unrecognized employment_type "${row.employment_type}", left blank.`);
     }
-    const payRate = row.pay_rate ? Number(row.pay_rate.replace(/[$\s]/g, '')) : null;
 
     const { data: staff, error } = await supabase
       .from('staff')
@@ -193,7 +192,7 @@ export async function POST(req: NextRequest) {
         phone_e164: toE164AU(row.phone),
         birthday: row.birthday?.trim() || null,
         employment_type: EMPLOYMENT_TYPES.has(employmentType) ? employmentType : null,
-        pay_rate: payRate !== null && Number.isFinite(payRate) ? payRate : null,
+        commencement_date: row.commencement_date?.trim() || null,
         reliability_score: 50,
         active: true,
       }])

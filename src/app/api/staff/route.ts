@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, age_group, role_type, phone, birthday, employment_type, pay_rate } = body;
+  const { name, age_group, role_type, phone, birthday, employment_type, commencement_date } = body;
 
   if (!name || !age_group || !role_type)
     return NextResponse.json({ error: 'name, age_group and role_type are required' }, { status: 400 });
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
       phone_e164: toE164AU(phone),
       birthday: birthday || null,
       employment_type: employment_type || null,
-      pay_rate: pay_rate === '' || pay_rate === undefined ? null : pay_rate,
+      commencement_date: commencement_date || null,
       reliability_score: 50, active: true,
     }])
     .select()

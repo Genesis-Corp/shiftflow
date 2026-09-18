@@ -1,27 +1,105 @@
 import { timeToMinutes, minutesToTime, dayOfWeekFromDate, shiftDurationMinutes } from './shiftUtils';
 
 /**
- * What a shift costs to fill, per person.
+ * What a shift costs to fill, per person — computed from the award, not
+ * typed in by hand.
  *
- * Pure functions only — no database. The Cover Shift flow shows these figures
- * to a manager who then picks someone partly on price, so every number here is
- * acted on: it is worth the unit tests.
+ * Farmer Jack's 2026 Wage Table is, cell for cell, one number (the adult
+ * ordinary Mon-Fri rate) multiplied by an age-based percentage and a
+ * time-of-week/employment-type percentage. Every rate in this file is
+ * derived that way: rate = adult_base_rate x age% x time%.
  *
- * Two rules that both cover the same minute do not stack. The higher
- * multiplier wins, which is how the award reads — a Saturday evening is paid
- * the Saturday rate, not Saturday x evening.
+ * Pure functions only — no database. The Cover Shift flow shows these
+ * figures to a manager who then picks someone partly on price, so every
+ * number here is acted on: it is worth the unit tests.
+ *
+ * Two time-of-week rules that both cover the same minute do not stack —
+ * the higher percentage wins, same as the age-based rules never stack with
+ * each other (there's only ever one age bracket at a time).
  */
 
-export interface PenaltyRule {
+export type EmploymentCategory = 'ft_pt' | 'casual';
+
+export interface AgeBracket {
   id: string;
-  name: string;
-  /** 0 = Sunday .. 6 = Saturday. */
+  label: string;
+  /** null = no lower bound. */
+  min_age: number | null;
+  /** null = no upper bound. Exclusive when set — 16 means "up to but not including 16". */
+  max_age: number | null;
+  /** null = no service requirement. Only the 20-21 bracket uses this. */
+  min_service_months: number | null;
+  percentage: number;
+}
+
+export interface TimeLoading {
+  id: string;
+  label: string;
+  employment_category: EmploymentCategory;
+  /** 0 = Sunday .. 6 = Saturday. Ignored when is_public_holiday or is_overtime. */
   days: number[];
   start_time: string;
   /** May be "24:00" for a rule running to midnight. */
   end_time: string;
-  multiplier: number;
-  active: boolean;
+  percentage: number;
+  /** Applies whenever the shift's date is a public holiday, regardless of day/time. */
+  is_public_holiday: boolean;
+  /** Applies to the portion of a single shift past the overtime threshold. */
+  is_overtime: boolean;
+}
+
+/** A single shift, past the overtime threshold, is paid overtime for the excess. */
+export const OVERTIME_THRESHOLD_MINUTES = 9 * 60;
+
+/** Whole years old on `asOfDate`, from a YYYY-MM-DD birthday — pure integer
+ *  date-part math, no Date object round-trip (see addDays' history for why
+ *  that matters: it silently shifts by a day outside UTC). */
+export function ageInYears(birthday: string, asOfDate: string): number {
+  const [by, bm, bd] = birthday.split('-').map(Number);
+  const [ay, am, ad] = asOfDate.split('-').map(Number);
+  let age = ay - by;
+  if (am < bm || (am === bm && ad < bd)) age--;
+  return age;
+}
+
+/** Whole months of service on `asOfDate`, from a YYYY-MM-DD commencement date. */
+export function monthsOfService(commencementDate: string, asOfDate: string): number {
+  const [sy, sm, sd] = commencementDate.split('-').map(Number);
+  const [ay, am, ad] = asOfDate.split('-').map(Number);
+  let months = (ay - sy) * 12 + (am - sm);
+  if (ad < sd) months--;
+  return Math.max(0, months);
+}
+
+/**
+ * Which age bracket someone falls into, as of a given date.
+ *
+ * Only the 20-21 bracket is split by service length. An unknown
+ * commencement date (never recorded) is treated as satisfying any service
+ * requirement — the safer of the two ways to be wrong is overpaying a
+ * 20-year-old for a few months, not underpaying one whose start date just
+ * wasn't entered yet.
+ */
+export function ageBracketFor(
+  birthday: string | null | undefined,
+  asOfDate: string,
+  commencementDate: string | null | undefined,
+  brackets: AgeBracket[]
+): AgeBracket | null {
+  if (!birthday) return null;
+  const age = ageInYears(birthday, asOfDate);
+  const serviceMonths = commencementDate ? monthsOfService(commencementDate, asOfDate) : null;
+
+  const ageMatches = brackets.filter(b =>
+    (b.min_age === null || age >= b.min_age) && (b.max_age === null || age < b.max_age)
+  );
+  if (!ageMatches.length) return null;
+
+  const eligible = ageMatches.filter(b =>
+    !b.min_service_months || serviceMonths === null || serviceMonths >= b.min_service_months
+  );
+  const pool = eligible.length ? eligible : ageMatches;
+  return pool.reduce((best, b) => (b.min_service_months ?? 0) > (best.min_service_months ?? 0) ? b : best);
 }
 
 export interface ShiftCostInput {
@@ -30,79 +108,74 @@ export interface ShiftCostInput {
   end_time: string;
   /** Meal breaks are unpaid, so they come off the paid total. */
   unpaid_break_minutes?: number;
-  base_hourly_rate: number;
+  employment_category: EmploymentCategory;
+  /** The age bracket's percentage, e.g. 90 for 90%. */
+  age_percentage: number;
 }
 
 export interface CostSegment {
   start: string;
   end: string;
   minutes: number;
+  /** 1.5 for a 150% loading, etc. */
   multiplier: number;
-  /** Which rule set this segment's multiplier, or null for ordinary time. */
   rule: string | null;
 }
 
 export interface ShiftCost {
-  /** Time on the clock, before the unpaid break comes off. */
   rostered_minutes: number;
   paid_minutes: number;
   cost: number;
-  /** Weighted average loading across the shift — 1.0 is all ordinary time. */
+  /** Weighted average time-of-week loading across the shift — 1.0 is all ordinary time. */
   effective_multiplier: number;
   segments: CostSegment[];
 }
 
-/** Minutes from midnight, accepting "HH:MM", "HH:MM:SS" and "24:00". */
 function toMinutes(time: string): number {
   return timeToMinutes(time.slice(0, 5));
 }
 
 /**
- * The highest multiplier covering a given moment, expressed as minutes from
- * midnight of the shift's own date — so a shift running past midnight picks
- * up the following day's rules for the minutes after it.
+ * What a shift costs, for one person, given their age-bracket percentage
+ * and employment category. adultBaseRate x age% x time-of-week% for every
+ * minute worked, split at every rule boundary the shift crosses so (for
+ * example) a 15:00-21:00 weekday shift is ordinary time to 18:00 and
+ * evening rate after it.
  */
-function ruleAt(minuteOfShiftDate: number, shiftDow: number, rules: PenaltyRule[]): PenaltyRule | null {
-  const dayOffset = Math.floor(minuteOfShiftDate / (24 * 60));
-  const dow = (shiftDow + dayOffset) % 7;
-  const withinDay = minuteOfShiftDate - dayOffset * 24 * 60;
-
-  let best: PenaltyRule | null = null;
-  for (const rule of rules) {
-    if (!rule.active) continue;
-    if (!rule.days.includes(dow)) continue;
-    if (withinDay < toMinutes(rule.start_time) || withinDay >= toMinutes(rule.end_time)) continue;
-    if (!best || rule.multiplier > best.multiplier) best = rule;
-  }
-  return best;
-}
-
-/**
- * Split the shift at every rule boundary it crosses, so a 15:00-21:00 weekday
- * shift is costed as ordinary time to 18:00 and evening rate after it, rather
- * than being forced into one rate or the other.
- */
-export function calculateShiftCost(input: ShiftCostInput, rules: PenaltyRule[]): ShiftCost {
-  const { date, start_time, end_time, base_hourly_rate } = input;
+export function calculateShiftCost(
+  input: ShiftCostInput,
+  adultBaseRate: number,
+  timeLoadings: TimeLoading[],
+  isPublicHoliday: boolean
+): ShiftCost {
+  const { date, start_time, end_time, employment_category, age_percentage } = input;
   const unpaidBreak = input.unpaid_break_minutes ?? 0;
+
+  const relevant = timeLoadings.filter(l => l.employment_category === employment_category);
+  const dayTimeRules = relevant.filter(l => !l.is_public_holiday && !l.is_overtime);
+  const phRule = relevant.find(l => l.is_public_holiday) ?? null;
+  const otRule = relevant.find(l => l.is_overtime) ?? null;
+  // The lowest of this category's own day/time percentages is its ordinary
+  // rate — the floor for any minute no rule explicitly covers (e.g. a
+  // trading hour past 11pm this table doesn't list).
+  const floorPct = dayTimeRules.length ? Math.min(...dayTimeRules.map(r => r.percentage)) : 100;
 
   const shiftDow = dayOfWeekFromDate(date);
   const startM = toMinutes(start_time);
   const rosteredMinutes = shiftDurationMinutes(start_time.slice(0, 5), end_time.slice(0, 5));
   const endM = startM + rosteredMinutes;
+  const otStart = startM + OVERTIME_THRESHOLD_MINUTES;
 
-  // Every point the applicable rate could change: the shift's own ends, plus
-  // each rule window edge falling inside it, on each day the shift touches.
   const boundaries = new Set<number>([startM, endM]);
   for (let dayOffset = 0; dayOffset <= Math.floor(endM / (24 * 60)); dayOffset++) {
     const base = dayOffset * 24 * 60;
-    for (const rule of rules) {
-      if (!rule.active) continue;
+    for (const rule of dayTimeRules) {
       for (const edge of [base + toMinutes(rule.start_time), base + toMinutes(rule.end_time)]) {
         if (edge > startM && edge < endM) boundaries.add(edge);
       }
     }
   }
+  if (otRule && otStart > startM && otStart < endM) boundaries.add(otStart);
 
   const points = [...boundaries].sort((a, b) => a - b);
   const segments: CostSegment[] = [];
@@ -115,17 +188,49 @@ export function calculateShiftCost(input: ShiftCostInput, rules: PenaltyRule[]):
     if (minutes <= 0) continue;
 
     // Sample the middle of the segment: by construction nothing changes inside it.
-    const rule = ruleAt(from + minutes / 2, shiftDow, rules);
-    const multiplier = rule?.multiplier ?? 1;
+    const mid = from + minutes / 2;
+    let bestPct = floorPct;
+    let bestLabel: string | null = null;
 
-    segments.push({
-      start: minutesToTime(from),
-      end: minutesToTime(to),
-      minutes,
-      multiplier,
-      rule: rule?.name ?? null,
-    });
-    weightedMinutes += minutes * multiplier;
+    if (isPublicHoliday && phRule) {
+      bestPct = phRule.percentage;
+      bestLabel = phRule.label;
+    } else {
+      const dayOffset = Math.floor(mid / (24 * 60));
+      const dow = (shiftDow + dayOffset) % 7;
+      const withinDay = mid - dayOffset * 24 * 60;
+      for (const rule of dayTimeRules) {
+        if (!rule.days.includes(dow)) continue;
+        if (withinDay < toMinutes(rule.start_time) || withinDay >= toMinutes(rule.end_time)) continue;
+        if (rule.percentage > bestPct) {
+          bestPct = rule.percentage;
+          bestLabel = rule.label;
+        }
+      }
+    }
+
+    if (otRule && mid >= otStart && otRule.percentage > bestPct) {
+      bestPct = otRule.percentage;
+      bestLabel = otRule.label;
+    }
+
+    // A boundary that turned out not to change anything (e.g. the overtime
+    // threshold lands inside an already-higher-rated public holiday) merges
+    // into the segment before it rather than showing as a pointless split.
+    const prev = segments[segments.length - 1];
+    if (prev && prev.multiplier === bestPct / 100) {
+      prev.end = minutesToTime(to);
+      prev.minutes += minutes;
+    } else {
+      segments.push({
+        start: minutesToTime(from),
+        end: minutesToTime(to),
+        minutes,
+        multiplier: bestPct / 100,
+        rule: bestLabel,
+      });
+    }
+    weightedMinutes += minutes * (bestPct / 100);
   }
 
   const paidMinutes = Math.max(0, rosteredMinutes - unpaidBreak);
@@ -133,7 +238,8 @@ export function calculateShiftCost(input: ShiftCostInput, rules: PenaltyRule[]):
   // picking a segment to deduct it from would be arbitrary and would quietly
   // favour whichever rate we chose.
   const paidRatio = rosteredMinutes > 0 ? paidMinutes / rosteredMinutes : 0;
-  const cost = (weightedMinutes * paidRatio * base_hourly_rate) / 60;
+  const hourlyRate = adultBaseRate * (age_percentage / 100);
+  const cost = (weightedMinutes * paidRatio * hourlyRate) / 60;
 
   return {
     rostered_minutes: rosteredMinutes,
@@ -151,69 +257,39 @@ export function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
-// ── Reading a printed wage sheet ────────────────────────────────────────────
-
-export interface ScannedWageRow {
-  /** Name as printed. */
-  n: string;
-  /** Hourly rate as printed — "$24.50", "24.50", "24,50". */
-  r: string;
-}
-
-export interface ParsedWage {
-  name: string;
-  rate: number;
+/** A dollar figure as printed — "$28.69", "28.69", "28,69" — cleaned to a
+ *  number, or null if it doesn't look like a real hourly rate. */
+export function parseDollarAmount(raw: string): number | null {
+  const cleaned = (raw ?? '').trim().replace(/[$\s]/g, '').replace(',', '.');
+  const value = Number(cleaned);
+  if (!cleaned || !Number.isFinite(value) || value <= 0) return null;
+  // A plausibility band: a base award rate outside this is almost certainly
+  // a misread (a weekly total, a percentage, or the wrong cell entirely).
+  if (value < 10 || value > 100) return null;
+  return Math.round(value * 100) / 100;
 }
 
 /**
- * Turn what was read off a wage sheet into usable rates, keeping anything
- * unreadable visible rather than silently dropping it — a missing rate is
- * better than a wrong one when the number decides who gets called in.
+ * Find the adult ordinary Mon-Fri rate in a CSV export of the wage table.
+ * Column names aren't fixed — looks for a column mentioning "rate", "base"
+ * or "adult", falling back to the first cell in an "Adult" row that reads
+ * as a plausible dollar figure.
  */
-export function parseWageRows(rows: ScannedWageRow[]): { wages: ParsedWage[]; warnings: string[] } {
-  const wages: ParsedWage[] = [];
-  const warnings: string[] = [];
-
+export function csvRowsToBaseRate(rows: Record<string, string>[]): number | null {
   for (const row of rows) {
-    const name = (row.n ?? '').replace(/ /g, ' ').trim();
-    if (!name) continue;
-
-    const raw = (row.r ?? '').trim();
-    // A comma is a decimal separator on some printed sheets, never a thousands
-    // separator at these amounts — nobody earns $1,234 an hour.
-    const cleaned = raw.replace(/[$\s]/g, '').replace(',', '.');
-    const rate = Number(cleaned);
-
-    if (!cleaned || !Number.isFinite(rate) || rate <= 0) {
-      warnings.push(`${name} — the rate "${raw}" could not be read, so it was left unchanged.`);
-      continue;
+    const entries = Object.entries(row);
+    const isAdultRow = entries.some(([k, v]) => /adult/i.test(k) || /adult/i.test(v ?? ''));
+    const rateEntry = entries.find(([k]) => /rate|base|adult|hourly/i.test(k));
+    if (rateEntry) {
+      const parsed = parseDollarAmount(rateEntry[1] ?? '');
+      if (parsed) return parsed;
     }
-    // A plausibility band: an hourly rate outside this is almost certainly a
-    // misread (a weekly total, or a column picked up by mistake).
-    if (rate < 5 || rate > 200) {
-      warnings.push(`${name} — "${raw}" does not look like an hourly rate, so it was left unchanged.`);
-      continue;
+    if (isAdultRow) {
+      for (const [, v] of entries) {
+        const parsed = parseDollarAmount(v ?? '');
+        if (parsed) return parsed;
+      }
     }
-
-    wages.push({ name, rate: Math.round(rate * 100) / 100 });
   }
-
-  return { wages, warnings };
-}
-
-/**
- * Map a CSV (parsed with a header row into plain objects) onto the same
- * {n, r} shape a photo/PDF scan produces, so it can go through the same
- * parseWageRows + name-matching pipeline. Column names aren't fixed —
- * "Name"/"Full Name" and "Rate"/"Hourly Rate"/"$/hr"/"Pay Rate" all match.
- */
-export function csvRowsToScannedWageRows(rows: Record<string, string>[]): ScannedWageRow[] {
-  return rows
-    .map(row => {
-      const entries = Object.entries(row);
-      const nameEntry = entries.find(([k]) => /name/i.test(k));
-      const rateEntry = entries.find(([k]) => /rate|wage|\$|hourly|pay/i.test(k));
-      return { n: nameEntry?.[1] ?? '', r: rateEntry?.[1] ?? '' };
-    })
-    .filter(row => row.n.trim());
+  return null;
 }

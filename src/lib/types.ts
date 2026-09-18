@@ -20,8 +20,8 @@ export interface Staff {
   /** "MM-DD" or a full date string — only the month and day are ever used. */
   birthday?: string | null;
   employment_type?: EmploymentType | null;
-  /** Informational only — shift cost always comes from the Wage Matrix, never this. */
-  pay_rate?: number | null;
+  /** Needed for the 20-21 age bracket's under-6-months vs 6-months-plus split. */
+  commencement_date?: string | null;
   created_at: string;
   // joined fields
   staff_departments?: StaffDepartment[];
