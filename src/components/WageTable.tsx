@@ -1,8 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Camera, Upload, FileText, Loader2, Trash2, Plus, AlertTriangle, DollarSign } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Camera, FileText, FileSpreadsheet, Loader2, Trash2, Plus, AlertTriangle, DollarSign } from 'lucide-react';
 import Modal from '@/components/Modal';
+import UploadMenu from '@/components/UploadMenu';
+import DropOverlay from '@/components/DropOverlay';
+import { useFileDrop } from '@/lib/useFileDrop';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
 import { downscalePhoto } from '@/lib/image';
@@ -50,10 +53,6 @@ export default function WageTable() {
   const [newRule, setNewRule] = useState(NEW_RULE);
   const [addingRule, setAddingRule] = useState(false);
 
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const photoRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
-
   const load = useCallback(async () => {
     try {
       const data = await fetchJson<{ staff: WageStaff[]; rules: PenaltyRule[] }>('/api/wages');
@@ -92,15 +91,13 @@ export default function WageTable() {
     ));
   }
 
-  function pickFile(e: React.ChangeEvent<HTMLInputElement>, kind: 'image' | 'pdf') {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    if (!file) return;
-    void readSheet(file, kind);
+  function pickFile(file: File) {
+    void readSheet(file);
   }
 
-  async function readSheet(file: File, kind: 'image' | 'pdf') {
+  async function readSheet(file: File) {
     setError('');
+    const kind: 'image' | 'pdf' = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'image';
     try {
       let scan;
       if (kind === 'pdf') {
@@ -161,8 +158,13 @@ export default function WageTable() {
 
   const missingRates = staff.filter(s => s.active && s.base_hourly_rate === null).length;
 
+  const { dragging, dropHandlers } = useFileDrop(files => {
+    for (const file of files) pickFile(file);
+  }, stage !== null);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" {...dropHandlers}>
+      <DropOverlay active={dragging} label="Drop a wage sheet photo or PDF to import" />
       {stage && <ProgressBar stage={stage} />}
 
       {error && (
@@ -182,20 +184,33 @@ export default function WageTable() {
               What each person is paid per ordinary hour. Used to cost a shift when finding cover.
             </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={() => cameraRef.current?.click()} disabled={stage !== null} className="btn-secondary">
-              <Camera size={14} /> Capture
-            </button>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => pickFile(e, 'image')} />
-            <button onClick={() => photoRef.current?.click()} disabled={stage !== null} className="btn-secondary">
-              <Upload size={14} /> Upload
-            </button>
-            <input ref={photoRef} type="file" accept="image/*" className="hidden" onChange={e => pickFile(e, 'image')} />
-            <button onClick={() => pdfRef.current?.click()} disabled={stage !== null} className="btn-secondary">
-              <FileText size={14} /> Upload PDF
-            </button>
-            <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={e => pickFile(e, 'pdf')} />
-          </div>
+          <UploadMenu
+            disabled={stage !== null}
+            options={[
+              {
+                key: 'capture',
+                label: 'Capture',
+                icon: <Camera size={14} />,
+                accept: 'image/*',
+                capture: 'environment',
+                onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
+              },
+              {
+                key: 'upload',
+                label: 'Upload',
+                icon: <FileText size={14} />,
+                accept: 'image/*',
+                onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
+              },
+              {
+                key: 'pdf',
+                label: 'Upload PDF',
+                icon: <FileSpreadsheet size={14} />,
+                accept: 'application/pdf',
+                onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
+              },
+            ]}
+          />
         </div>
 
         {missingRates > 0 && (

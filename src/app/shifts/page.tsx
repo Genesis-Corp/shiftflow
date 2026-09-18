@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Plus, Pencil, Trash2, Coffee, Download, Upload, List, GanttChartSquare,
-  History, ChevronLeft, ChevronRight, Camera, FileText,
+  Plus, Pencil, Trash2, Coffee, Download, List, GanttChartSquare,
+  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
+import UploadMenu from '@/components/UploadMenu';
+import DropOverlay from '@/components/DropOverlay';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
 import { Shift, Department } from '@/lib/types';
@@ -21,6 +23,7 @@ import { STAGES } from '@/lib/progressStages';
 import { RosterEntry, RosterJob, matchDepartment, groupRosterEntries } from '@/lib/roster';
 import RosterQueue from '@/components/RosterQueue';
 import type { RosterPlan } from '@/app/api/import-roster/route';
+import { useFileDrop } from '@/lib/useFileDrop';
 import Papa from 'papaparse';
 
 /** A roster job in flight, tagged with the source file so it can be re-read
@@ -131,10 +134,6 @@ export default function ShiftsPage() {
   });
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
-  const importRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const photoRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
 
   // Roster photos/PDFs waiting to become shifts.
   const [stage, setStage] = useState<ProgressStage | null>(null);
@@ -171,9 +170,7 @@ export default function ShiftsPage() {
    * and each is read in its own request, which is what keeps a batch of them
    * clear of the hosting platform's per-request time limit.
    */
-  function queueRosterFiles(e: React.ChangeEvent<HTMLInputElement>, kind: 'image' | 'pdf') {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = '';
+  function queueRosterFiles(files: File[]) {
     if (!files.length) return;
 
     if (!departments.length) {
@@ -194,7 +191,7 @@ export default function ShiftsPage() {
         department_id: departments[0].id,
         logNoShows: false,
         file,
-        kind,
+        kind: file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'image',
       })),
     ]);
     setQueueOpen(true);
@@ -422,11 +419,7 @@ export default function ShiftsPage() {
     load();
   }
 
-  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = '';
-
+  async function handleImportCsv(file: File) {
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
@@ -522,8 +515,16 @@ export default function ShiftsPage() {
 
   const busy = stage !== null || applying !== null;
 
+  const { dragging, dropHandlers } = useFileDrop(files => {
+    const csvFiles = files.filter(f => f.name.toLowerCase().endsWith('.csv'));
+    const rosterFiles = files.filter(f => !f.name.toLowerCase().endsWith('.csv'));
+    if (rosterFiles.length) queueRosterFiles(rosterFiles);
+    for (const csvFile of csvFiles) void handleImportCsv(csvFile);
+  }, busy);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" {...dropHandlers}>
+      <DropOverlay active={dragging} label="Drop a roster photo, PDF or CSV to import" />
       {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -579,14 +580,42 @@ export default function ShiftsPage() {
             </>
           )}
 
-          <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary"><Camera size={14} /> Capture</button>
-          <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={e => queueRosterFiles(e, 'image')} />
-          <button onClick={() => photoRef.current?.click()} disabled={busy} className="btn-secondary"><Upload size={14} /> Upload Rosters</button>
-          <input ref={photoRef} type="file" accept="image/*" multiple className="hidden" onChange={e => queueRosterFiles(e, 'image')} />
-          <button onClick={() => pdfRef.current?.click()} disabled={busy} className="btn-secondary"><FileText size={14} /> Upload PDF</button>
-          <input ref={pdfRef} type="file" accept="application/pdf" multiple className="hidden" onChange={e => queueRosterFiles(e, 'pdf')} />
-          <input ref={importRef} type="file" accept=".csv" className="hidden" onChange={handleImport} />
-          <button onClick={() => importRef.current?.click()} className="btn-secondary"><Upload size={14} /> Import CSV</button>
+          <UploadMenu
+            disabled={busy}
+            options={[
+              {
+                key: 'capture',
+                label: 'Capture',
+                icon: <Camera size={14} />,
+                accept: 'image/*',
+                capture: 'environment',
+                onChange: e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; queueRosterFiles(files); },
+              },
+              {
+                key: 'photos',
+                label: 'Upload Rosters',
+                icon: <FileText size={14} />,
+                accept: 'image/*',
+                multiple: true,
+                onChange: e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; queueRosterFiles(files); },
+              },
+              {
+                key: 'pdf',
+                label: 'Upload PDF',
+                icon: <FileText size={14} />,
+                accept: 'application/pdf',
+                multiple: true,
+                onChange: e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; queueRosterFiles(files); },
+              },
+              {
+                key: 'csv',
+                label: 'Import CSV',
+                icon: <FileSpreadsheet size={14} />,
+                accept: '.csv',
+                onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void handleImportCsv(file); },
+              },
+            ]}
+          />
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Shift</button>
         </div>

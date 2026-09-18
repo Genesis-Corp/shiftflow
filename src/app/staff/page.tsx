@@ -1,13 +1,16 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Plus, Pencil, Trash2, Upload, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
+  Plus, Pencil, Trash2, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
   Camera, FileText, FileSpreadsheet,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
+import UploadMenu from '@/components/UploadMenu';
+import DropOverlay from '@/components/DropOverlay';
+import { useFileDrop } from '@/lib/useFileDrop';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
 import { fetchJson } from '@/lib/apiClient';
@@ -76,9 +79,6 @@ export default function StaffPage() {
   const [filter, setFilter] = useState('');
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
-  const fileRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const pdfRef = useRef<HTMLInputElement>(null);
 
   // Availability-sheet sync: the uploaded grid, the preview of what it changes,
   // and whether staff missing from it should be removed.
@@ -195,11 +195,7 @@ export default function StaffPage() {
    * photo here used to fall through to the plain staff importer, which
    * quietly did nothing.
    */
-  function handleFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    e.target.value = ''; // let the same file be picked again after a fix
-    if (!file) return;
-
+  function handleFilePicked(file: File) {
     const name = file.name.toLowerCase();
     if (file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/.test(name)) {
       readPhoto(file);
@@ -400,8 +396,13 @@ export default function StaffPage() {
       })
     : filtered;
 
+  const { dragging, dropHandlers } = useFileDrop(files => {
+    for (const file of files) handleFilePicked(file);
+  }, busy);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" {...dropHandlers}>
+      <DropOverlay active={dragging} label="Drop a staff photo, PDF or CSV to import" />
       {stage && <ProgressBar stage={stage} />}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -412,12 +413,33 @@ export default function StaffPage() {
           <input className="input w-full sm:w-48" placeholder="Search staff..." value={filter} onChange={e => setFilter(e.target.value)} />
           <div className="grid grid-cols-2 sm:flex gap-2">
             <button onClick={handleExport} className="btn-secondary justify-center"><Download size={14} /> Export CSV</button>
-            <button onClick={() => cameraRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Camera size={14} /> Capture</button>
-            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFilePicked} />
-            <button onClick={() => fileRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><Upload size={14} /> Upload</button>
-            <input ref={fileRef} type="file" accept="image/*,.csv,text/csv" className="hidden" onChange={handleFilePicked} />
-            <button onClick={() => pdfRef.current?.click()} disabled={busy} className="btn-secondary justify-center"><FileText size={14} /> Upload PDF</button>
-            <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={handleFilePicked} />
+            <UploadMenu
+              disabled={busy}
+              options={[
+                {
+                  key: 'capture',
+                  label: 'Capture',
+                  icon: <Camera size={14} />,
+                  accept: 'image/*',
+                  capture: 'environment',
+                  onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleFilePicked(file); },
+                },
+                {
+                  key: 'upload',
+                  label: 'Upload',
+                  icon: <FileText size={14} />,
+                  accept: 'image/*,.csv,text/csv',
+                  onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleFilePicked(file); },
+                },
+                {
+                  key: 'pdf',
+                  label: 'Upload PDF',
+                  icon: <FileSpreadsheet size={14} />,
+                  accept: 'application/pdf',
+                  onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) handleFilePicked(file); },
+                },
+              ]}
+            />
             <button onClick={openAdd} className="btn-primary justify-center col-span-2 sm:col-auto"><Plus size={16} /> Add Staff</button>
           </div>
         </div>
