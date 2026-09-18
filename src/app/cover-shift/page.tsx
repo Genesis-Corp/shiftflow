@@ -14,6 +14,7 @@ import {
 } from '@/lib/types';
 import {
   formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES, todayStr,
+  shiftDurationMinutes, MIN_SHIFT_MINUTES,
 } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
 import { formatCost } from '@/lib/wages';
@@ -45,10 +46,13 @@ export default function CoverShiftPage() {
   const [form, setForm] = useState({
     date: todayStr(),
     start_time: '09:00', end_time: '17:00',
-    department_id: '', required_role: 'any',
+    department_id: '', required_role: 'any', notes: '',
   });
   // Set when the form was filled from a real open shift. A race needs one:
   // replies arrive minutes later and must attach to something persistent.
+  // When the manager searches a time instead of picking one of the open
+  // shifts below, starting a race creates that shift on the fly first — for
+  // when extra hands are needed and there's no existing shift to cover.
   const [selectedShiftId, setSelectedShiftId] = useState<string | null>(null);
 
   const [result, setResult] = useState<CoverResult | null>(null);
@@ -97,6 +101,7 @@ export default function CoverShiftPage() {
       end_time: shift.end_time.slice(0, 5),
       department_id: shift.department_id,
       required_role: shift.required_role ?? 'any',
+      notes: shift.notes ?? '',
     });
     setResult(null);
     setRaceId(null);
@@ -104,7 +109,7 @@ export default function CoverShiftPage() {
   }
 
   async function findCover() {
-    if (!form.department_id) return;
+    if (!form.department_id || underMinimum) return;
     setLoading(true); setResult(null); setRaceError('');
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -114,11 +119,31 @@ export default function CoverShiftPage() {
     setLoading(false);
   }
 
-  /** Opens the confirmation dialog listing exactly who will be texted. */
+  /**
+   * Opens the confirmation dialog listing exactly who will be texted. If the
+   * form was filled by searching a time rather than picking an open shift —
+   * e.g. extra hands are needed and there's nothing to actually cover — the
+   * shift is created on the fly first, exactly as if it had been added on
+   * the Shifts page, then raced like any other open shift.
+   */
   async function openRacePreview() {
-    if (!selectedShiftId) return;
+    if (underMinimum) return;
     setPreviewLoading(true); setRaceError('');
-    const res = await fetch(`/api/claim-race?shift_id=${selectedShiftId}`);
+
+    let shiftId = selectedShiftId;
+    if (!shiftId) {
+      const res = await fetch('/api/shifts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, notes: form.notes || null }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setPreviewLoading(false); setRaceError(data.error ?? 'Could not create that shift'); return; }
+      shiftId = data.id;
+      setSelectedShiftId(shiftId);
+      loadOpenShifts();
+    }
+
+    const res = await fetch(`/api/claim-race?shift_id=${shiftId}`);
     const data = await res.json();
     setPreviewLoading(false);
     if (!res.ok) { setRaceError(data.error ?? 'Could not load race preview'); return; }
@@ -167,6 +192,7 @@ export default function CoverShiftPage() {
   }
 
   const needsBreak = requiresBreak(form.start_time, form.end_time);
+  const underMinimum = shiftDurationMinutes(form.start_time, form.end_time) < MIN_SHIFT_MINUTES;
   const deptName = (id: string) => departments.find(d => d.id === id)?.name ?? '';
 
   return (
@@ -174,7 +200,7 @@ export default function CoverShiftPage() {
       <div>
         <h1 className="text-2xl font-bold text-slate-900">Find Cover</h1>
         <p className="text-sm text-slate-500">
-          Pick an open shift, review who is available, then start a claim race
+          Pick an open shift, or search a time to bring in extra hands, then start a claim race
         </p>
       </div>
 
@@ -219,7 +245,9 @@ export default function CoverShiftPage() {
         )}
       </div>
 
-      {/* Search form */}
+      {/* Search form — also how to bring in extra hands with no existing
+          shift to cover: fill this in instead of picking one above, and
+          starting a race creates it on the fly. */}
       <div className="card p-5">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 items-end">
           <div>
@@ -255,13 +283,24 @@ export default function CoverShiftPage() {
           </div>
         </div>
 
+        {!selectedShiftId && (
+          <div className="mt-3">
+            <label className="label">Notes (optional)</label>
+            <input className="input" value={form.notes}
+              onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="e.g. Extra hands for the Friday rush" />
+          </div>
+        )}
+
         <div className="flex items-center gap-4 mt-4 flex-wrap">
-          <button onClick={findCover} disabled={loading || !form.department_id} className="btn-primary">
+          <button onClick={findCover} disabled={loading || !form.department_id || underMinimum} className="btn-primary">
             <Search size={16} /> {loading ? 'Searching...' : 'Find Available Staff'}
           </button>
-          <p className="text-sm text-slate-500">
+          <p className={`text-sm ${underMinimum ? 'text-red-600' : 'text-slate-500'}`}>
             Duration: <strong>{formatDuration(form.start_time, form.end_time)}</strong>
-            {needsBreak && <span className="ml-2 text-amber-600">+ {BREAK_DURATION_MINUTES}m break</span>}
+            {underMinimum
+              ? <span className="ml-2">— shifts must be at least {MIN_SHIFT_MINUTES / 60}h</span>
+              : needsBreak && <span className="ml-2 text-amber-600">+ {BREAK_DURATION_MINUTES}m break</span>}
           </p>
         </div>
       </div>
@@ -299,14 +338,14 @@ export default function CoverShiftPage() {
               <div className="flex items-center gap-3">
                 {!selectedShiftId && (
                   <span className="text-xs text-slate-400 max-w-xs text-right">
-                    Select an open shift above to start a race
+                    No open shift selected — starting a race will create one for this time
                   </span>
                 )}
                 <button
                   onClick={openRacePreview}
-                  disabled={!selectedShiftId || previewLoading}
+                  disabled={previewLoading}
                   className="btn-primary"
-                  title={selectedShiftId ? undefined : 'A claim race needs a saved open shift'}
+                  title={selectedShiftId ? undefined : 'Creates a new open shift for this time, then starts the race'}
                 >
                   {previewLoading
                     ? <Loader2 size={14} className="animate-spin" />

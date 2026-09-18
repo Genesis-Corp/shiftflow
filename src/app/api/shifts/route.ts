@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
-import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requiresBreak, BREAK_DURATION_MINUTES, shiftDurationMinutes, MIN_SHIFT_MINUTES } from '@/lib/shiftUtils';
 import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -38,6 +38,10 @@ export async function POST(req: NextRequest) {
 
   if (!date || !start_time || !end_time || !department_id)
     return NextResponse.json({ error: 'date, start_time, end_time, department_id required' }, { status: 400 });
+
+  if (shiftDurationMinutes(start_time, end_time) < MIN_SHIFT_MINUTES) {
+    return NextResponse.json({ error: `Shifts must be at least ${MIN_SHIFT_MINUTES / 60} hours long.` }, { status: 400 });
+  }
 
   const has_break = requiresBreak(start_time, end_time);
 

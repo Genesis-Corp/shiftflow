@@ -8,6 +8,11 @@ export const BREAK_DURATION_MINUTES = 30;
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** Shortest a shift can be, hand-entered or ad hoc — guards against a typo'd
+ *  end time (e.g. 9:00-9:30 instead of 9:00-17:00) rather than reflecting a
+ *  real rule of the award. */
+export const MIN_SHIFT_MINUTES = 3 * 60;
+
 /** A single shift can be extended to cover an overlapping open one only up to this length. */
 export const MAX_EXTENDED_SHIFT_MINUTES = 10 * 60;
 /** Ordinary weekly hours cap (Sunday–Saturday) — going over excludes someone from a claim race. */

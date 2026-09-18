@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
-import { requiresBreak, BREAK_DURATION_MINUTES } from '@/lib/shiftUtils';
+import { requiresBreak, BREAK_DURATION_MINUTES, shiftDurationMinutes, MIN_SHIFT_MINUTES } from '@/lib/shiftUtils';
 import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -19,12 +19,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (assigned_staff_id !== undefined) updates.assigned_staff_id = assigned_staff_id;
   if (notes !== undefined) updates.notes = notes;
 
-  // Recalculate break if times changed
+  // Recalculate break if times changed, and re-check the minimum length
+  // against the resulting times, not just whichever one was actually sent.
   if (start_time || end_time) {
     const { data: existing } = await supabase.from('shifts').select('start_time,end_time').eq('id', params.id).single();
     const s = start_time ?? existing?.start_time;
     const e = end_time ?? existing?.end_time;
     if (s && e) {
+      if (shiftDurationMinutes(s, e) < MIN_SHIFT_MINUTES) {
+        return NextResponse.json({ error: `Shifts must be at least ${MIN_SHIFT_MINUTES / 60} hours long.` }, { status: 400 });
+      }
       updates.has_break = requiresBreak(s, e);
       updates.break_duration_minutes = updates.has_break ? BREAK_DURATION_MINUTES : 0;
     }

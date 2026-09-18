@@ -15,6 +15,7 @@ import { Shift, Department } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
+  shiftDurationMinutes, MIN_SHIFT_MINUTES,
 } from '@/lib/shiftUtils';
 import { normalizeDeptColor, deptTextColor } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
@@ -175,6 +176,7 @@ export default function ShiftsPage() {
   });
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
+  const [saveError, setSaveError] = useState('');
 
   // Roster photos/PDFs waiting to become shifts.
   const [stage, setStage] = useState<ProgressStage | null>(null);
@@ -421,36 +423,46 @@ export default function ShiftsPage() {
 
   function openAdd() {
     setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
+    setSaveError('');
     setModal('add');
   }
 
   function openEdit(s: Shift) {
     setEditing(s);
     setForm({ date: s.date, start_time: s.start_time, end_time: s.end_time, department_id: s.department_id, required_role: s.required_role, notes: s.notes ?? '' });
+    setSaveError('');
     setModal('edit');
   }
 
   function openAdjust(s: Shift) {
     setEditing(s);
     setAdjustForm({ start_time: s.start_time, end_time: s.end_time });
+    setSaveError('');
     setModal('adjust');
   }
 
   const breakPreview = requiresBreak(form.start_time, form.end_time);
+  const underMinimum = shiftDurationMinutes(form.start_time, form.end_time) < MIN_SHIFT_MINUTES;
+  const adjustUnderMinimum = shiftDurationMinutes(adjustForm.start_time, adjustForm.end_time) < MIN_SHIFT_MINUTES;
 
   async function save() {
-    if (!form.date || !form.department_id) return;
-    if (modal === 'add') {
-      await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-    } else if (editing) {
-      await fetch(`/api/shifts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
-    }
+    if (!form.date || !form.department_id || underMinimum) return;
+    setSaveError('');
+    const res = modal === 'add'
+      ? await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      : editing
+      ? await fetch(`/api/shifts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      : null;
+    if (!res) return;
+    if (!res.ok) { setSaveError((await res.json()).error ?? 'Could not save that shift.'); return; }
     setModal(null); load();
   }
 
   async function saveAdjust() {
-    if (!editing) return;
-    await fetch(`/api/shifts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(adjustForm) });
+    if (!editing || adjustUnderMinimum) return;
+    setSaveError('');
+    const res = await fetch(`/api/shifts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(adjustForm) });
+    if (!res.ok) { setSaveError((await res.json()).error ?? 'Could not adjust that shift.'); return; }
     setModal(null); load();
   }
 
@@ -791,7 +803,12 @@ export default function ShiftsPage() {
               </div>
             </div>
 
-            {breakPreview && (
+            {underMinimum ? (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
+                <Coffee size={15} className="mt-0.5 flex-shrink-0" />
+                <span>Shifts must be at least <strong>{MIN_SHIFT_MINUTES / 60} hours</strong> long.</span>
+              </div>
+            ) : breakPreview && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700 flex gap-2">
                 <Coffee size={15} className="mt-0.5 flex-shrink-0" />
                 <span>This shift is over 5.5 hours — a <strong>{BREAK_DURATION_MINUTES}-minute break</strong> will be added automatically.</span>
@@ -817,9 +834,10 @@ export default function ShiftsPage() {
               <label className="label">Notes (optional)</label>
               <input className="input" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes..." />
             </div>
+            {saveError && <p className="text-sm text-red-600">{saveError}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
-              <button onClick={save} className="btn-primary">Save Shift</button>
+              <button onClick={save} disabled={underMinimum} className="btn-primary">Save Shift</button>
             </div>
           </div>
         </Modal>
@@ -839,15 +857,21 @@ export default function ShiftsPage() {
                 <input type="time" className="input" value={adjustForm.end_time} onChange={e => setAdjustForm(f => ({ ...f, end_time: e.target.value }))} />
               </div>
             </div>
-            {requiresBreak(adjustForm.start_time, adjustForm.end_time) && (
+            {adjustUnderMinimum ? (
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700 flex gap-2">
+                <Coffee size={15} className="mt-0.5" />
+                <span>Shifts must be at least <strong>{MIN_SHIFT_MINUTES / 60} hours</strong> long.</span>
+              </div>
+            ) : requiresBreak(adjustForm.start_time, adjustForm.end_time) && (
               <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-700 flex gap-2">
                 <Coffee size={15} className="mt-0.5" />
                 <span>New duration exceeds 5.5h — break will be applied.</span>
               </div>
             )}
+            {saveError && <p className="text-sm text-red-600">{saveError}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
-              <button onClick={saveAdjust} className="btn-primary">Apply Adjustment</button>
+              <button onClick={saveAdjust} disabled={adjustUnderMinimum} className="btn-primary">Apply Adjustment</button>
             </div>
           </div>
         </Modal>
