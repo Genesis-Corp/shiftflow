@@ -539,7 +539,7 @@ export default function ShiftsPage() {
     if (!confirm(`Mark ${group.name} as called in sick and reopen ${shiftWord} today? Logged as one no-show.`)) return;
     await Promise.all(group.shifts.map(s => fetch(`/api/shifts/${s.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'open', assigned_staff_id: null }),
+      body: JSON.stringify({ status: 'open', assigned_staff_id: null, excluded_staff_id: group.staff_id }),
     })));
     await fetch('/api/reliability', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

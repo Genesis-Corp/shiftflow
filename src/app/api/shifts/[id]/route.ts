@@ -8,7 +8,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { start_time, end_time, department_id, required_role, status, assigned_staff_id, notes } = body;
+  const { start_time, end_time, department_id, required_role, status, assigned_staff_id, excluded_staff_id, notes } = body;
 
   const updates: Record<string, unknown> = {};
   if (start_time !== undefined) updates.start_time = start_time;
@@ -18,6 +18,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (status !== undefined) updates.status = status;
   if (assigned_staff_id !== undefined) updates.assigned_staff_id = assigned_staff_id;
   if (notes !== undefined) updates.notes = notes;
+
+  if (excluded_staff_id !== undefined) {
+    updates.excluded_staff_id = excluded_staff_id;
+  } else if (assigned_staff_id) {
+    // A real assignment supersedes any earlier exclusion on this shift row —
+    // otherwise whoever called in sick last time would stay locked out of a
+    // later, unrelated reopening of the same shift.
+    updates.excluded_staff_id = null;
+  }
 
   // Recalculate break if times changed, and re-check the minimum length
   // against the resulting times, not just whichever one was actually sent.

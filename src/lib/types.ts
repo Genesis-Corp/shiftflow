@@ -69,6 +69,11 @@ export interface Shift {
   required_role: RequiredRole;
   status: ShiftStatus;
   assigned_staff_id?: string;
+  /** Who this shift was just reopened from (e.g. a sick call) — excluded
+   *  from eligibility for this shift specifically until it's assigned to
+   *  someone for real, so they can't be offered the exact shift they just
+   *  called in sick for. */
+  excluded_staff_id?: string | null;
   has_break: boolean;
   break_duration_minutes: number;
   notes?: string;
@@ -122,6 +127,10 @@ export interface CoverShiftResult {
   extendable: ExtendableCandidate[];
   overlapExcluded: OverlapConflict[];
   backup: CoverCandidate[];
+  /** Set when nobody trained in the shift's own department was eligible and
+   *  the candidate pool was widened to Checkout staff instead — juniors
+   *  first, seniors only if no juniors were available either. */
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
 }
 
 // ── Claim race ───────────────────────────────────────────────────────────────

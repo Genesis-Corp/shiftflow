@@ -29,6 +29,7 @@ interface CoverResult {
   extendable: ExtendableCandidate[];
   overlapExcluded: OverlapConflict[];
   backup: CoverCandidate[];
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
 }
 
 /** "543 minutes" -> "9h 3m" */
@@ -383,6 +384,14 @@ export default function CoverShiftPage() {
               </div>
             )}
           </div>
+
+          {result.fallback_pool && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
+              <ShieldAlert size={15} className="flex-shrink-0 mt-0.5" />
+              No one trained in {result.shift.department?.name} was eligible and available, so this list is
+              Checkout staff instead{result.fallback_pool === 'checkout_junior' ? ' (juniors)' : ' — including seniors, since no juniors were available either'}.
+            </div>
+          )}
 
           {result.candidates.length === 0 && result.extendable.length === 0 &&
            result.overlapExcluded.length === 0 && result.backup.length === 0 ? (

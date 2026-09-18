@@ -190,6 +190,7 @@ export async function startRace(
     end_time: shift.end_time,
     department_id: shift.department_id,
     required_role: shift.required_role,
+    exclude_staff_id: shift.excluded_staff_id,
   });
 
   const { contactable, excluded } = splitContactable(candidates);

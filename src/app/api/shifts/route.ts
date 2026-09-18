@@ -2,10 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requiresBreak, BREAK_DURATION_MINUTES, shiftDurationMinutes, MIN_SHIFT_MINUTES } from '@/lib/shiftUtils';
 import { requireUser, unauthorized } from '@/lib/auth';
+import { localDateNow } from '@/lib/sms/config';
 
 export async function GET(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
+
+  // Open shifts nobody ever covered used to sit around forever. Swept here,
+  // on every read, rather than on a schedule — no cron needed, and it can
+  // never go stale itself. Only whole days already in the past: today's
+  // shifts stay, however far into the day, so one still in progress (or
+  // simply not yet covered) is never pulled out from under a manager mid-shift.
+  await supabase.from('shifts').delete().eq('status', 'open').lt('date', localDateNow());
 
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date');

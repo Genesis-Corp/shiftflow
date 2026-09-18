@@ -24,6 +24,9 @@ export interface EligibilityQuery {
   end_time: string;
   department_id: string;
   required_role?: string | null;
+  /** Someone who was just reopened out of this exact shift (a sick call) —
+   *  never eligible for it again until it's assigned to someone for real. */
+  exclude_staff_id?: string | null;
 }
 
 export interface ScoredCandidate {
@@ -76,15 +79,24 @@ export interface EligibilityResult {
   overlapExcluded: OverlapConflict[];
   /** Excluded from the race — taking this shift would exceed 38 weekly hours. Shown as a backup option, not raced. */
   backup: ScoredCandidate[];
+  /** Set when nobody trained in the shift's own department was eligible and
+   *  the pool was widened to Checkout staff instead — juniors first, then
+   *  seniors too if no juniors were available either. */
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
 }
 
 export async function findEligibleCandidates(
   query: EligibilityQuery
 ): Promise<EligibilityResult> {
-  const { date, start_time, end_time, department_id, required_role } = query;
+  const { date, start_time, end_time, department_id, required_role, exclude_staff_id } = query;
 
-  const { data: dept, error: deptErr } = await supabaseAdmin
-    .from('departments').select('*').eq('id', department_id).single();
+  const [{ data: dept, error: deptErr }, { data: checkoutDept }] = await Promise.all([
+    supabaseAdmin.from('departments').select('*').eq('id', department_id).single(),
+    // Fetched up front, used only if the shift's own department turns out
+    // to have nobody eligible at all — cheap enough not to bother gating it
+    // behind that check first.
+    supabaseAdmin.from('departments').select('id, name').ilike('name', '%checkout%').limit(1).maybeSingle(),
+  ]);
   if (deptErr) throw new Error(deptErr.message);
 
   const { data: allStaff, error: staffErr } = await supabaseAdmin
@@ -126,29 +138,58 @@ export async function findEligibleCandidates(
   // left alone here and flagged separately.
   const seniorAvailable = (allStaff ?? []).some(s => ageGroupOf(s) === 'senior');
 
-  const eligible = (allStaff ?? []).filter(s => {
-    // Salaried staff are paid the same whether or not they cover a shift, so
-    // there's no incentive to offer it to them. Never enters the race.
-    if (s.employment_type === 'salary') return false;
+  /** Everyone trained in `poolDeptId`, available, and otherwise eligible —
+   *  `ageFilter` narrows further for the Checkout fallback pool below. */
+  const eligibleIn = (poolDeptId: string, ageFilter?: 'junior' | 'senior') =>
+    (allStaff ?? []).filter(s => {
+      // Salaried staff are paid the same whether or not they cover a shift, so
+      // there's no incentive to offer it to them. Never enters the race.
+      if (s.employment_type === 'salary') return false;
 
-    // Nobody gets offered a shift on their own birthday.
-    if (isBirthday(s.birthday, date)) return false;
+      // Nobody gets offered a shift on their own birthday.
+      if (isBirthday(s.birthday, date)) return false;
 
-    const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
-    if (!deptIds.includes(department_id)) return false;
+      // Never re-offer the exact shift someone was just pulled out of.
+      if (exclude_staff_id && s.id === exclude_staff_id) return false;
 
-    if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !seniorAvailable) return false;
+      const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
+      if (!deptIds.includes(poolDeptId)) return false;
 
-    if (required_role && required_role !== 'any' && ageGroupOf(s) !== required_role) return false;
+      if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !seniorAvailable) return false;
 
-    const slots = availMap.get(s.id);
-    if (slots && slots.length > 0) {
-      return slots.some(slot =>
-        availabilityCoversShift(slot.start_time, slot.end_time, start_time, end_time));
+      if (required_role && required_role !== 'any' && ageGroupOf(s) !== required_role) return false;
+      if (ageFilter && ageGroupOf(s) !== ageFilter) return false;
+
+      const slots = availMap.get(s.id);
+      if (slots && slots.length > 0) {
+        return slots.some(slot =>
+          availabilityCoversShift(slot.start_time, slot.end_time, start_time, end_time));
+      }
+      if (staffWithAnyAvail.has(s.id)) return false;
+      return true;
+    });
+
+  let eligible = eligibleIn(department_id);
+  let fallbackPool: EligibilityResult['fallback_pool'] = null;
+
+  // Nobody trained in the shift's own department is both eligible and
+  // available — rather than come back empty, widen to Checkout staff,
+  // juniors preferred and seniors only if that's still nobody. A shift's
+  // required_role (if set) still applies within this wider pool, same as
+  // it did in the home department.
+  if (eligible.length === 0 && checkoutDept && checkoutDept.id !== department_id) {
+    const juniors = eligibleIn(checkoutDept.id, 'junior');
+    if (juniors.length > 0) {
+      eligible = juniors;
+      fallbackPool = 'checkout_junior';
+    } else {
+      const seniors = eligibleIn(checkoutDept.id, 'senior');
+      if (seniors.length > 0) {
+        eligible = seniors;
+        fallbackPool = 'checkout_senior';
+      }
     }
-    if (staffWithAnyAvail.has(s.id)) return false;
-    return true;
-  });
+  }
 
   // A shift they've already got wins over one they might claim — someone
   // otherwise eligible can still have a scheduling conflict (an overlapping
@@ -283,5 +324,6 @@ export async function findEligibleCandidates(
     extendable,
     overlapExcluded,
     backup: rankCandidates(backup),
+    fallback_pool: fallbackPool,
   };
 }

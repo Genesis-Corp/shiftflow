@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findEligibleCandidates } from '@/lib/eligibility';
 import { requireUser, unauthorized } from '@/lib/auth';
+import { supabaseAdmin } from '@/lib/supabaseAdmin';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,8 +23,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'date, start_time, end_time, department_id required' }, { status: 400 });
 
   try {
-    const { department, candidates, extendable, overlapExcluded, backup } = await findEligibleCandidates({
-      date, start_time, end_time, department_id, required_role,
+    let excludeStaffId: string | null = null;
+    if (shift_id) {
+      const { data: shiftRow } = await supabaseAdmin
+        .from('shifts').select('excluded_staff_id').eq('id', shift_id).maybeSingle();
+      excludeStaffId = shiftRow?.excluded_staff_id ?? null;
+    }
+
+    const { department, candidates, extendable, overlapExcluded, backup, fallback_pool } = await findEligibleCandidates({
+      date, start_time, end_time, department_id, required_role, exclude_staff_id: excludeStaffId,
     });
 
     return NextResponse.json({
@@ -33,6 +41,7 @@ export async function POST(req: NextRequest) {
       extendable,
       overlapExcluded,
       backup,
+      fallback_pool,
       contactable_count: candidates.filter(c => c.phone_e164 && !c.sms_opt_out).length,
     });
   } catch (err) {
