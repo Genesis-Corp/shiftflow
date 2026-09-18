@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  calculateShiftCost, ageBracketFor, ageInYears, monthsOfService,
+  calculateShiftCost, ageBracketFor, ageInYears, monthsOfService, seniorityFromBirthday,
   parseDollarAmount, csvRowsToBaseRate,
   AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride,
 } from '../wages';
@@ -87,6 +87,21 @@ describe('ageInYears', () => {
 
   it('has not had the birthday yet this year', () => {
     expect(ageInYears('2008-09-19', '2026-09-18')).toBe(17);
+  });
+});
+
+describe('seniorityFromBirthday', () => {
+  it('is senior the day someone turns 18', () => {
+    expect(seniorityFromBirthday('2008-09-01', '2026-09-18')).toBe('senior');
+  });
+
+  it('is still junior the day before turning 18', () => {
+    expect(seniorityFromBirthday('2008-09-19', '2026-09-18')).toBe('junior');
+  });
+
+  it('is null with no birthday on file', () => {
+    expect(seniorityFromBirthday(null, '2026-09-18')).toBeNull();
+    expect(seniorityFromBirthday(undefined, '2026-09-18')).toBeNull();
   });
 });
 

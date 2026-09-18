@@ -94,6 +94,21 @@ export function monthsOfService(commencementDate: string, asOfDate: string): num
 }
 
 /**
+ * Claim-race eligibility's Junior/Senior split — a fixed 18-year cutoff on
+ * `asOfDate`. Entirely separate from the eight-bracket AgeBracket table
+ * above, which is only for pay: this is what decides who a "senior only"
+ * shift or a supervisor requirement can go to. Null when there's no
+ * birthday to compute it from — callers fall back to whatever's on file.
+ */
+export function seniorityFromBirthday(
+  birthday: string | null | undefined,
+  asOfDate: string
+): 'junior' | 'senior' | null {
+  if (!birthday) return null;
+  return ageInYears(birthday, asOfDate) >= 18 ? 'senior' : 'junior';
+}
+
+/**
  * Which age bracket someone falls into, as of a given date.
  *
  * Only the 20-21 bracket is split by service length. An unknown

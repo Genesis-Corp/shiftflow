@@ -5,7 +5,8 @@ import {
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday,
 } from '@/lib/shiftUtils';
 import {
-  calculateShiftCost, ageBracketFor, AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride,
+  calculateShiftCost, ageBracketFor, seniorityFromBirthday,
+  AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride,
 } from '@/lib/wages';
 import { rankCandidates } from '@/lib/coverTiers';
 
@@ -92,6 +93,15 @@ export async function findEligibleCandidates(
     .eq('active', true);
   if (staffErr) throw new Error(staffErr.message);
 
+  // The stored age_group column goes stale the moment someone has a
+  // birthday — a 17-year-old marked "senior" ages into "junior" pay
+  // brackets fine (those are computed fresh below), but age_group itself
+  // is only ever written at import or by hand. Recompute it from their
+  // birthday whenever one's on file; only fall back to the stored value
+  // for the small number of staff with no birthday recorded at all.
+  const ageGroupOf = (s: { birthday?: string | null; age_group: 'junior' | 'senior' }): 'junior' | 'senior' =>
+    seniorityFromBirthday(s.birthday, date) ?? s.age_group;
+
   const dayOfWeek = dayOfWeekFromDate(date);
   const [{ data: dayAvailability }, { data: allAvailability }] = await Promise.all([
     supabaseAdmin.from('availability_templates').select('*')
@@ -113,7 +123,7 @@ export async function findEligibleCandidates(
   // asks whether any senior exists on the roster at all, not whether one is
   // rostered on this shift. Changing it would change who gets texted, so it is
   // left alone here and flagged separately.
-  const seniorAvailable = (allStaff ?? []).some(s => s.age_group === 'senior');
+  const seniorAvailable = (allStaff ?? []).some(s => ageGroupOf(s) === 'senior');
 
   const eligible = (allStaff ?? []).filter(s => {
     // Salaried staff are paid the same whether or not they cover a shift, so
@@ -126,9 +136,9 @@ export async function findEligibleCandidates(
     const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
     if (!deptIds.includes(department_id)) return false;
 
-    if (dept.requires_supervisor && s.age_group === 'junior' && !seniorAvailable) return false;
+    if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !seniorAvailable) return false;
 
-    if (required_role && required_role !== 'any' && s.age_group !== required_role) return false;
+    if (required_role && required_role !== 'any' && ageGroupOf(s) !== required_role) return false;
 
     const slots = availMap.get(s.id);
     if (slots && slots.length > 0) {
@@ -200,7 +210,7 @@ export async function findEligibleCandidates(
 
   const scoreOf = (s: (typeof allStaff)[number]): number => {
     let score = s.reliability_score ?? 50;
-    if (dept.requires_supervisor && s.age_group === 'senior') score += 10;
+    if (dept.requires_supervisor && ageGroupOf(s) === 'senior') score += 10;
     if (s.role_type === 'all_rounder') score += 5;
     if (s.role_type === 'potential_all_rounder') score += 2;
     if (s.role_type === 'department_only') score -= 2;
@@ -213,7 +223,7 @@ export async function findEligibleCandidates(
     return {
       id: s.id,
       name: s.name,
-      age_group: s.age_group,
+      age_group: ageGroupOf(s),
       role_type: s.role_type,
       reliability_score: s.reliability_score ?? 50,
       phone: s.phone ?? null,

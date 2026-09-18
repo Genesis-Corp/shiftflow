@@ -21,7 +21,7 @@ import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
 import { todayStr } from '@/lib/shiftUtils';
 import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
-import { ageBracketFor, AgeBracket, TimeLoading } from '@/lib/wages';
+import { ageBracketFor, seniorityFromBirthday, AgeBracket, TimeLoading } from '@/lib/wages';
 import Papa from 'papaparse';
 
 interface WagesData {
@@ -51,10 +51,17 @@ const DEFAULT_SORT_DIR: Record<SortKey, 'asc' | 'desc'> = {
   departments: 'desc', reliability_score: 'desc', active: 'desc',
 };
 
+/** The stored age_group column only ever gets written at import or by hand,
+ *  so it goes stale the moment someone has a birthday and no one's edited
+ *  their record since — recompute it live wherever we have one. */
+function effectiveAgeGroup(s: Staff): AgeGroup {
+  return seniorityFromBirthday(s.birthday, todayStr()) ?? s.age_group;
+}
+
 function sortValue(s: Staff, key: SortKey): string | number {
   switch (key) {
     case 'name': return s.name.toLowerCase();
-    case 'age_group': return s.age_group;
+    case 'age_group': return effectiveAgeGroup(s);
     case 'role_type': return s.role_type;
     case 'departments': return (s.staff_departments ?? []).length;
     case 'reliability_score': return s.reliability_score;
@@ -192,7 +199,7 @@ export default function StaffPage() {
       is_default: !!d.is_default,
     }));
     setForm({
-      name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '',
+      name: s.name, age_group: effectiveAgeGroup(s), role_type: s.role_type, phone: s.phone ?? '',
       birthday: s.birthday ?? '', employment_type: s.employment_type ?? '',
       commencement_date: s.commencement_date ?? '',
       selectedDepts: depts,
@@ -577,8 +584,8 @@ export default function StaffPage() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <span className={s.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
-                      {s.age_group === 'senior' ? 'Senior' : 'Junior'}
+                    <span className={effectiveAgeGroup(s) === 'senior' ? 'badge-blue' : 'badge-amber'}>
+                      {effectiveAgeGroup(s) === 'senior' ? 'Senior' : 'Junior'}
                     </span>
                   </td>
                   <td className="px-4 py-3">

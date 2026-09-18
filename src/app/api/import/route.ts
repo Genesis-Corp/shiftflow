@@ -4,6 +4,7 @@ import { toE164AU } from '@/lib/phone';
 import { requireUser, unauthorized } from '@/lib/auth';
 import { nameKey, fullName } from '@/lib/availabilitySheet';
 import { withNameParts } from '@/lib/staffNames';
+import { seniorityFromBirthday } from '@/lib/wages';
 
 // ── Full staff sheet (First Name / Last Name / Employment Type / Default
 //    Department / Default Role / Birth Date / Pay Rate / Mobile) ──────────────
@@ -36,23 +37,20 @@ function parseAuDate(raw: string): string | null {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-/** This sheet's "Pay Rate" column is really an age-bracket label ("Adult",
- *  "17 Years Old", "Under16"), not a dollar figure — pay itself is always
- *  computed from birthday against the award. "Adult" reads as senior,
- *  anything else as junior; a blank cell falls back to the birthday. Null
- *  when neither tells us anything — a guess shouldn't overwrite (or seed)
- *  a value we have no actual basis for. */
-function ageGroupFromPayRateLabel(payRate: string | undefined, birthday: string | null): 'junior' | 'senior' | null {
+/** staff.age_group (the claim-race Junior/Senior split, a fixed 18-year
+ *  cutoff — a different concept from the wage engine's eight-bracket age
+ *  table) is computed from birthday whenever we have one, since that's the
+ *  one field this sheet can't get stale: a birthday doesn't change. The
+ *  "Pay Rate" column ("Adult", "17 Years Old", "Under16") only stands in
+ *  for the rare row with no Birth Date at all — "Adult" reads as senior,
+ *  anything else as junior. Null when neither tells us anything, so a
+ *  guess never overwrites (or seeds) a value with no actual basis. */
+function staffAgeGroupFor(payRate: string | undefined, birthday: string | null): 'junior' | 'senior' | null {
+  const fromBirthday = seniorityFromBirthday(birthday, new Date().toISOString().slice(0, 10));
+  if (fromBirthday) return fromBirthday;
   const label = (payRate ?? '').trim().toLowerCase();
   if (label === 'adult') return 'senior';
   if (label) return 'junior';
-  if (birthday) {
-    const [y, mo, d] = birthday.split('-').map(Number);
-    const now = new Date();
-    let age = now.getFullYear() - y;
-    if (now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) age--;
-    return age >= 18 ? 'senior' : 'junior';
-  }
   return null;
 }
 
@@ -173,7 +171,7 @@ export async function POST(req: NextRequest) {
         results.errors.push(`"${name}": could not read Birth Date "${birthdayRaw}" (expected DD/MM/YYYY), left blank.`);
       }
 
-      const ageGroup = ageGroupFromPayRateLabel(row['Pay Rate'], birthday);
+      const ageGroup = staffAgeGroupFor(row['Pay Rate'], birthday);
       const phone = row['Mobile']?.trim() || null;
       const phoneE164 = toE164AU(phone);
 
