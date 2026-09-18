@@ -16,7 +16,7 @@ import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday,
 } from '@/lib/shiftUtils';
-import { deptBadgeClass, deptSolidClass, deptBorderClass } from '@/lib/deptColors';
+import { deptBadgeClass, deptBorderClass } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
@@ -533,7 +533,7 @@ export default function ShiftsPage() {
     () => shifts.filter(s => s.date === timelineDate && (!timelineDept || s.department_id === timelineDept)),
     [shifts, timelineDate, timelineDept]
   );
-  const { unassigned, timelineDeptGroups } = useMemo(() => {
+  const { unassigned, staffRows } = useMemo(() => {
     const byStaff = new Map<string, { name: string; birthday?: string | null; shifts: Shift[] }>();
     const open: Shift[] = [];
     for (const s of timelineShifts) {
@@ -546,26 +546,15 @@ export default function ShiftsPage() {
         open.push(s);
       }
     }
-
-    // A staff row can only sit under one colored section — grouped by the
-    // department of their earliest shift that day, on the rare day someone
-    // legitimately works more than one.
-    const rows = Array.from(byStaff.values());
-    const deptMap = new Map<string, { department_id: string; name: string; color: string | null | undefined; rows: typeof rows }>();
-    for (const row of rows) {
-      const earliest = [...row.shifts].sort((a, b) => a.start_time.localeCompare(b.start_time))[0];
-      const deptId = earliest.department_id;
-      if (!deptMap.has(deptId)) {
-        deptMap.set(deptId, { department_id: deptId, name: earliest.departments?.name ?? 'Unknown', color: earliest.departments?.color, rows: [] });
-      }
-      deptMap.get(deptId)!.rows.push(row);
-    }
-    const timelineDeptGroups = Array.from(deptMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-    for (const g of timelineDeptGroups) g.rows.sort((a, b) => a.name.localeCompare(b.name));
-
-    return { unassigned: open, timelineDeptGroups };
+    return {
+      unassigned: open,
+      staffRows: Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name)),
+    };
   }, [timelineShifts]);
 
+  /** Each bar carries its own department's color as a left accent, so someone
+   *  working two departments the same day shows both colors on their one row
+   *  — the bar's fill stays the status color (open/covered/cancelled). */
   function timelineBar(s: Shift) {
     const pos = timelineBarPosition(s.start_time, s.end_time);
     if (!pos) return null;
@@ -575,7 +564,7 @@ export default function ShiftsPage() {
         key={s.id}
         title={`${s.start_time}–${s.end_time} · ${s.status}${deptName ? ` · ${deptName}` : ''}`}
         onClick={() => openEdit(s)}
-        className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
+        className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer border-l-4 ${deptBorderClass(s.departments?.color)} ${STATUS_BAR_COLOR[s.status] ?? 'bg-slate-400'}`}
         style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
       >
         <span className="text-[11px] text-white font-medium whitespace-nowrap">
@@ -748,26 +737,19 @@ export default function ShiftsPage() {
                     </div>
                   )}
 
-                  {timelineDeptGroups.map(dg => (
-                    <div key={dg.department_id}>
-                      <div className={`flex items-center gap-2 py-1.5 border-l-4 pl-2 ${deptBorderClass(dg.color)}`}>
-                        <span className={deptBadgeClass(dg.color)}>{dg.name}</span>
+                  {staffRows.map(({ name, birthday, shifts: rowShifts }) => (
+                    <div key={name} className="flex items-center py-2">
+                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                        {name}{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
                       </div>
-                      {dg.rows.map(({ name, birthday, shifts: rowShifts }) => (
-                        <div key={name} className="flex items-center py-2">
-                          <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                            {name}{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
-                          </div>
-                          <div className="relative flex-1 h-7 rounded bg-slate-50">
-                            <div className="absolute inset-0 flex pointer-events-none">
-                              {timelineHours.map(h => (
-                                <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
-                              ))}
-                            </div>
-                            {rowShifts.map(timelineBar)}
-                          </div>
+                      <div className="relative flex-1 h-7 rounded bg-slate-50">
+                        <div className="absolute inset-0 flex pointer-events-none">
+                          {timelineHours.map(h => (
+                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                          ))}
                         </div>
-                      ))}
+                        {rowShifts.map(timelineBar)}
+                      </div>
                     </div>
                   ))}
                 </div>

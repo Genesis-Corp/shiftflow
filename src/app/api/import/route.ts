@@ -207,17 +207,21 @@ export async function POST(req: NextRequest) {
 
     if (staff) {
       const deptNames = row.departments ? row.departments.split(',').map(n => n.trim().toLowerCase()) : [];
-      let assignments = deptNames
-        .map(n => deptMap.get(n))
-        .filter(Boolean)
-        .map(dept_id => ({ staff_id: staff.id, department_id: dept_id, training_level: 'trained' }));
+      const deptIds = deptNames.map(n => deptMap.get(n)).filter(Boolean) as string[];
 
-      // No department named, or none of the named ones matched — fall back
-      // to whichever department is flagged default, so this person doesn't
-      // end up with zero departments just because the CSV column was empty.
-      if (!assignments.length && defaultDeptId) {
-        assignments = [{ staff_id: staff.id, department_id: defaultDeptId, training_level: 'trained' }];
-      }
+      // Whichever department this person is rostered for on the sheet
+      // becomes their default (home) department — the first one named if
+      // more than one is listed. No department named, or none of the named
+      // ones matched — fall back to whichever department is flagged store
+      // default, so this person doesn't end up with zero departments just
+      // because the CSV column was empty.
+      const assignments = deptIds.length
+        ? deptIds.map((dept_id, i) => ({
+            staff_id: staff.id, department_id: dept_id, training_level: 'trained', is_default: i === 0,
+          }))
+        : defaultDeptId
+          ? [{ staff_id: staff.id, department_id: defaultDeptId, training_level: 'trained', is_default: true }]
+          : [];
 
       if (assignments.length) {
         await supabase.from('staff_departments').insert(assignments);

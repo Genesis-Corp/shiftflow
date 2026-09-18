@@ -12,7 +12,7 @@ export async function GET() {
     .select(`
       *,
       staff_departments (
-        id, department_id, training_level,
+        id, department_id, training_level, is_default,
         departments ( id, name, requires_supervisor )
       )
     `)

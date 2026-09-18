@@ -42,6 +42,8 @@ export interface StaffDepartment {
   staff_id: string;
   department_id: string;
   training_level: TrainingLevel;
+  /** Their home department — at most one true per staff member. */
+  is_default?: boolean;
   departments?: Department;
 }
 

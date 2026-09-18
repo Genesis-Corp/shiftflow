@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
-  Camera, FileText, FileSpreadsheet, Eye, EyeOff,
+  Camera, FileText, FileSpreadsheet, Eye, EyeOff, Star,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
@@ -102,7 +102,7 @@ export default function StaffPage() {
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
     birthday: '', employment_type: '' as EmploymentType | '', pay_rate: '',
-    selectedDepts: [] as { department_id: string; training_level: TrainingLevel }[],
+    selectedDepts: [] as { department_id: string; training_level: TrainingLevel; is_default: boolean }[],
   });
 
   const [rates, setRates] = useState<Record<string, number | null>>({});
@@ -152,6 +152,7 @@ export default function StaffPage() {
     const depts = (s.staff_departments ?? []).map(d => ({
       department_id: d.department_id,
       training_level: (d.training_level ?? 'trained') as TrainingLevel,
+      is_default: !!d.is_default,
     }));
     setForm({
       name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '',
@@ -165,9 +166,23 @@ export default function StaffPage() {
   function toggleDept(dept_id: string) {
     setForm(f => {
       const exists = f.selectedDepts.find(d => d.department_id === dept_id);
-      if (exists) return { ...f, selectedDepts: f.selectedDepts.filter(d => d.department_id !== dept_id) };
-      return { ...f, selectedDepts: [...f.selectedDepts, { department_id: dept_id, training_level: 'trained' }] };
+      if (exists) {
+        const left = f.selectedDepts.filter(d => d.department_id !== dept_id);
+        // The default department was just removed — the next one picked up the role.
+        if (exists.is_default && left.length) left[0] = { ...left[0], is_default: true };
+        return { ...f, selectedDepts: left };
+      }
+      // First department picked becomes the default automatically.
+      const is_default = f.selectedDepts.length === 0;
+      return { ...f, selectedDepts: [...f.selectedDepts, { department_id: dept_id, training_level: 'trained', is_default }] };
     });
+  }
+
+  function setDefaultDept(dept_id: string) {
+    setForm(f => ({
+      ...f,
+      selectedDepts: f.selectedDepts.map(d => ({ ...d, is_default: d.department_id === dept_id })),
+    }));
   }
 
   function setTrainingLevel(dept_id: string, level: TrainingLevel) {
@@ -520,7 +535,10 @@ export default function StaffPage() {
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap gap-1">
                       {(s.staff_departments ?? []).map(d => (
-                        <span key={d.department_id} className="badge-slate text-xs">{d.departments?.name}</span>
+                        <span key={d.department_id} className="badge-slate text-xs">
+                          {d.is_default && <Star size={10} className="mr-1 fill-amber-400 text-amber-400" />}
+                          {d.departments?.name}
+                        </span>
                       ))}
                     </div>
                   </td>
@@ -611,11 +629,21 @@ export default function StaffPage() {
                         <input type="checkbox" checked={!!assigned} readOnly className="accent-blue-600" />
                       </div>
                       {assigned && (
-                        <select className="input mt-2 text-xs py-1" value={assigned.training_level} onClick={e => e.stopPropagation()} onChange={e => setTrainingLevel(d.id, e.target.value as TrainingLevel)}>
-                          <option value="supervised">Supervised</option>
-                          <option value="trained">Trained</option>
-                          <option value="advanced">Advanced</option>
-                        </select>
+                        <div className="flex items-center gap-2 mt-2">
+                          <select className="input text-xs py-1 flex-1" value={assigned.training_level} onClick={e => e.stopPropagation()} onChange={e => setTrainingLevel(d.id, e.target.value as TrainingLevel)}>
+                            <option value="supervised">Supervised</option>
+                            <option value="trained">Trained</option>
+                            <option value="advanced">Advanced</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); setDefaultDept(d.id); }}
+                            title={assigned.is_default ? 'Default department' : 'Set as default department'}
+                            className={`p-1 rounded ${assigned.is_default ? 'text-amber-500' : 'text-slate-300 hover:text-slate-400'}`}
+                          >
+                            <Star size={14} fill={assigned.is_default ? 'currentColor' : 'none'} />
+                          </button>
+                        </div>
                       )}
                     </div>
                   );
