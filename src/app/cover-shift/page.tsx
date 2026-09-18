@@ -130,8 +130,12 @@ export default function CoverShiftPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, shift_id: selectedShiftId }),
     });
-    setResult(await res.json());
+    const data = await res.json();
     setLoading(false);
+    // A failed request comes back as { error } — not the CoverResult shape
+    // the rest of this page assumes, so it must never reach setResult.
+    if (!res.ok) { setRaceError(data.error ?? 'Could not find cover for that shift.'); return; }
+    setResult(data);
   }
 
   /**
