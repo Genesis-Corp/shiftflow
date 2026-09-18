@@ -81,19 +81,70 @@ function groupByDepartment(shifts: Shift[]): DeptGroup[] {
   return groups;
 }
 
+interface StaffDayShifts {
+  staff_id: string;
+  name: string;
+  shifts: Shift[];
+}
+
+/** Everyone actually rostered (covered, assigned) this day, one entry per
+ *  person — someone split across two departments gets one entry holding
+ *  both shifts, not two. This is what "called in sick" acts on, so a split
+ *  shift is one thing to call in sick from, not two. */
+function groupByStaff(shifts: Shift[]): StaffDayShifts[] {
+  const map = new Map<string, StaffDayShifts>();
+  for (const s of shifts) {
+    if (s.status !== 'covered' || !s.assigned_staff_id) continue;
+    const name = assignedName(s);
+    if (!name) continue;
+    if (!map.has(s.assigned_staff_id)) {
+      map.set(s.assigned_staff_id, { staff_id: s.assigned_staff_id, name, shifts: [] });
+    }
+    map.get(s.assigned_staff_id)!.shifts.push(s);
+  }
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 function ShiftDayGroup({
   group, onAdjust, onEdit, onRemove, onCalledInSick,
 }: {
   group: DayGroup;
   onAdjust: (s: Shift) => void; onEdit: (s: Shift) => void; onRemove: (s: Shift) => void;
-  onCalledInSick: (s: Shift) => void;
+  onCalledInSick: (g: StaffDayShifts) => void;
 }) {
+  // Only people with more than one shift today need the merged line and
+  // button below — everyone else is a single row in the department tables
+  // and keeps their own "called in sick" button there, same as always.
+  const splitShiftStaff = groupByStaff(group.shifts).filter(g => g.shifts.length > 1);
+  const splitShiftIds = new Set(splitShiftStaff.map(g => g.staff_id));
   return (
     <div className="card overflow-hidden">
       <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
         <span className="font-semibold text-slate-800 text-sm">{formatDate(group.date)}</span>
         <span className="badge-slate">{group.shifts.length}</span>
       </div>
+      {splitShiftStaff.length > 0 && (
+        <div className="px-4 py-2.5 bg-amber-50/60 border-b border-amber-100 space-y-1.5">
+          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Split shifts today</p>
+          {splitShiftStaff.map(g => (
+            <div key={g.staff_id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+              <p className="text-sm text-slate-700">
+                <span className="font-medium">{g.name}</span>
+                <span className="text-xs text-slate-500 ml-2">
+                  {g.shifts.map(s => `${s.departments?.name ?? 'Unknown'} ${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`).join(' · ')}
+                </span>
+              </p>
+              <button
+                onClick={() => onCalledInSick(g)}
+                title="Called in sick — reopen every shift today, logged as one incident"
+                className="btn-ghost px-2 py-1 text-amber-600 flex items-center gap-1 text-xs shrink-0"
+              >
+                <Thermometer size={13} /> Called in sick
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {groupByDepartment(group.shifts).map(dg => (
         <div key={dg.department_id} className="border-l-4" style={{ borderLeftColor: normalizeDeptColor(dg.color) }}>
           <div className="px-4 py-1.5 bg-slate-50/60 border-b border-slate-100 flex items-center gap-2">
@@ -134,8 +185,12 @@ function ShiftDayGroup({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
-                        {s.assigned_staff_id && (
-                          <button onClick={() => onCalledInSick(s)} title="Called in sick — reopen this shift" className="btn-ghost p-1.5 text-amber-500">
+                        {s.assigned_staff_id && name && !splitShiftIds.has(s.assigned_staff_id) && (
+                          <button
+                            onClick={() => onCalledInSick({ staff_id: s.assigned_staff_id!, name, shifts: [s] })}
+                            title="Called in sick — reopen this shift"
+                            className="btn-ghost p-1.5 text-amber-500"
+                          >
                             <Thermometer size={13} />
                           </button>
                         )}
@@ -472,13 +527,30 @@ export default function ShiftsPage() {
     load();
   }
 
-  /** Reopens the shift so it shows up on Cover Shift like any other open
-   *  shift — the same state a lost claim race leaves it in. */
-  async function calledInSick(s: Shift) {
-    if (!confirm(`Mark ${(s as { assigned_staff?: { name: string } }).assigned_staff?.name ?? 'this person'} as called in sick and reopen the shift?`)) return;
-    await fetch(`/api/shifts/${s.id}`, {
+  /** Reopens every shift in the group so each shows up on Cover Shift like
+   *  any other open shift — the same state a lost claim race leaves it in —
+   *  and logs exactly one no-show incident for the day, however many
+   *  departments' worth of shifts that covers. A split shift is one absence,
+   *  not two: without this, a manager who separately marks each department
+   *  shift as sick ends up docking the same person's reliability score
+   *  twice for the one day off. */
+  async function calledInSick(group: { staff_id: string; name: string; shifts: Shift[] }) {
+    const shiftWord = group.shifts.length > 1 ? `all ${group.shifts.length} shifts` : 'this shift';
+    if (!confirm(`Mark ${group.name} as called in sick and reopen ${shiftWord} today? Logged as one no-show.`)) return;
+    await Promise.all(group.shifts.map(s => fetch(`/api/shifts/${s.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'open', assigned_staff_id: null }),
+    })));
+    await fetch('/api/reliability', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        staff_id: group.staff_id,
+        incident_type: 'no_show',
+        date: group.shifts[0].date,
+        notes: group.shifts.length > 1
+          ? `Called in sick — ${group.shifts.length} shifts reopened (${group.shifts.map(s => s.departments?.name ?? 'Unknown').join(', ')})`
+          : 'Called in sick',
+      }),
     });
     load();
   }
