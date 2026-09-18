@@ -124,7 +124,7 @@ export default function CoverShiftPage() {
   }
 
   async function findCover() {
-    if (!form.department_id || underMinimum) return;
+    if (!form.department_id || underMinimum || searchIsPast) return;
     setLoading(true); setResult(null); setRaceError('');
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -146,7 +146,7 @@ export default function CoverShiftPage() {
    * the Shifts page, then raced like any other open shift.
    */
   async function openRacePreview() {
-    if (underMinimum) return;
+    if (underMinimum || searchIsPast) return;
     setPreviewLoading(true); setRaceError('');
 
     let shiftId = selectedShiftId;
@@ -212,6 +212,10 @@ export default function CoverShiftPage() {
 
   const needsBreak = requiresBreak(form.start_time, form.end_time);
   const underMinimum = shiftDurationMinutes(form.start_time, form.end_time) < MIN_SHIFT_MINUTES;
+  // Both sides parsed as local time (no timezone suffix), same as Date.now()
+  // reads the browser's own clock — a manager searching "today" late in the
+  // evening is comparing against their own "now", not a server's.
+  const searchIsPast = new Date(`${form.date}T${form.start_time}`).getTime() < Date.now();
   const deptName = (id: string) => departments.find(d => d.id === id)?.name ?? '';
 
   return (
@@ -312,7 +316,7 @@ export default function CoverShiftPage() {
         )}
 
         <div className="flex items-center gap-4 mt-4 flex-wrap">
-          <button onClick={findCover} disabled={loading || !form.department_id || underMinimum} className="btn-primary">
+          <button onClick={findCover} disabled={loading || !form.department_id || underMinimum || searchIsPast} className="btn-primary">
             <Search size={16} /> {loading ? 'Searching...' : 'Find Available Staff'}
           </button>
           <p className={`text-sm ${underMinimum ? 'text-red-600' : 'text-slate-500'}`}>
@@ -322,6 +326,12 @@ export default function CoverShiftPage() {
               : needsBreak && <span className="ml-2 text-amber-600">+ {BREAK_DURATION_MINUTES}m break</span>}
           </p>
         </div>
+
+        {searchIsPast && (
+          <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
+            <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" /> Selected time has already passed, try a different time.
+          </div>
+        )}
       </div>
 
       {raceError && (
