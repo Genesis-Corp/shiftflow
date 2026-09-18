@@ -54,7 +54,7 @@ export async function POST(req: NextRequest) {
     const { shift_id, force } = await req.json();
     if (!shift_id) return NextResponse.json({ error: 'shift_id required' }, { status: 400 });
 
-    const result = await startRace(shift_id, { force: !!force });
+    const result = await startRace(shift_id, { force: !!force, startedBy: user.id });
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     if (err instanceof RaceError) {

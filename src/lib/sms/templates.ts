@@ -37,9 +37,11 @@ export function describeShift(shift: ShiftSummary): string {
   return `${formatShiftDate(shift.date)} ${formatShiftTimes(shift.start_time, shift.end_time)}, ${shift.departmentName}`;
 }
 
-/** Sent to every eligible staff member when the race starts. */
-export function offerMessage(shift: ShiftSummary, claimCode: string): string {
-  return `${BUSINESS}: shift available ${describeShift(shift)}. ` +
+/** Sent to every eligible staff member when the race starts. `managerName`,
+ *  when known, opens the message with who started it. */
+export function offerMessage(shift: ShiftSummary, claimCode: string, managerName?: string | null): string {
+  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
+  return `${greeting}${BUSINESS}: shift available ${describeShift(shift)}. ` +
     `Reply YES ${claimCode} to claim it - first reply wins. Reply STOP to opt out.`;
 }
 

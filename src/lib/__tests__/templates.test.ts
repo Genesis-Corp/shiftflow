@@ -40,6 +40,18 @@ describe('message templates', () => {
     expect(isGsm7(offerMessage(SHIFT, '4F7K'))).toBe(true);
     expect(isGsm7(coveredMessage(SHIFT))).toBe(true);
   });
+
+  it('opens with the starting manager\'s name when given one', () => {
+    const withName = offerMessage(SHIFT, '4F7K', 'John');
+    expect(withName.startsWith("Hey it's John - ")).toBe(true);
+    expect(smsSegments(withName)).toBe(1);
+
+    const withoutName = offerMessage(SHIFT, '4F7K');
+    expect(withoutName.startsWith("Hey it's")).toBe(false);
+
+    const withNullName = offerMessage(SHIFT, '4F7K', null);
+    expect(withNullName).toBe(withoutName);
+  });
 });
 
 describe('smsSegments', () => {

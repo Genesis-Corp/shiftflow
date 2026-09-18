@@ -54,7 +54,7 @@ function toSummary(shift: {
  * recipient list cannot be influenced by the browser.
  */
 export async function startRace(
-  shiftId: string, opts: { force?: boolean } = {}
+  shiftId: string, opts: { force?: boolean; startedBy?: string } = {}
 ): Promise<StartRaceResult> {
   const shift = await loadShift(shiftId);
 
@@ -100,6 +100,13 @@ export async function startRace(
   const mode = getSmsMode();
   const expiresAt = new Date(Date.now() + getExpiryMinutes() * 60_000);
 
+  let managerName: string | null = null;
+  if (opts.startedBy) {
+    const { data: manager } = await supabaseAdmin
+      .from('manager_profiles').select('name').eq('user_id', opts.startedBy).maybeSingle();
+    managerName = manager?.name ?? null;
+  }
+
   // Avoid reusing a code that another in-flight race is relying on.
   const { data: liveCodes } = await supabaseAdmin
     .from('shift_claim_recipients').select('claim_code').is('outcome', null);
@@ -109,7 +116,7 @@ export async function startRace(
 
   const { data: race, error: raceErr } = await supabaseAdmin
     .from('shift_claim_races')
-    .insert([{ shift_id: shiftId, status: 'active', mode, expires_at: expiresAt.toISOString() }])
+    .insert([{ shift_id: shiftId, status: 'active', mode, expires_at: expiresAt.toISOString(), started_by: opts.startedBy ?? null }])
     .select().single();
   // 23505 here is the one-active-race-per-shift index: two managers clicked at
   // the same moment, and the second one loses.
@@ -155,7 +162,7 @@ export async function startRace(
   const results = await Promise.allSettled(
     contactable.map((c, i) => sendSms({
       to: c.phone_e164!,
-      body: offerMessage(summary, codes[i]),
+      body: offerMessage(summary, codes[i], managerName),
       kind: 'offer',
       raceId: race.id,
       staffId: c.id,
