@@ -10,6 +10,9 @@ interface StandardRow {
   role_type?: string;
   phone?: string;
   departments?: string;
+  birthday?: string;
+  employment_type?: string;
+  pay_rate?: string;
 }
 
 // ── Availability-sheet format (STORE / NAME / MOBILE # / day columns) ─────────
@@ -54,10 +57,11 @@ export async function POST(req: NextRequest) {
   const { rows }: { rows: AvailabilityRow[] } = await req.json();
   if (!rows?.length) return NextResponse.json({ error: 'No rows provided' }, { status: 400 });
 
-  const { data: departments } = await supabase.from('departments').select('id, name');
+  const { data: departments } = await supabase.from('departments').select('id, name, is_default');
   const deptMap = new Map(
     (departments ?? []).map((d: { id: string; name: string }) => [d.name.toLowerCase().trim(), d.id])
   );
+  const defaultDeptId = (departments ?? []).find((d: { is_default?: boolean }) => d.is_default)?.id ?? null;
 
   /**
    * Find the department matching `name`, creating it if this exact name
@@ -164,12 +168,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(results);
   }
 
+  const EMPLOYMENT_TYPES = new Set(['casual', 'part_time', 'full_time', 'salary']);
+
   // ── Standard format ────────────────────────────────────────────────────────
   for (const row of rows as unknown as StandardRow[]) {
     if (!row.name || !row.age_group || !row.role_type) {
       results.errors.push(`Skipped row (missing fields): ${JSON.stringify(row)}`);
       continue;
     }
+
+    const employmentType = row.employment_type?.toLowerCase().trim().replace(/[\s-]+/g, '_') ?? '';
+    if (employmentType && !EMPLOYMENT_TYPES.has(employmentType)) {
+      results.errors.push(`"${row.name}": unrecognized employment_type "${row.employment_type}", left blank.`);
+    }
+    const payRate = row.pay_rate ? Number(row.pay_rate.replace(/[$\s]/g, '')) : null;
 
     const { data: staff, error } = await supabase
       .from('staff')
@@ -179,6 +191,9 @@ export async function POST(req: NextRequest) {
         role_type: row.role_type.toLowerCase().replace(/\s+/g, '_').trim(),
         phone: row.phone?.trim() ?? null,
         phone_e164: toE164AU(row.phone),
+        birthday: row.birthday?.trim() || null,
+        employment_type: EMPLOYMENT_TYPES.has(employmentType) ? employmentType : null,
+        pay_rate: payRate !== null && Number.isFinite(payRate) ? payRate : null,
         reliability_score: 50,
         active: true,
       }])
@@ -190,12 +205,19 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    if (row.departments && staff) {
-      const deptNames = row.departments.split(',').map(n => n.trim().toLowerCase());
-      const assignments = deptNames
+    if (staff) {
+      const deptNames = row.departments ? row.departments.split(',').map(n => n.trim().toLowerCase()) : [];
+      let assignments = deptNames
         .map(n => deptMap.get(n))
         .filter(Boolean)
         .map(dept_id => ({ staff_id: staff.id, department_id: dept_id, training_level: 'trained' }));
+
+      // No department named, or none of the named ones matched — fall back
+      // to whichever department is flagged default, so this person doesn't
+      // end up with zero departments just because the CSV column was empty.
+      if (!assignments.length && defaultDeptId) {
+        assignments = [{ staff_id: staff.id, department_id: defaultDeptId, training_level: 'trained' }];
+      }
 
       if (assignments.length) {
         await supabase.from('staff_departments').insert(assignments);

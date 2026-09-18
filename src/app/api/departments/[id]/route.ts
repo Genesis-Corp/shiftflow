@@ -6,11 +6,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const { name, requires_supervisor } = await req.json();
+  const { name, requires_supervisor, color, is_default } = await req.json();
+
+  // Only one department can be default — clear it off every other row first,
+  // since the unique index would otherwise reject setting a second one.
+  if (is_default === true) {
+    await supabase.from('departments').update({ is_default: false }).neq('id', params.id).eq('is_default', true);
+  }
+
+  const updates: Record<string, unknown> = { name, requires_supervisor };
+  if (color !== undefined) updates.color = color;
+  if (is_default !== undefined) updates.is_default = is_default;
 
   const { data, error } = await supabase
     .from('departments')
-    .update({ name, requires_supervisor })
+    .update(updates)
     .eq('id', params.id)
     .select()
     .single();

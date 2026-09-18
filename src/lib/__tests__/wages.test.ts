@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateShiftCost, PenaltyRule } from '../wages';
+import { calculateShiftCost, csvRowsToScannedWageRows, PenaltyRule } from '../wages';
 
 const rule = (over: Partial<PenaltyRule> & { name: string; days: number[]; multiplier: number }): PenaltyRule => ({
   id: over.name, start_time: '00:00', end_time: '24:00', active: true, ...over,
@@ -105,5 +105,23 @@ describe('calculateShiftCost', () => {
       [SATURDAY, SUNDAY, EVENING]
     );
     expect(cost.cost).toBe(168); // 4h x $28 x 1.5
+  });
+});
+
+describe('csvRowsToScannedWageRows', () => {
+  it('matches Name/Rate columns regardless of exact header wording', () => {
+    const rows = csvRowsToScannedWageRows([
+      { 'Full Name': 'Aria Benino', 'Hourly Rate': '$28.50' },
+      { Name: 'Isaac Di Stefano', 'Pay Rate': '24.00' },
+    ]);
+    expect(rows).toEqual([
+      { n: 'Aria Benino', r: '$28.50' },
+      { n: 'Isaac Di Stefano', r: '24.00' },
+    ]);
+  });
+
+  it('drops rows with no name', () => {
+    const rows = csvRowsToScannedWageRows([{ Name: '', Rate: '24.00' }]);
+    expect(rows).toEqual([]);
   });
 });

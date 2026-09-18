@@ -200,3 +200,20 @@ export function parseWageRows(rows: ScannedWageRow[]): { wages: ParsedWage[]; wa
 
   return { wages, warnings };
 }
+
+/**
+ * Map a CSV (parsed with a header row into plain objects) onto the same
+ * {n, r} shape a photo/PDF scan produces, so it can go through the same
+ * parseWageRows + name-matching pipeline. Column names aren't fixed —
+ * "Name"/"Full Name" and "Rate"/"Hourly Rate"/"$/hr"/"Pay Rate" all match.
+ */
+export function csvRowsToScannedWageRows(rows: Record<string, string>[]): ScannedWageRow[] {
+  return rows
+    .map(row => {
+      const entries = Object.entries(row);
+      const nameEntry = entries.find(([k]) => /name/i.test(k));
+      const rateEntry = entries.find(([k]) => /rate|wage|\$|hourly|pay/i.test(k));
+      return { n: nameEntry?.[1] ?? '', r: rateEntry?.[1] ?? '' };
+    })
+    .filter(row => row.n.trim());
+}

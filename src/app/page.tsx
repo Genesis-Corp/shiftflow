@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock } from 'lucide-react';
-import { formatDate } from '@/lib/shiftUtils';
+import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriangle, Award, Phone } from 'lucide-react';
+import { formatDate, weekBounds, shiftDurationMinutes } from '@/lib/shiftUtils';
+import ReliabilityBar from '@/components/ReliabilityBar';
 
 interface Stats {
   totalStaff: number;
@@ -13,9 +14,18 @@ interface Stats {
   todayShifts: number;
 }
 
+interface AttentionStaff { id: string; name: string; reasons: string[] }
+interface HighAchiever { id: string; name: string; score: number }
+
+const NEEDS_ATTENTION_HOURS_CAP = 38 * 60;
+const HIGH_ACHIEVER_THRESHOLD = 80;
+const LOW_RELIABILITY_THRESHOLD = 50;
+
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [openShifts, setOpenShifts] = useState<{ id: string; date: string; start_time: string; end_time: string; departments: { name: string } }[]>([]);
+  const [needsAttention, setNeedsAttention] = useState<AttentionStaff[]>([]);
+  const [highAchievers, setHighAchievers] = useState<HighAchiever[]>([]);
   const today = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
@@ -38,6 +48,36 @@ export default function Dashboard() {
         todayShifts: todayCount,
       });
       setOpenShifts(open.slice(0, 5));
+
+      // This Sun–Sat week's rostered minutes per staff member, same window
+      // the 38-hour weekly cap uses when finding cover for a shift.
+      const { weekStart, weekEnd } = weekBounds(today);
+      const weeklyMinutes = new Map<string, number>();
+      for (const s of (shifts ?? []) as { status: string; assigned_staff_id?: string; date: string; start_time: string; end_time: string }[]) {
+        if (s.status === 'cancelled' || !s.assigned_staff_id) continue;
+        if (s.date < weekStart || s.date > weekEnd) continue;
+        weeklyMinutes.set(
+          s.assigned_staff_id,
+          (weeklyMinutes.get(s.assigned_staff_id) ?? 0) + shiftDurationMinutes(s.start_time, s.end_time)
+        );
+      }
+
+      const attention: AttentionStaff[] = [];
+      const achievers: HighAchiever[] = [];
+      for (const s of (staff ?? []) as { id: string; name: string; active: boolean; phone?: string; phone_e164?: string; reliability_score: number }[]) {
+        if (!s.active) continue;
+        const minutes = weeklyMinutes.get(s.id) ?? 0;
+        const score = s.reliability_score ?? 50;
+        const reasons: string[] = [];
+        if (!s.phone && !s.phone_e164) reasons.push('No phone number on file');
+        if (score < LOW_RELIABILITY_THRESHOLD) reasons.push('Low reliability');
+        if (minutes > NEEDS_ATTENTION_HOURS_CAP) reasons.push(`${(minutes / 60).toFixed(1)}h rostered this week`);
+        if (minutes === 0) reasons.push('No shifts rostered this week');
+        if (reasons.length) attention.push({ id: s.id, name: s.name, reasons });
+        if (score > HIGH_ACHIEVER_THRESHOLD) achievers.push({ id: s.id, name: s.name, score });
+      }
+      setNeedsAttention(attention);
+      setHighAchievers(achievers.sort((a, b) => b.score - a.score));
     }
     load();
   }, [today]);
@@ -119,6 +159,53 @@ export default function Dashboard() {
               </Link>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle size={16} className="text-amber-500" />
+            <h2 className="font-semibold text-slate-800">Needs Attention</h2>
+          </div>
+          {needsAttention.length === 0 ? (
+            <p className="text-slate-400 text-sm">Nothing needs attention right now.</p>
+          ) : (
+            <div className="space-y-2">
+              {needsAttention.map(s => (
+                <Link key={s.id} href="/staff" className="flex items-start justify-between gap-2 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded px-1 -mx-1">
+                  <p className="text-sm font-medium text-slate-700">{s.name}</p>
+                  <div className="flex flex-wrap gap-1 justify-end">
+                    {s.reasons.map(r => (
+                      <span key={r} className="badge-amber text-[11px]">
+                        {r === 'No phone number on file' && <Phone size={10} className="mr-1" />}
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Award size={16} className="text-blue-500" />
+            <h2 className="font-semibold text-slate-800">High Achievers</h2>
+          </div>
+          {highAchievers.length === 0 ? (
+            <p className="text-slate-400 text-sm">Nobody above {HIGH_ACHIEVER_THRESHOLD} reliability yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {highAchievers.map(s => (
+                <Link key={s.id} href="/staff" className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded px-1 -mx-1">
+                  <p className="text-sm font-medium text-slate-700 flex-shrink-0">{s.name}</p>
+                  <div className="w-28"><ReliabilityBar score={s.score} showLabel={false} /></div>
+                </Link>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

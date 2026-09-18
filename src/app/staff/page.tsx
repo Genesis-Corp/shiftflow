@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
-  Camera, FileText, FileSpreadsheet,
+  Camera, FileText, FileSpreadsheet, Eye, EyeOff,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
@@ -19,7 +19,7 @@ import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
 import type { SyncPlan } from '@/lib/staffSync';
-import { Staff, Department, RoleType, AgeGroup, TrainingLevel } from '@/lib/types';
+import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
 import Papa from 'papaparse';
 
 const ROLE_LABELS: Record<RoleType, string> = {
@@ -101,18 +101,34 @@ export default function StaffPage() {
 
   const [form, setForm] = useState({
     name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
+    birthday: '', employment_type: '' as EmploymentType | '', pay_rate: '',
     selectedDepts: [] as { department_id: string; training_level: TrainingLevel }[],
   });
+
+  const [rates, setRates] = useState<Record<string, number | null>>({});
+  const [revealedRates, setRevealedRates] = useState<Set<string>>(new Set());
+
+  function toggleRateRevealed(staffId: string) {
+    setRevealedRates(current => {
+      const next = new Set(current);
+      if (next.has(staffId)) next.delete(staffId); else next.add(staffId);
+      return next;
+    });
+  }
 
   async function load() {
     setLoading(true);
     try {
-      const [staffData, deptData] = await Promise.all([
+      const [staffData, deptData, wagesData] = await Promise.all([
         fetchJson<Staff[]>('/api/staff'),
         fetchJson<Department[]>('/api/departments'),
+        fetchJson<{ staff: { id: string; base_hourly_rate: number | null }[] }>('/api/wages').catch(() => null),
       ]);
       setStaff(staffData);
       setDepartments(deptData);
+      if (wagesData) {
+        setRates(Object.fromEntries(wagesData.staff.map(s => [s.id, s.base_hourly_rate])));
+      }
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load staff');
@@ -124,7 +140,10 @@ export default function StaffPage() {
 
   function openAdd() {
     setEditing(null);
-    setForm({ name: '', age_group: 'senior', role_type: 'department_only', phone: '', selectedDepts: [] });
+    setForm({
+      name: '', age_group: 'senior', role_type: 'department_only', phone: '',
+      birthday: '', employment_type: '', pay_rate: '', selectedDepts: [],
+    });
     setModal('add');
   }
 
@@ -134,7 +153,12 @@ export default function StaffPage() {
       department_id: d.department_id,
       training_level: (d.training_level ?? 'trained') as TrainingLevel,
     }));
-    setForm({ name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '', selectedDepts: depts });
+    setForm({
+      name: s.name, age_group: s.age_group, role_type: s.role_type, phone: s.phone ?? '',
+      birthday: s.birthday ?? '', employment_type: s.employment_type ?? '',
+      pay_rate: s.pay_rate === null || s.pay_rate === undefined ? '' : String(s.pay_rate),
+      selectedDepts: depts,
+    });
     setModal('edit');
   }
 
@@ -155,13 +179,19 @@ export default function StaffPage() {
 
   async function save() {
     if (!form.name.trim()) return;
+    const payload = {
+      name: form.name, age_group: form.age_group, role_type: form.role_type, phone: form.phone,
+      birthday: form.birthday || null,
+      employment_type: form.employment_type || null,
+      pay_rate: form.pay_rate === '' ? null : Number(form.pay_rate),
+    };
     let staffId: string;
     if (modal === 'add') {
-      const res = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name, age_group: form.age_group, role_type: form.role_type, phone: form.phone }) });
+      const res = await fetch('/api/staff', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       staffId = data.id;
     } else if (editing) {
-      await fetch(`/api/staff/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: form.name, age_group: form.age_group, role_type: form.role_type, phone: form.phone }) });
+      await fetch(`/api/staff/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       staffId = editing.id;
     } else return;
 
@@ -464,7 +494,21 @@ export default function StaffPage() {
             <tbody className="divide-y divide-slate-100">
               {sorted.map(s => (
                 <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${!s.active ? 'opacity-50' : ''}`}>
-                  <td className="px-4 py-3 font-medium text-slate-800">{s.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800">
+                    <div>{s.name}</div>
+                    {rates[s.id] !== undefined && rates[s.id] !== null && (
+                      <button
+                        onClick={() => toggleRateRevealed(s.id)}
+                        className="mt-0.5 flex items-center gap-1 text-xs font-normal text-slate-400 hover:text-slate-600"
+                      >
+                        {revealedRates.has(s.id) ? (
+                          <><EyeOff size={11} /> ${Number(rates[s.id]).toFixed(2)}/hr</>
+                        ) : (
+                          <><Eye size={11} /> Reveal rate</>
+                        )}
+                      </button>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={s.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
                       {s.age_group === 'senior' ? 'Senior' : 'Junior'}
@@ -528,6 +572,30 @@ export default function StaffPage() {
               <div className="col-span-2">
                 <label className="label">Phone (optional)</label>
                 <input className="input" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="+44 7700 000000" />
+              </div>
+              <div>
+                <label className="label">Birthday (optional)</label>
+                <input type="date" className="input" value={form.birthday} onChange={e => setForm(f => ({ ...f, birthday: e.target.value }))} />
+              </div>
+              <div>
+                <label className="label">Employment Type (optional)</label>
+                <select className="input" value={form.employment_type} onChange={e => setForm(f => ({ ...f, employment_type: e.target.value as EmploymentType | '' }))}>
+                  <option value="">—</option>
+                  <option value="casual">Casual</option>
+                  <option value="part_time">Part-time</option>
+                  <option value="full_time">Full-time</option>
+                  <option value="salary">Salary</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="label">Pay Rate (optional)</label>
+                <input
+                  type="number" step="0.01" min="0" className="input" value={form.pay_rate}
+                  onChange={e => setForm(f => ({ ...f, pay_rate: e.target.value }))} placeholder="$/hr, for reference only"
+                />
+                <p className="text-xs text-slate-400 mt-1">
+                  Informational only — shift cost always comes from the Wage Matrix on the Managers page.
+                </p>
               </div>
             </div>
 

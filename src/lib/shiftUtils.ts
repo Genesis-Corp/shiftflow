@@ -78,6 +78,13 @@ export function weekBounds(dateStr: string): { weekStart: string; weekEnd: strin
   return { weekStart: addDays(dateStr, -dow), weekEnd: addDays(dateStr, 6 - dow) };
 }
 
+/** Whether `birthday` (a YYYY-MM-DD date, year irrelevant) falls on `dateStr`
+ *  — month and day only, so it recurs every year. */
+export function isBirthday(birthday: string | null | undefined, dateStr: string): boolean {
+  if (!birthday) return false;
+  return birthday.slice(5, 10) === dateStr.slice(5, 10);
+}
+
 /**
  * Whether two same-day time ranges overlap. Touching endpoints (one ends
  * exactly when the other starts) do not count — that's a legitimate back-

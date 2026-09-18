@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
-  MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES,
+  MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday,
 } from '@/lib/shiftUtils';
 import { calculateShiftCost, PenaltyRule } from '@/lib/wages';
 import { rankCandidates } from '@/lib/coverTiers';
@@ -111,6 +111,13 @@ export async function findEligibleCandidates(
   const seniorAvailable = (allStaff ?? []).some(s => s.age_group === 'senior');
 
   const eligible = (allStaff ?? []).filter(s => {
+    // Salaried staff are paid the same whether or not they cover a shift, so
+    // there's no incentive to offer it to them. Never enters the race.
+    if (s.employment_type === 'salary') return false;
+
+    // Nobody gets offered a shift on their own birthday.
+    if (isBirthday(s.birthday, date)) return false;
+
     const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
     if (!deptIds.includes(department_id)) return false;
 

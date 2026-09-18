@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds } from '../shiftUtils';
+import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday } from '../shiftUtils';
 
 describe('shiftsOverlap', () => {
   it('is true when ranges genuinely overlap', () => {
@@ -50,5 +50,20 @@ describe('weekBounds', () => {
   it('crosses a month boundary correctly', () => {
     // Tuesday 29 Sept 2026 — week runs into October
     expect(weekBounds('2026-09-29')).toEqual({ weekStart: '2026-09-27', weekEnd: '2026-10-03' });
+  });
+});
+
+describe('isBirthday', () => {
+  it('matches month and day regardless of birth year', () => {
+    expect(isBirthday('1998-09-18', '2026-09-18')).toBe(true);
+  });
+
+  it('is false for a different day', () => {
+    expect(isBirthday('1998-09-18', '2026-09-19')).toBe(false);
+  });
+
+  it('is false when there is no birthday on file', () => {
+    expect(isBirthday(null, '2026-09-18')).toBe(false);
+    expect(isBirthday(undefined, '2026-09-18')).toBe(false);
   });
 });

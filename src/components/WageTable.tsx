@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, FileText, FileSpreadsheet, Loader2, Trash2, Plus, AlertTriangle, DollarSign } from 'lucide-react';
+import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign } from 'lucide-react';
 import Modal from '@/components/Modal';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
@@ -13,6 +13,7 @@ import { readPdfAsBase64 } from '@/lib/pdf';
 import { postJson } from '@/lib/api';
 import { fetchJson } from '@/lib/apiClient';
 import { DAY_SHORT } from '@/lib/shiftUtils';
+import Papa from 'papaparse';
 import type { PenaltyRule } from '@/lib/wages';
 
 interface WageStaff {
@@ -92,7 +93,31 @@ export default function WageTable() {
   }
 
   function pickFile(file: File) {
-    void readSheet(file);
+    const name = file.name.toLowerCase();
+    if (file.type === 'text/csv' || name.endsWith('.csv')) {
+      void readCsvSheet(file);
+    } else {
+      void readSheet(file);
+    }
+  }
+
+  async function readCsvSheet(file: File) {
+    setError('');
+    setStage(STAGES.parsing);
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (result) => {
+        const scan = await postJson<ScanPlan>('/api/scan-wages', { csv: result.data }, { timeoutMs: 30_000 });
+        setStage(null);
+        if (!scan.ok || !scan.data) { setError(scan.error ?? 'Could not read that CSV.'); return; }
+        setPlan(scan.data);
+      },
+      error: (err: Error) => {
+        setStage(null);
+        setError(`"${file.name}" could not be read: ${err.message}`);
+      },
+    });
   }
 
   async function readSheet(file: File) {
@@ -207,6 +232,13 @@ export default function WageTable() {
                 label: 'Upload PDF',
                 icon: <FileSpreadsheet size={14} />,
                 accept: 'application/pdf',
+                onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
+              },
+              {
+                key: 'csv',
+                label: 'Upload CSV',
+                icon: <Table2 size={14} />,
+                accept: '.csv,text/csv',
                 onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) pickFile(file); },
               },
             ]}

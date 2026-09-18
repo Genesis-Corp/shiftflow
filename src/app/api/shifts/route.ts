@@ -15,8 +15,8 @@ export async function GET(req: NextRequest) {
     .from('shifts')
     .select(`
       *,
-      departments ( id, name, requires_supervisor ),
-      assigned_staff:staff ( id, name, age_group, role_type )
+      departments ( id, name, requires_supervisor, color ),
+      assigned_staff:staff ( id, name, age_group, role_type, birthday )
     `)
     .order('date')
     .order('start_time');

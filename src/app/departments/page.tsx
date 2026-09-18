@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users, Star } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { fetchJson } from '@/lib/apiClient';
 import { Department, Staff } from '@/lib/types';
+import { DEPARTMENT_COLORS, DepartmentColor, deptSolidClass } from '@/lib/deptColors';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -15,7 +16,9 @@ export default function DepartmentsPage() {
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
-  const [form, setForm] = useState({ name: '', requires_supervisor: false });
+  const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; color: DepartmentColor }>({
+    name: '', requires_supervisor: false, color: 'blue',
+  });
   const [expanded, setExpanded] = useState<string | null>(null);
 
   async function load() {
@@ -50,13 +53,15 @@ export default function DepartmentsPage() {
   }, [staff]);
 
   function openAdd() {
-    setForm({ name: '', requires_supervisor: false });
+    const used = new Set(departments.map(d => d.color));
+    const next = DEPARTMENT_COLORS.find(c => !used.has(c)) ?? DEPARTMENT_COLORS[departments.length % DEPARTMENT_COLORS.length];
+    setForm({ name: '', requires_supervisor: false, color: next });
     setModal('add');
   }
 
   function openEdit(d: Department) {
     setEditing(d);
-    setForm({ name: d.name, requires_supervisor: d.requires_supervisor });
+    setForm({ name: d.name, requires_supervisor: d.requires_supervisor, color: (d.color as DepartmentColor) ?? 'blue' });
     setModal('edit');
   }
 
@@ -74,6 +79,14 @@ export default function DepartmentsPage() {
   async function remove(d: Department) {
     if (!confirm(`Delete department "${d.name}"? This will remove all staff assignments for this department.`)) return;
     await fetch(`/api/departments/${d.id}`, { method: 'DELETE' });
+    load();
+  }
+
+  async function setDefault(d: Department) {
+    await fetch(`/api/departments/${d.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_default: !d.is_default }),
+    });
     load();
   }
 
@@ -111,6 +124,7 @@ export default function DepartmentsPage() {
                     aria-expanded={isOpen}
                   >
                     <div className="flex items-center gap-1.5">
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${deptSolidClass(d.color)}`} />
                       <p className="font-semibold text-slate-800 truncate">{d.name}</p>
                       <ChevronDown size={14} className={`text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                     </div>
@@ -123,9 +137,21 @@ export default function DepartmentsPage() {
                           <ShieldCheck size={11} className="mr-1" /> Supervisor required
                         </span>
                       )}
+                      {d.is_default && (
+                        <span className="badge-blue">
+                          <Star size={11} className="mr-1" /> Default
+                        </span>
+                      )}
                     </div>
                   </button>
                   <div className="flex gap-1 shrink-0">
+                    <button
+                      onClick={() => setDefault(d)}
+                      title={d.is_default ? 'Unset as default department' : 'Set as default department for new staff'}
+                      className={`btn-ghost p-1.5 ${d.is_default ? 'text-amber-500' : ''}`}
+                    >
+                      <Star size={14} fill={d.is_default ? 'currentColor' : 'none'} />
+                    </button>
                     <button onClick={() => openEdit(d)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
                     <button onClick={() => remove(d)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
                   </div>
@@ -159,6 +185,22 @@ export default function DepartmentsPage() {
             <div>
               <label className="label">Department Name</label>
               <input className="input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Bakery, Produce, Checkout..." autoFocus />
+            </div>
+            <div>
+              <label className="label">Color</label>
+              <div className="flex flex-wrap gap-2">
+                {DEPARTMENT_COLORS.map(c => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, color: c }))}
+                    title={c}
+                    className={`w-7 h-7 rounded-full ${deptSolidClass(c)} ${
+                      form.color === c ? 'ring-2 ring-offset-2 ring-slate-400' : ''
+                    }`}
+                  />
+                ))}
+              </div>
             </div>
             <label className="flex items-center gap-3 cursor-pointer">
               <input type="checkbox" checked={form.requires_supervisor} onChange={e => setForm(f => ({ ...f, requires_supervisor: e.target.checked }))} className="w-4 h-4 accent-blue-600" />

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Coffee, Download, List, GanttChartSquare,
-  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet,
+  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
@@ -14,8 +14,9 @@ import { postJson } from '@/lib/api';
 import { Shift, Department } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
-  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays,
+  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday,
 } from '@/lib/shiftUtils';
+import { deptBadgeClass, deptSolidClass, deptBorderClass } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
@@ -48,6 +49,7 @@ function todayStr(): string {
 }
 
 interface DayGroup { date: string; shifts: Shift[] }
+interface DeptGroup { department_id: string; name: string; color: string | null | undefined; shifts: Shift[] }
 
 /** Shifts arrive sorted by date, start_time (the API orders both), so a
  *  filtered subset stays in that order — this is a single grouping pass,
@@ -62,11 +64,38 @@ function groupByDate(list: Shift[]): DayGroup[] {
   return groups;
 }
 
+function assignedName(s: Shift): string | null {
+  return (s as { assigned_staff?: { name: string } }).assigned_staff?.name ?? null;
+}
+
+function assignedBirthday(s: Shift): string | null | undefined {
+  return (s as { assigned_staff?: { birthday?: string | null } }).assigned_staff?.birthday;
+}
+
+/** One day's shifts, split into a colored section per department and sorted
+ *  by assigned staff name within each — unassigned shifts sort last. */
+function groupByDepartment(shifts: Shift[]): DeptGroup[] {
+  const map = new Map<string, DeptGroup>();
+  for (const s of shifts) {
+    const id = s.department_id;
+    if (!map.has(id)) {
+      map.set(id, { department_id: id, name: s.departments?.name ?? 'Unknown', color: s.departments?.color, shifts: [] });
+    }
+    map.get(id)!.shifts.push(s);
+  }
+  const groups = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  for (const g of groups) {
+    g.shifts.sort((a, b) => (assignedName(a) ?? '￿').localeCompare(assignedName(b) ?? '￿'));
+  }
+  return groups;
+}
+
 function ShiftDayGroup({
-  group, onAdjust, onEdit, onRemove,
+  group, onAdjust, onEdit, onRemove, onCalledInSick,
 }: {
   group: DayGroup;
   onAdjust: (s: Shift) => void; onEdit: (s: Shift) => void; onRemove: (s: Shift) => void;
+  onCalledInSick: (s: Shift) => void;
 }) {
   return (
     <div className="card overflow-hidden">
@@ -74,41 +103,58 @@ function ShiftDayGroup({
         <span className="font-semibold text-slate-800 text-sm">{formatDate(group.date)}</span>
         <span className="badge-slate">{group.shifts.length}</span>
       </div>
-      <table className="w-full text-sm">
-        <thead className="border-b border-slate-100">
-          <tr>
-            {['Time', 'Duration', 'Department', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
-              <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {group.shifts.map(s => (
-            <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-              <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
-              <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
-              <td className="px-4 py-3 text-slate-700">{s.departments?.name ?? '—'}</td>
-              <td className="px-4 py-3">
-                <span className="badge-slate capitalize">{s.required_role}</span>
-              </td>
-              <td className="px-4 py-3">
-                {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
-              </td>
-              <td className="px-4 py-3">
-                <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
-              </td>
-              <td className="px-4 py-3 text-slate-500 text-xs">{(s as {assigned_staff?: {name: string}}).assigned_staff?.name ?? '—'}</td>
-              <td className="px-4 py-3">
-                <div className="flex gap-1">
-                  <button onClick={() => onAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
-                  <button onClick={() => onEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
-                  <button onClick={() => onRemove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {groupByDepartment(group.shifts).map(dg => (
+        <div key={dg.department_id} className={`border-l-4 ${deptBorderClass(dg.color)}`}>
+          <div className="px-4 py-1.5 bg-slate-50/60 border-b border-slate-100 flex items-center gap-2">
+            <span className={deptBadgeClass(dg.color)}>{dg.name}</span>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="border-b border-slate-100">
+              <tr>
+                {['Time', 'Duration', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
+                  <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {dg.shifts.map(s => {
+                const name = assignedName(s);
+                const isBday = isBirthday(assignedBirthday(s), group.date);
+                return (
+                  <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
+                    <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
+                    <td className="px-4 py-3">
+                      <span className="badge-slate capitalize">{s.required_role}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-500 text-xs">
+                      {name ?? '—'}{isBday && <span title="Birthday today" className="ml-1">🎁</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        {s.assigned_staff_id && (
+                          <button onClick={() => onCalledInSick(s)} title="Called in sick — reopen this shift" className="btn-ghost p-1.5 text-amber-500">
+                            <Thermometer size={13} />
+                          </button>
+                        )}
+                        <button onClick={() => onAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
+                        <button onClick={() => onEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
+                        <button onClick={() => onRemove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
     </div>
   );
 }
@@ -419,6 +465,17 @@ export default function ShiftsPage() {
     load();
   }
 
+  /** Reopens the shift so it shows up on Cover Shift like any other open
+   *  shift — the same state a lost claim race leaves it in. */
+  async function calledInSick(s: Shift) {
+    if (!confirm(`Mark ${(s as { assigned_staff?: { name: string } }).assigned_staff?.name ?? 'this person'} as called in sick and reopen the shift?`)) return;
+    await fetch(`/api/shifts/${s.id}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'open', assigned_staff_id: null }),
+    });
+    load();
+  }
+
   async function handleImportCsv(file: File) {
     Papa.parse(file, {
       header: true,
@@ -476,22 +533,37 @@ export default function ShiftsPage() {
     () => shifts.filter(s => s.date === timelineDate && (!timelineDept || s.department_id === timelineDept)),
     [shifts, timelineDate, timelineDept]
   );
-  const { unassigned, staffRows } = useMemo(() => {
-    const byStaff = new Map<string, { name: string; shifts: Shift[] }>();
+  const { unassigned, timelineDeptGroups } = useMemo(() => {
+    const byStaff = new Map<string, { name: string; birthday?: string | null; shifts: Shift[] }>();
     const open: Shift[] = [];
     for (const s of timelineShifts) {
       const assignedName = (s as { assigned_staff?: { name: string } }).assigned_staff?.name;
+      const birthday = (s as { assigned_staff?: { birthday?: string | null } }).assigned_staff?.birthday;
       if (s.assigned_staff_id && assignedName) {
-        if (!byStaff.has(s.assigned_staff_id)) byStaff.set(s.assigned_staff_id, { name: assignedName, shifts: [] });
+        if (!byStaff.has(s.assigned_staff_id)) byStaff.set(s.assigned_staff_id, { name: assignedName, birthday, shifts: [] });
         byStaff.get(s.assigned_staff_id)!.shifts.push(s);
       } else {
         open.push(s);
       }
     }
-    return {
-      unassigned: open,
-      staffRows: Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name)),
-    };
+
+    // A staff row can only sit under one colored section — grouped by the
+    // department of their earliest shift that day, on the rare day someone
+    // legitimately works more than one.
+    const rows = Array.from(byStaff.values());
+    const deptMap = new Map<string, { department_id: string; name: string; color: string | null | undefined; rows: typeof rows }>();
+    for (const row of rows) {
+      const earliest = [...row.shifts].sort((a, b) => a.start_time.localeCompare(b.start_time))[0];
+      const deptId = earliest.department_id;
+      if (!deptMap.has(deptId)) {
+        deptMap.set(deptId, { department_id: deptId, name: earliest.departments?.name ?? 'Unknown', color: earliest.departments?.color, rows: [] });
+      }
+      deptMap.get(deptId)!.rows.push(row);
+    }
+    const timelineDeptGroups = Array.from(deptMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    for (const g of timelineDeptGroups) g.rows.sort((a, b) => a.name.localeCompare(b.name));
+
+    return { unassigned: open, timelineDeptGroups };
   }, [timelineShifts]);
 
   function timelineBar(s: Shift) {
@@ -629,7 +701,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No upcoming shifts.</p></div>
           )}
           {futureGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} />
           ))}
         </div>
       ) : view === 'past' ? (
@@ -638,7 +710,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No past shifts.</p></div>
           )}
           {pastGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} />
           ))}
         </div>
       ) : (
@@ -676,19 +748,26 @@ export default function ShiftsPage() {
                     </div>
                   )}
 
-                  {staffRows.map(({ name, shifts: rowShifts }) => (
-                    <div key={name} className="flex items-center py-2">
-                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                        {name}
+                  {timelineDeptGroups.map(dg => (
+                    <div key={dg.department_id}>
+                      <div className={`flex items-center gap-2 py-1.5 border-l-4 pl-2 ${deptBorderClass(dg.color)}`}>
+                        <span className={deptBadgeClass(dg.color)}>{dg.name}</span>
                       </div>
-                      <div className="relative flex-1 h-7 rounded bg-slate-50">
-                        <div className="absolute inset-0 flex pointer-events-none">
-                          {timelineHours.map(h => (
-                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
-                          ))}
+                      {dg.rows.map(({ name, birthday, shifts: rowShifts }) => (
+                        <div key={name} className="flex items-center py-2">
+                          <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                            {name}{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
+                          </div>
+                          <div className="relative flex-1 h-7 rounded bg-slate-50">
+                            <div className="absolute inset-0 flex pointer-events-none">
+                              {timelineHours.map(h => (
+                                <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                              ))}
+                            </div>
+                            {rowShifts.map(timelineBar)}
+                          </div>
                         </div>
-                        {rowShifts.map(timelineBar)}
-                      </div>
+                      ))}
                     </div>
                   ))}
                 </div>

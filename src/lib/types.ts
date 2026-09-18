@@ -5,6 +5,7 @@ export type RequiredRole = 'junior' | 'senior' | 'any';
 export type TrainingLevel = 'trained' | 'supervised' | 'advanced';
 export type IncidentType = 'no_show' | 'no_answer' | 'rejected' | 'covered';
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+export type EmploymentType = 'casual' | 'part_time' | 'full_time' | 'salary';
 
 export interface Staff {
   id: string;
@@ -16,6 +17,11 @@ export interface Staff {
   phone?: string;
   phone_e164?: string | null;
   sms_opt_out?: boolean;
+  /** "MM-DD" or a full date string — only the month and day are ever used. */
+  birthday?: string | null;
+  employment_type?: EmploymentType | null;
+  /** Informational only — shift cost always comes from the Wage Matrix, never this. */
+  pay_rate?: number | null;
   created_at: string;
   // joined fields
   staff_departments?: StaffDepartment[];
@@ -26,6 +32,8 @@ export interface Department {
   id: string;
   name: string;
   requires_supervisor: boolean;
+  color?: string | null;
+  is_default?: boolean;
   created_at: string;
 }
 

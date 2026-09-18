@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
 import { readImage, readImageRequest, readPdf, readPdfRequest, visionErrorResponse } from '@/lib/vision';
-import { parseWageRows, ScannedWageRow } from '@/lib/wages';
+import { parseWageRows, csvRowsToScannedWageRows, ScannedWageRow } from '@/lib/wages';
 import { matchStaffName, hasNameCandidate, RosterEntry } from '@/lib/roster';
 
 /**
@@ -59,27 +59,37 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
 
   const body = await req.json().catch(() => null);
-  const isPdf = !!(body && typeof body === 'object' && 'pdf' in body);
+  const isCsv = !!(body && typeof body === 'object' && 'csv' in body);
+  const isPdf = !isCsv && !!(body && typeof body === 'object' && 'pdf' in body);
+  const kind = isCsv ? 'CSV' : isPdf ? 'PDF' : 'photo';
 
   let data: { rows?: ScannedWageRow[] };
-  try {
-    if (isPdf) {
-      const request = readPdfRequest(body);
-      if (request instanceof NextResponse) return request;
-      ({ data } = await readPdf<{ rows?: ScannedWageRow[] }>(request, instructionsFor('PDF'), WAGE_SCHEMA));
-    } else {
-      const request = readImageRequest(body);
-      if (request instanceof NextResponse) return request;
-      ({ data } = await readImage<{ rows?: ScannedWageRow[] }>(request, instructionsFor('photograph'), WAGE_SCHEMA));
+  if (isCsv) {
+    const csvRows = (body as { csv?: Record<string, string>[] }).csv;
+    if (!Array.isArray(csvRows) || !csvRows.length) {
+      return NextResponse.json({ error: 'That CSV had no rows.' }, { status: 400 });
     }
-  } catch (err) {
-    return visionErrorResponse(err, isPdf ? 'PDF' : 'wage sheet');
+    data = { rows: csvRowsToScannedWageRows(csvRows) };
+  } else {
+    try {
+      if (isPdf) {
+        const request = readPdfRequest(body);
+        if (request instanceof NextResponse) return request;
+        ({ data } = await readPdf<{ rows?: ScannedWageRow[] }>(request, instructionsFor('PDF'), WAGE_SCHEMA));
+      } else {
+        const request = readImageRequest(body);
+        if (request instanceof NextResponse) return request;
+        ({ data } = await readImage<{ rows?: ScannedWageRow[] }>(request, instructionsFor('photograph'), WAGE_SCHEMA));
+      }
+    } catch (err) {
+      return visionErrorResponse(err, kind);
+    }
   }
 
   const { wages, warnings } = parseWageRows(data.rows ?? []);
   if (!wages.length) {
     return NextResponse.json(
-      { error: `No rates could be read from that ${isPdf ? 'PDF' : 'photo'}. Try again with the whole sheet in frame.`, warnings },
+      { error: `No rates could be read from that ${kind}. ${isCsv ? 'Check it has a name column and a rate column.' : 'Try again with the whole sheet in frame.'}`, warnings },
       { status: 422 }
     );
   }

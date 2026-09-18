@@ -277,7 +277,7 @@ export default function AvailabilityPage() {
                                   {formatTimeShort(t.start_time)}–{formatTimeShort(t.end_time)}
                                 </span>
                               )
-                              : <span className="inline-block w-5 h-5 rounded-full bg-slate-100" title="Not available" />
+                              : <span className="inline-block w-5 h-5 rounded-full bg-red-100 border border-red-200" title="Not available" />
                             }
                           </td>
                         );
