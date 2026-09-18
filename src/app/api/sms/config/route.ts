@@ -19,7 +19,7 @@ export async function GET() {
     allowlist_size: getAllowlist().length,
     timezone: getTimezone(),
     expiry_minutes: getExpiryMinutes(),
-    quiet_hours_now: isQuietHours(),
+    quiet_hours_now: await isQuietHours(),
     simulation_enabled: mode !== 'live',
   });
 }

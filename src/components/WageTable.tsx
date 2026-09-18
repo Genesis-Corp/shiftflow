@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign, CalendarDays, Clock, Sparkles, Globe } from 'lucide-react';
+import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign, CalendarDays, Clock, Sparkles, Globe, Moon } from 'lucide-react';
 import Modal from '@/components/Modal';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
@@ -40,6 +40,8 @@ interface StoreSettings {
   id: string;
   country: string | null;
   state: string | null;
+  quiet_hours_start: string | null;
+  quiet_hours_end: string | null;
 }
 
 interface ScanResult {
@@ -91,6 +93,11 @@ export default function WageTable() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  const [quietStartInput, setQuietStartInput] = useState('');
+  const [quietEndInput, setQuietEndInput] = useState('');
+  const [savingQuietHours, setSavingQuietHours] = useState(false);
+  const [quietHoursError, setQuietHoursError] = useState('');
+
   const [newTier, setNewTier] = useState<Record<EmploymentCategory, { hours: string; pct: string }>>({
     ft_pt: { hours: '', pct: '' },
     casual: { hours: '', pct: '' },
@@ -116,6 +123,8 @@ export default function WageTable() {
       setSettings(result);
       setCountryInput(result.country ?? '');
       setStateInput(result.state ?? '');
+      setQuietStartInput(result.quiet_hours_start?.slice(0, 5) ?? '');
+      setQuietEndInput(result.quiet_hours_end?.slice(0, 5) ?? '');
     } catch {
       // Store settings aren't essential to the rest of the page — leave the inputs blank rather than blocking.
     }
@@ -218,6 +227,25 @@ export default function WageTable() {
     });
     setSavingSettings(false);
     if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? 'Could not save store settings.'); return; }
+    loadSettings();
+  }
+
+  async function saveQuietHours(e: React.FormEvent) {
+    e.preventDefault();
+    const start = quietStartInput.trim();
+    const end = quietEndInput.trim();
+    if ((start && !end) || (!start && end)) {
+      setQuietHoursError('Set both a start and end time, or clear both to turn quiet hours off.');
+      return;
+    }
+    setQuietHoursError('');
+    setSavingQuietHours(true);
+    const res = await fetch('/api/settings/store', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quiet_hours_start: start || null, quiet_hours_end: end || null }),
+    });
+    setSavingQuietHours(false);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setQuietHoursError(d.error ?? 'Could not save quiet hours.'); return; }
     loadSettings();
   }
 
@@ -504,6 +532,49 @@ export default function WageTable() {
               <Plus size={12} />
             </button>
           </form>
+        )}
+      </div>
+
+      {/* ── SMS quiet hours ─────────────────────────────────────────────── */}
+      <div className="card p-5">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-1">
+          <Moon size={16} className="text-slate-400" /> SMS Quiet Hours
+        </h2>
+        <p className="text-xs text-slate-500 mb-3">
+          No shift-cover texts go out in this window — set it however early or late this store actually needs. A
+          genuine no-show still gets a call through regardless, since that can&apos;t wait for quiet hours to end.
+          Leave both blank to allow texts at any hour.
+        </p>
+
+        <form onSubmit={saveQuietHours} className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Starts</label>
+            <input
+              type="time" className="input text-xs px-2 py-1.5 w-28"
+              value={quietStartInput} onChange={e => setQuietStartInput(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Ends</label>
+            <input
+              type="time" className="input text-xs px-2 py-1.5 w-28"
+              value={quietEndInput} onChange={e => setQuietEndInput(e.target.value)}
+            />
+          </div>
+          <button type="submit" disabled={savingQuietHours} className="btn-secondary text-xs px-2 py-1.5 flex items-center gap-1">
+            <Moon size={12} /> {savingQuietHours ? 'Saving…' : 'Save'}
+          </button>
+        </form>
+
+        {quietHoursError && <p className="text-xs text-red-600 mt-2">{quietHoursError}</p>}
+
+        {settings?.quiet_hours_start && settings?.quiet_hours_end ? (
+          <p className="text-xs text-slate-400 mt-2">
+            Currently {settings.quiet_hours_start.slice(0, 5)}–{settings.quiet_hours_end.slice(0, 5)}
+            {settings.quiet_hours_start.slice(0, 5) > settings.quiet_hours_end.slice(0, 5) && ', crossing midnight'}.
+          </p>
+        ) : (
+          <p className="text-xs text-slate-400 mt-2">No quiet hours set — texts can go out at any hour.</p>
         )}
       </div>
 

@@ -1,4 +1,5 @@
 import { parseNumberList } from '@/lib/phone';
+import { supabaseAdmin } from '@/lib/supabaseAdmin';
 
 export type SmsMode = 'console' | 'redirect' | 'live';
 
@@ -47,8 +48,10 @@ export function getMaxRecipients(): number {
   return Number.isFinite(n) && n > 0 ? n : 25;
 }
 
-/** Parsed SMS_QUIET_HOURS, e.g. "21:00-07:00". Null when unset. */
-export function getQuietHours(): { start: string; end: string } | null {
+/** Parsed SMS_QUIET_HOURS, e.g. "21:00-07:00". Null when unset. Only a
+ *  fallback now, for before the store has saved a quiet-hours window of
+ *  their own in Settings — see getQuietHours() below. */
+function getQuietHoursFromEnv(): { start: string; end: string } | null {
   const raw = process.env.SMS_QUIET_HOURS?.trim();
   if (!raw) return null;
   const m = raw.match(/^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/);
@@ -57,6 +60,25 @@ export function getQuietHours(): { start: string; end: string } | null {
     return null;
   }
   return { start: m[1], end: m[2] };
+}
+
+/**
+ * The store's own quiet-hours window (Settings → SMS Quiet Hours) — set by
+ * whoever runs the store, not a developer, since what counts as "too early"
+ * varies store to store and can change. Falls back to SMS_QUIET_HOURS until
+ * the store has saved one of their own. Null means no quiet hours at all.
+ */
+export async function getQuietHours(): Promise<{ start: string; end: string } | null> {
+  const { data } = await supabaseAdmin
+    .from('store_settings')
+    .select('quiet_hours_start, quiet_hours_end')
+    .eq('id', 'current')
+    .maybeSingle();
+
+  if (data?.quiet_hours_start && data?.quiet_hours_end) {
+    return { start: data.quiet_hours_start.slice(0, 5), end: data.quiet_hours_end.slice(0, 5) };
+  }
+  return getQuietHoursFromEnv();
 }
 
 /** Current wall-clock time in the configured timezone, as "HH:MM". */
@@ -77,8 +99,8 @@ export function localDateNow(now: Date = new Date()): string {
  * Whether we are currently inside the configured quiet hours. Windows that
  * wrap past midnight (21:00-07:00) are handled.
  */
-export function isQuietHours(now: Date = new Date()): boolean {
-  const window = getQuietHours();
+export async function isQuietHours(now: Date = new Date()): Promise<boolean> {
+  const window = await getQuietHours();
   if (!window) return false;
   const t = localTimeNow(now);
   return window.start <= window.end

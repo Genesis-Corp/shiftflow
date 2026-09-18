@@ -171,7 +171,7 @@ export async function startRace(
 
   // The immediate tier is the no-show case — there is no time to respect
   // quiet hours, someone has to be woken up. Gather and sequential can wait.
-  if (tier !== 'immediate' && isQuietHours() && !opts.force) {
+  if (tier !== 'immediate' && (await isQuietHours()) && !opts.force) {
     throw new RaceError(
       `It is currently quiet hours in ${getTimezone()}. Re-send with force to override.`
     );
