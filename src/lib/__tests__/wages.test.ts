@@ -2,11 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   calculateShiftCost, ageBracketFor, ageInYears, monthsOfService,
   parseDollarAmount, csvRowsToBaseRate,
-  AgeBracket, TimeLoading, EmploymentCategory,
+  AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride,
 } from '../wages';
 
-// Mirrors the seed data in 20260919_award_wage_matrix.sql, taken directly
-// off Farmer Jack's 2026 Wage Table.
+// Mirrors the seed data in 20260919_award_wage_matrix.sql and
+// 20260920_settings_and_overtime.sql, taken directly off Farmer Jack's 2026
+// Wage Table.
 const ADULT_BASE_RATE = 28.69;
 
 const AGE_BRACKETS: AgeBracket[] = [
@@ -20,31 +21,40 @@ const AGE_BRACKETS: AgeBracket[] = [
   { id: '8', label: 'Adult', min_age: 21, max_age: null, min_service_months: null, percentage: 100 },
 ];
 
-function timeLoading(over: Partial<TimeLoading> & { label: string; employment_category: EmploymentCategory; percentage: number }): TimeLoading {
+function timeLoading(
+  over: Partial<TimeLoading> & { label: string; employment_category: EmploymentCategory; percentage: number; category_group: string }
+): TimeLoading {
   return {
     id: over.label + over.employment_category, days: [], start_time: '00:00', end_time: '24:00',
-    is_public_holiday: false, is_overtime: false, ...over,
+    is_public_holiday: false, ...over,
   };
 }
 
 const TIME_LOADINGS: TimeLoading[] = [
-  timeLoading({ label: 'Before 7am (Mon-Sat)', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5, 6], start_time: '00:00', end_time: '07:00', percentage: 146 }),
-  timeLoading({ label: 'Weekday ordinary', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5], start_time: '07:00', end_time: '18:00', percentage: 100 }),
-  timeLoading({ label: 'Weekday evening', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5], start_time: '18:00', end_time: '23:00', percentage: 122 }),
-  timeLoading({ label: 'Saturday ordinary', employment_category: 'ft_pt', days: [6], start_time: '07:00', end_time: '23:00', percentage: 122 }),
-  timeLoading({ label: 'Sunday before 9am', employment_category: 'ft_pt', days: [0], start_time: '00:00', end_time: '09:00', percentage: 195 }),
-  timeLoading({ label: 'Sunday ordinary', employment_category: 'ft_pt', days: [0], start_time: '09:00', end_time: '23:00', percentage: 150 }),
-  timeLoading({ label: 'Public holiday', employment_category: 'ft_pt', percentage: 220, is_public_holiday: true }),
-  timeLoading({ label: 'Overtime', employment_category: 'ft_pt', percentage: 150, is_overtime: true }),
+  timeLoading({ label: 'Before 7am (Mon-Sat)', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5, 6], start_time: '00:00', end_time: '07:00', percentage: 146, category_group: 'before_open' }),
+  timeLoading({ label: 'Weekday ordinary', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5], start_time: '07:00', end_time: '18:00', percentage: 100, category_group: 'weekday' }),
+  timeLoading({ label: 'Weekday evening', employment_category: 'ft_pt', days: [1, 2, 3, 4, 5], start_time: '18:00', end_time: '23:00', percentage: 122, category_group: 'evening' }),
+  timeLoading({ label: 'Saturday ordinary', employment_category: 'ft_pt', days: [6], start_time: '07:00', end_time: '23:00', percentage: 122, category_group: 'saturday' }),
+  timeLoading({ label: 'Sunday before 9am', employment_category: 'ft_pt', days: [0], start_time: '00:00', end_time: '09:00', percentage: 195, category_group: 'sunday' }),
+  timeLoading({ label: 'Sunday ordinary', employment_category: 'ft_pt', days: [0], start_time: '09:00', end_time: '23:00', percentage: 150, category_group: 'sunday' }),
+  timeLoading({ label: 'Public holiday', employment_category: 'ft_pt', percentage: 220, is_public_holiday: true, category_group: 'public_holiday' }),
 
-  timeLoading({ label: 'Before 7am (Mon-Sat)', employment_category: 'casual', days: [1, 2, 3, 4, 5, 6], start_time: '00:00', end_time: '07:00', percentage: 170 }),
-  timeLoading({ label: 'Weekday ordinary', employment_category: 'casual', days: [1, 2, 3, 4, 5], start_time: '07:00', end_time: '18:00', percentage: 122 }),
-  timeLoading({ label: 'Weekday evening', employment_category: 'casual', days: [1, 2, 3, 4, 5], start_time: '18:00', end_time: '23:00', percentage: 146 }),
-  timeLoading({ label: 'Saturday ordinary', employment_category: 'casual', days: [6], start_time: '07:00', end_time: '23:00', percentage: 146 }),
-  timeLoading({ label: 'Sunday before 9am', employment_category: 'casual', days: [0], start_time: '00:00', end_time: '09:00', percentage: 220 }),
-  timeLoading({ label: 'Sunday ordinary', employment_category: 'casual', days: [0], start_time: '09:00', end_time: '23:00', percentage: 170 }),
-  timeLoading({ label: 'Public holiday', employment_category: 'casual', percentage: 245, is_public_holiday: true }),
-  timeLoading({ label: 'Overtime', employment_category: 'casual', percentage: 170, is_overtime: true }),
+  timeLoading({ label: 'Before 7am (Mon-Sat)', employment_category: 'casual', days: [1, 2, 3, 4, 5, 6], start_time: '00:00', end_time: '07:00', percentage: 170, category_group: 'before_open' }),
+  timeLoading({ label: 'Weekday ordinary', employment_category: 'casual', days: [1, 2, 3, 4, 5], start_time: '07:00', end_time: '18:00', percentage: 122, category_group: 'weekday' }),
+  timeLoading({ label: 'Weekday evening', employment_category: 'casual', days: [1, 2, 3, 4, 5], start_time: '18:00', end_time: '23:00', percentage: 146, category_group: 'evening' }),
+  timeLoading({ label: 'Saturday ordinary', employment_category: 'casual', days: [6], start_time: '07:00', end_time: '23:00', percentage: 146, category_group: 'saturday' }),
+  timeLoading({ label: 'Sunday before 9am', employment_category: 'casual', days: [0], start_time: '00:00', end_time: '09:00', percentage: 220, category_group: 'sunday' }),
+  timeLoading({ label: 'Sunday ordinary', employment_category: 'casual', days: [0], start_time: '09:00', end_time: '23:00', percentage: 170, category_group: 'sunday' }),
+  timeLoading({ label: 'Public holiday', employment_category: 'casual', percentage: 245, is_public_holiday: true, category_group: 'public_holiday' }),
+];
+
+const OVERTIME_TIERS: OvertimeTier[] = [
+  { id: '1', employment_category: 'ft_pt', tier_order: 1, hours_into_overtime: 0, percentage: 150 },
+  { id: '2', employment_category: 'casual', tier_order: 1, hours_into_overtime: 0, percentage: 170 },
+];
+
+const OVERTIME_OVERRIDES: OvertimeOverride[] = [
+  { category_group: 'sunday', overridable: false },
 ];
 
 // 2026-09-17 is a Thursday, 2026-09-19 a Saturday, 2026-09-20 a Sunday.
@@ -56,13 +66,17 @@ function cost(
   args: { date: string; start_time: string; end_time: string; unpaid_break_minutes?: number },
   employment_category: EmploymentCategory,
   age_percentage: number,
-  isPublicHoliday = false
+  isPublicHoliday = false,
+  tiers: OvertimeTier[] = OVERTIME_TIERS,
+  overrides: OvertimeOverride[] = OVERTIME_OVERRIDES
 ) {
   return calculateShiftCost(
     { ...args, employment_category, age_percentage },
     ADULT_BASE_RATE,
     TIME_LOADINGS,
-    isPublicHoliday
+    isPublicHoliday,
+    tiers,
+    overrides
   );
 }
 
@@ -192,6 +206,49 @@ describe('calculateShiftCost — matches Farmer Jack\'s 2026 Wage Table exactly'
     const c = cost({ date: THU, start_time: '07:00', end_time: '17:00' }, 'ft_pt', 100, true);
     expect(c.segments).toHaveLength(1);
     expect(c.segments[0].multiplier).toBe(2.2);
+  });
+
+  it('steps up to a second overtime tier after its own threshold', () => {
+    // "First 3 hours of overtime at 1.5x, then 2x after that."
+    const tiers: OvertimeTier[] = [
+      { id: '1', employment_category: 'ft_pt', tier_order: 1, hours_into_overtime: 0, percentage: 150 },
+      { id: '2', employment_category: 'ft_pt', tier_order: 2, hours_into_overtime: 3, percentage: 200 },
+    ];
+    // 06:00-19:00 Thursday: 9h ordinary/evening, then 3h at tier 1 (150%), then 1h at tier 2 (200%).
+    const c = cost({ date: THU, start_time: '06:00', end_time: '19:00' }, 'ft_pt', 100, false, tiers, []);
+    const otSegments = c.segments.filter(s => s.rule === 'Overtime');
+    expect(otSegments).toEqual([
+      { start: '15:00', end: '18:00', minutes: 180, multiplier: 1.5, rule: 'Overtime' },
+      { start: '18:00', end: '19:00', minutes: 60, multiplier: 2, rule: 'Overtime' },
+    ]);
+  });
+
+  it('does not let overtime override Sunday rates by default, even though overtime pays more', () => {
+    // Sunday ordinary is 150%; overtime here is a flat 200%, which would
+    // normally win on price — but Sunday is marked not-overridable, so it
+    // doesn't. This mirrors real payslip behaviour: overtime replaced
+    // ordinary pay, but never cut into the Sunday loading.
+    const tiers: OvertimeTier[] = [{ id: '1', employment_category: 'ft_pt', tier_order: 1, hours_into_overtime: 0, percentage: 200 }];
+    const c = cost({ date: SUN, start_time: '08:00', end_time: '18:00' }, 'ft_pt', 100, false, tiers, OVERTIME_OVERRIDES);
+    // 9am-6pm is entirely the Sunday-ordinary bracket, so the whole overtime
+    // window (from 5pm) still reads as Sunday, not Overtime.
+    expect(c.segments.every(s => s.rule !== 'Overtime')).toBe(true);
+    expect(c.segments[c.segments.length - 1].multiplier).toBe(1.5);
+  });
+
+  it('lets overtime override a category once the override is flipped on', () => {
+    const tiers: OvertimeTier[] = [{ id: '1', employment_category: 'ft_pt', tier_order: 1, hours_into_overtime: 0, percentage: 200 }];
+    const overrides: OvertimeOverride[] = [{ category_group: 'sunday', overridable: true }];
+    const c = cost({ date: SUN, start_time: '08:00', end_time: '18:00' }, 'ft_pt', 100, false, tiers, overrides);
+    expect(c.segments.some(s => s.rule === 'Overtime')).toBe(true);
+  });
+
+  it('categories with no override row compete normally (higher wins)', () => {
+    // Evening (122%) has no override row configured; a 150% overtime tier
+    // should still win there by default.
+    const c = cost({ date: THU, start_time: '10:00', end_time: '20:00' }, 'ft_pt', 100, false, OVERTIME_TIERS, []);
+    const otSegment = c.segments.find(s => s.rule === 'Overtime');
+    expect(otSegment).toMatchObject({ multiplier: 1.5 });
   });
 
   it('falls back to the ordinary rate for an uncovered time (e.g. after 11pm)', () => {

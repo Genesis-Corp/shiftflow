@@ -14,7 +14,7 @@ interface Manager {
   invited: boolean;
 }
 
-export default function ManagersPage() {
+export default function SettingsPage() {
   const [managers, setManagers] = useState<Manager[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -48,7 +48,7 @@ export default function ManagersPage() {
     const data = await res.json();
     setInviting(false);
     if (!res.ok) { setInviteMsg(data.error ?? 'Failed to send invite'); return; }
-    setInviteMsg(`Invite sent to ${inviteEmail.trim()}.`);
+    setInviteMsg(`Invite sent to ${inviteEmail.trim()}. They'll be asked for their name and mobile number the first time they sign in.`);
     setInviteEmail('');
     load();
   }
@@ -65,8 +65,8 @@ export default function ManagersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Managers</h1>
-        <p className="text-sm text-slate-500">Who can sign in and manage ShiftFlow</p>
+        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
+        <p className="text-sm text-slate-500">Managers, wages and store configuration</p>
       </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={load} />}
@@ -88,7 +88,8 @@ export default function ManagersPage() {
         </form>
         {inviteMsg && <p className="text-sm text-slate-500 mt-2">{inviteMsg}</p>}
         <p className="text-xs text-slate-400 mt-2">
-          They&apos;ll get an email with a link to set their own password. Nobody&apos;s password passes through here.
+          They&apos;ll get an email with a link to set their own password, then fill in their name and mobile
+          number themselves the first time they sign in. Nobody&apos;s password passes through here.
         </p>
       </div>
 

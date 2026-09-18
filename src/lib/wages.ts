@@ -36,7 +36,7 @@ export interface TimeLoading {
   id: string;
   label: string;
   employment_category: EmploymentCategory;
-  /** 0 = Sunday .. 6 = Saturday. Ignored when is_public_holiday or is_overtime. */
+  /** 0 = Sunday .. 6 = Saturday. Ignored when is_public_holiday. */
   days: number[];
   start_time: string;
   /** May be "24:00" for a rule running to midnight. */
@@ -44,8 +44,30 @@ export interface TimeLoading {
   percentage: number;
   /** Applies whenever the shift's date is a public holiday, regardless of day/time. */
   is_public_holiday: boolean;
-  /** Applies to the portion of a single shift past the overtime threshold. */
-  is_overtime: boolean;
+  /** Which named rate category this belongs to — "sunday", "saturday", etc.
+   *  — for matching against overtime_overrides. */
+  category_group: string;
+}
+
+/** One overtime rate, taking over `hours_into_overtime` after overtime
+ *  starts — tier_order 1 always begins at hours_into_overtime 0. A second
+ *  tier at hours_into_overtime 3 replaces the first for the hours past that
+ *  ("the first 3 hours of overtime at 1.5x, then 2x after that"). */
+export interface OvertimeTier {
+  id: string;
+  employment_category: EmploymentCategory;
+  tier_order: number;
+  hours_into_overtime: number;
+  percentage: number;
+}
+
+/** Whether overtime is allowed to win over a given rate category. Missing
+ *  from this list = competes normally (the higher percentage wins).
+ *  overridable: false = that category's rate always wins over overtime for
+ *  those hours, whichever number is bigger. */
+export interface OvertimeOverride {
+  category_group: string;
+  overridable: boolean;
 }
 
 /** A single shift, past the overtime threshold, is paid overtime for the excess. */
@@ -146,15 +168,22 @@ export function calculateShiftCost(
   input: ShiftCostInput,
   adultBaseRate: number,
   timeLoadings: TimeLoading[],
-  isPublicHoliday: boolean
+  isPublicHoliday: boolean,
+  overtimeTiers: OvertimeTier[] = [],
+  overtimeOverrides: OvertimeOverride[] = []
 ): ShiftCost {
   const { date, start_time, end_time, employment_category, age_percentage } = input;
   const unpaidBreak = input.unpaid_break_minutes ?? 0;
 
-  const relevant = timeLoadings.filter(l => l.employment_category === employment_category);
-  const dayTimeRules = relevant.filter(l => !l.is_public_holiday && !l.is_overtime);
-  const phRule = relevant.find(l => l.is_public_holiday) ?? null;
-  const otRule = relevant.find(l => l.is_overtime) ?? null;
+  const dayTimeRules = timeLoadings.filter(l => l.employment_category === employment_category && !l.is_public_holiday);
+  const phRule = timeLoadings.find(l => l.employment_category === employment_category && l.is_public_holiday) ?? null;
+  // Highest hours_into_overtime first, so the first tier whose threshold the
+  // elapsed overtime has reached is the one that applies.
+  const tiers = overtimeTiers
+    .filter(t => t.employment_category === employment_category)
+    .sort((a, b) => b.hours_into_overtime - a.hours_into_overtime);
+  const overrideFor = (group: string) => overtimeOverrides.find(o => o.category_group === group) ?? null;
+
   // The lowest of this category's own day/time percentages is its ordinary
   // rate — the floor for any minute no rule explicitly covers (e.g. a
   // trading hour past 11pm this table doesn't list).
@@ -166,6 +195,13 @@ export function calculateShiftCost(
   const endM = startM + rosteredMinutes;
   const otStart = startM + OVERTIME_THRESHOLD_MINUTES;
 
+  /** The overtime percentage this many minutes into overtime, or null before it starts / with no tiers configured. */
+  function otPercentageAt(minutesIntoOT: number): number | null {
+    if (minutesIntoOT < 0 || !tiers.length) return null;
+    const tier = tiers.find(t => minutesIntoOT / 60 >= t.hours_into_overtime);
+    return tier ? tier.percentage : null;
+  }
+
   const boundaries = new Set<number>([startM, endM]);
   for (let dayOffset = 0; dayOffset <= Math.floor(endM / (24 * 60)); dayOffset++) {
     const base = dayOffset * 24 * 60;
@@ -175,7 +211,13 @@ export function calculateShiftCost(
       }
     }
   }
-  if (otRule && otStart > startM && otStart < endM) boundaries.add(otStart);
+  if (tiers.length && otStart > startM && otStart < endM) {
+    boundaries.add(otStart);
+    for (const tier of tiers) {
+      const edge = otStart + tier.hours_into_overtime * 60;
+      if (edge > startM && edge < endM) boundaries.add(edge);
+    }
+  }
 
   const points = [...boundaries].sort((a, b) => a - b);
   const segments: CostSegment[] = [];
@@ -191,10 +233,12 @@ export function calculateShiftCost(
     const mid = from + minutes / 2;
     let bestPct = floorPct;
     let bestLabel: string | null = null;
+    let bestGroup = 'weekday';
 
     if (isPublicHoliday && phRule) {
       bestPct = phRule.percentage;
       bestLabel = phRule.label;
+      bestGroup = 'public_holiday';
     } else {
       const dayOffset = Math.floor(mid / (24 * 60));
       const dow = (shiftDow + dayOffset) % 7;
@@ -205,13 +249,21 @@ export function calculateShiftCost(
         if (rule.percentage > bestPct) {
           bestPct = rule.percentage;
           bestLabel = rule.label;
+          bestGroup = rule.category_group;
         }
       }
     }
 
-    if (otRule && mid >= otStart && otRule.percentage > bestPct) {
-      bestPct = otRule.percentage;
-      bestLabel = otRule.label;
+    const otPct = mid >= otStart ? otPercentageAt(mid - otStart) : null;
+    if (otPct !== null) {
+      const override = overrideFor(bestGroup);
+      // No override row = compete normally. A row explicitly says whether
+      // overtime is allowed to beat this category's own rate.
+      const otCanWin = !override || override.overridable;
+      if (otCanWin && otPct > bestPct) {
+        bestPct = otPct;
+        bestLabel = 'Overtime';
+      }
     }
 
     // A boundary that turned out not to change anything (e.g. the overtime

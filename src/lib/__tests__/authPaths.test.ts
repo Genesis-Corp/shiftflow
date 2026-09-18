@@ -25,7 +25,7 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/')).toBe(false);
     expect(isPublicPath('/staff')).toBe(false);
     expect(isPublicPath('/api/staff')).toBe(false);
-    expect(isPublicPath('/managers')).toBe(false);
+    expect(isPublicPath('/settings')).toBe(false);
   });
 
   it('does not treat a path merely starting with a public prefix as public', () => {

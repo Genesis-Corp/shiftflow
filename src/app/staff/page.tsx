@@ -132,7 +132,7 @@ export default function StaffPage() {
     const bracket = ageBracketFor(s.birthday, todayStr(), s.commencement_date, wages.age_brackets);
     if (!bracket) return null;
     const ordinary = wages.time_loadings.find(l =>
-      l.employment_category === category && !l.is_public_holiday && !l.is_overtime && l.days.includes(1)
+      l.employment_category === category && !l.is_public_holiday && l.days.includes(1)
     );
     if (!ordinary) return null;
     const rate = wages.base_rate.adult_hourly_rate * (bracket.percentage / 100) * (ordinary.percentage / 100);

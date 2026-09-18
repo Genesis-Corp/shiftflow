@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
-import { LogOut } from 'lucide-react';
+import { LogOut, Settings } from 'lucide-react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/browser';
 
 const links = [
@@ -13,7 +13,6 @@ const links = [
   { href: '/staff',        label: 'Staff' },
   { href: '/departments',  label: 'Departments' },
   { href: '/reliability',  label: 'Reliability' },
-  { href: '/managers',     label: 'Managers' },
 ];
 
 export default function Navbar({ userEmail }: { userEmail: string | null }) {
@@ -57,6 +56,15 @@ export default function Navbar({ userEmail }: { userEmail: string | null }) {
               <span className="hidden md:inline text-xs text-blue-100 truncate max-w-[14rem]" title={userEmail}>
                 {userEmail}
               </span>
+              <Link
+                href="/settings"
+                title="Settings"
+                className={`p-1.5 rounded-md transition-colors ${
+                  pathname === '/settings' ? 'bg-blue-900 text-white' : 'text-blue-100 hover:bg-blue-600'
+                }`}
+              >
+                <Settings size={15} />
+              </Link>
               <button
                 onClick={logOut}
                 title="Log out"

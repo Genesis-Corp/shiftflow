@@ -16,23 +16,29 @@ export async function GET() {
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const [baseRes, bracketsRes, loadingsRes, holidaysRes] = await Promise.all([
+  const [baseRes, bracketsRes, loadingsRes, holidaysRes, tiersRes, overridesRes] = await Promise.all([
     supabase.from('wage_base_rate').select('*').eq('id', 'current').maybeSingle(),
     supabase.from('age_brackets').select('*').order('sort_order'),
     supabase.from('time_loadings').select('*'),
     supabase.from('public_holidays').select('*').order('date'),
+    supabase.from('overtime_tiers').select('*').order('employment_category').order('tier_order'),
+    supabase.from('overtime_overrides').select('*'),
   ]);
 
   if (baseRes.error) return NextResponse.json({ error: baseRes.error.message }, { status: 500 });
   if (bracketsRes.error) return NextResponse.json({ error: bracketsRes.error.message }, { status: 500 });
   if (loadingsRes.error) return NextResponse.json({ error: loadingsRes.error.message }, { status: 500 });
   if (holidaysRes.error) return NextResponse.json({ error: holidaysRes.error.message }, { status: 500 });
+  if (tiersRes.error) return NextResponse.json({ error: tiersRes.error.message }, { status: 500 });
+  if (overridesRes.error) return NextResponse.json({ error: overridesRes.error.message }, { status: 500 });
 
   return NextResponse.json({
     base_rate: baseRes.data,
     age_brackets: bracketsRes.data ?? [],
     time_loadings: loadingsRes.data ?? [],
     public_holidays: holidaysRes.data ?? [],
+    overtime_tiers: tiersRes.data ?? [],
+    overtime_overrides: overridesRes.data ?? [],
   });
 }
 

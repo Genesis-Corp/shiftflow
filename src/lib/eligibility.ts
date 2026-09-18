@@ -4,7 +4,9 @@ import {
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday,
 } from '@/lib/shiftUtils';
-import { calculateShiftCost, ageBracketFor, AgeBracket, TimeLoading, EmploymentCategory } from '@/lib/wages';
+import {
+  calculateShiftCost, ageBracketFor, AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride,
+} from '@/lib/wages';
 import { rankCandidates } from '@/lib/coverTiers';
 
 /**
@@ -161,16 +163,20 @@ export async function findEligibleCandidates(
   // The award structure, so a manager can weigh cost alongside suitability.
   // A missing birthday isn't an error: the person still shows, just without
   // a figure, which is more honest than costing them at zero.
-  const [baseRes, bracketsRes, loadingsRes, holidayRes] = await Promise.all([
+  const [baseRes, bracketsRes, loadingsRes, holidayRes, tiersRes, overridesRes] = await Promise.all([
     supabaseAdmin.from('wage_base_rate').select('adult_hourly_rate').eq('id', 'current').maybeSingle(),
     supabaseAdmin.from('age_brackets').select('*'),
     supabaseAdmin.from('time_loadings').select('*'),
     supabaseAdmin.from('public_holidays').select('date').eq('date', date).maybeSingle(),
+    supabaseAdmin.from('overtime_tiers').select('*'),
+    supabaseAdmin.from('overtime_overrides').select('*'),
   ]);
   const adultBaseRate = baseRes.data?.adult_hourly_rate ? Number(baseRes.data.adult_hourly_rate) : null;
   const ageBrackets = (bracketsRes.data ?? []) as AgeBracket[];
   const timeLoadings = (loadingsRes.data ?? []) as TimeLoading[];
   const isPublicHoliday = !!holidayRes.data;
+  const overtimeTiers = (tiersRes.data ?? []) as OvertimeTier[];
+  const overtimeOverrides = (overridesRes.data ?? []) as OvertimeOverride[];
   const breakMinutes = requiresBreak(start_time.slice(0, 5), end_time.slice(0, 5)) ? BREAK_DURATION_MINUTES : 0;
 
   const costFor = (s: (typeof allStaff)[number]): number | null => {
@@ -184,7 +190,7 @@ export async function findEligibleCandidates(
         date, start_time, end_time, unpaid_break_minutes: breakMinutes,
         employment_category: category, age_percentage: bracket.percentage,
       },
-      adultBaseRate, timeLoadings, isPublicHoliday
+      adultBaseRate, timeLoadings, isPublicHoliday, overtimeTiers, overtimeOverrides
     ).cost;
   };
 
