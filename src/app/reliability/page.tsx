@@ -7,7 +7,7 @@ import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
-import { formatDate } from '@/lib/shiftUtils';
+import { formatDate, todayStr } from '@/lib/shiftUtils';
 
 const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string; delta: string }> = {
   no_show:  { label: 'No Show',    icon: <UserX size={13} />,      badge: 'badge-red',    delta: '−15' },
@@ -21,7 +21,7 @@ export default function ReliabilityPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: new Date().toISOString().split('T')[0], notes: '' });
+  const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: todayStr(), notes: '' });
   const [filterStaff, setFilterStaff] = useState('');
 
   async function load() {

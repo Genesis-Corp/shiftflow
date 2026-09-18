@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriangle, Award, Phone } from 'lucide-react';
-import { formatDate, weekBounds, shiftDurationMinutes } from '@/lib/shiftUtils';
+import { formatDate, weekBounds, shiftDurationMinutes, todayStr } from '@/lib/shiftUtils';
 import ReliabilityBar from '@/components/ReliabilityBar';
 
 interface Stats {
@@ -26,7 +26,7 @@ export default function Dashboard() {
   const [openShifts, setOpenShifts] = useState<{ id: string; date: string; start_time: string; end_time: string; departments: { name: string } }[]>([]);
   const [needsAttention, setNeedsAttention] = useState<AttentionStaff[]>([]);
   const [highAchievers, setHighAchievers] = useState<HighAchiever[]>([]);
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
 
   useEffect(() => {
     async function load() {

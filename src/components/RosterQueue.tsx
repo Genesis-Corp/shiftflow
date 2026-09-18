@@ -6,7 +6,7 @@ import Modal from '@/components/Modal';
 import { Department } from '@/lib/types';
 import { RosterJob } from '@/lib/roster';
 import type { RosterPlan } from '@/app/api/import-roster/route';
-import { formatDate, RELIABILITY_DELTAS } from '@/lib/shiftUtils';
+import { formatDate, RELIABILITY_DELTAS, addDays } from '@/lib/shiftUtils';
 
 interface Props {
   jobs: RosterJob[];
@@ -88,9 +88,9 @@ export default function RosterQueue({
                     <div>
                       <label className="label">Date of this roster</label>
                       <div className="flex gap-1">
-                        <button onClick={() => onChangeTarget(job.id, shiftDate(job.date, -1), job.department_id)} className="btn-secondary px-2" aria-label="Day before"><ChevronLeft size={15} /></button>
+                        <button onClick={() => onChangeTarget(job.id, addDays(job.date, -1), job.department_id)} className="btn-secondary px-2" aria-label="Day before"><ChevronLeft size={15} /></button>
                         <input type="date" className="input flex-1" value={job.date} onChange={e => onChangeTarget(job.id, e.target.value, job.department_id)} />
-                        <button onClick={() => onChangeTarget(job.id, shiftDate(job.date, 1), job.department_id)} className="btn-secondary px-2" aria-label="Day after"><ChevronRight size={15} /></button>
+                        <button onClick={() => onChangeTarget(job.id, addDays(job.date, 1), job.department_id)} className="btn-secondary px-2" aria-label="Day after"><ChevronRight size={15} /></button>
                       </div>
                       <p className="text-xs text-slate-500 mt-1">{formatDate(job.date)}</p>
                     </div>
@@ -230,10 +230,4 @@ function summarise(plan: RosterPlan): string {
   if (plan.unmatched.length) parts.push(`${plan.unmatched.length} need checking`);
   if (plan.unreadable.length) parts.push(`${plan.unreadable.length} unreadable`);
   return parts.join(' · ');
-}
-
-function shiftDate(date: string, days: number): string {
-  const moved = new Date(`${date}T00:00:00`);
-  moved.setDate(moved.getDate() + days);
-  return moved.toISOString().split('T')[0];
 }

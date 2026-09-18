@@ -18,6 +18,7 @@ import { postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
 import { isAvailabilitySheet, matrixToObjects } from '@/lib/availabilitySheet';
+import { todayStr } from '@/lib/shiftUtils';
 import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
 import Papa from 'papaparse';
@@ -386,7 +387,7 @@ export default function StaffPage() {
     const blob = new Blob([csv], { type: 'text/csv' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `availability-sheet-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `availability-sheet-${todayStr()}.csv`;
     a.click();
     URL.revokeObjectURL(a.href);
   }

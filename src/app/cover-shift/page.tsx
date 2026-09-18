@@ -13,7 +13,7 @@ import {
   Department, CoverCandidate, Shift, SmsConfig, RacePreview, ExtendableCandidate, OverlapConflict,
 } from '@/lib/types';
 import {
-  formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES,
+  formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES, todayStr,
 } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
 import { formatCost } from '@/lib/wages';
@@ -43,7 +43,7 @@ export default function CoverShiftPage() {
   const [smsConfig, setSmsConfig] = useState<SmsConfig | null>(null);
 
   const [form, setForm] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: todayStr(),
     start_time: '09:00', end_time: '17:00',
     department_id: '', required_role: 'any',
   });

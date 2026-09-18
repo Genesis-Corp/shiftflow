@@ -14,7 +14,7 @@ import { postJson } from '@/lib/api';
 import { Shift, Department } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
-  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday,
+  TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
 } from '@/lib/shiftUtils';
 import { normalizeDeptColor, deptTextColor } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
@@ -37,10 +37,6 @@ const STATUS_BADGE: Record<string, string> = {
   covered: 'badge-green',
   cancelled: 'badge-slate',
 };
-
-function todayStr(): string {
-  return new Date().toISOString().split('T')[0];
-}
 
 interface DayGroup { date: string; shifts: Shift[] }
 interface DeptGroup { department_id: string; name: string; color: string | null | undefined; shifts: Shift[] }

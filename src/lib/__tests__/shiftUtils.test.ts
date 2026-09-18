@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays } from '../shiftUtils';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr } from '../shiftUtils';
 
 describe('shiftsOverlap', () => {
   it('is true when ranges genuinely overlap', () => {
@@ -97,5 +97,31 @@ describe('addDays', () => {
     process.env.TZ = 'Australia/Perth';
     expect(addDays('2026-09-30', 1)).toBe('2026-10-01');
     expect(addDays('2026-10-01', -1)).toBe('2026-09-30');
+  });
+});
+
+describe('todayStr', () => {
+  const originalTZ = process.env.TZ;
+  afterEach(() => {
+    process.env.TZ = originalTZ;
+    vi.useRealTimers();
+  });
+
+  it('returns the local calendar date, not the UTC one, early in the morning', () => {
+    // 11pm UTC on the 18th is already 7am on the 19th in Perth (+8) —
+    // this is the exact "someone opens the app at 6am" case: the old
+    // new Date().toISOString().split('T')[0] pattern would have reported
+    // the 18th here, a day behind.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-18T23:00:00Z'));
+    process.env.TZ = 'Australia/Perth';
+    expect(todayStr()).toBe('2026-09-19');
+  });
+
+  it('matches the UTC date when running in UTC', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-18T23:00:00Z'));
+    process.env.TZ = 'UTC';
+    expect(todayStr()).toBe('2026-09-18');
   });
 });

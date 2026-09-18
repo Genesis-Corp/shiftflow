@@ -63,6 +63,24 @@ export function dayOfWeekFromDate(dateStr: string): number {
   return new Date(dateStr + 'T00:00:00').getDay();
 }
 
+/** A Date's own calendar date, as the device sees it — never toISOString(),
+ *  which is always UTC and silently reports the wrong day whenever the
+ *  local calendar date and the UTC one don't match (any time outside
+ *  UTC+0, for part of the day). The app has no server-side concept of
+ *  "today" — every "today" in it is whichever day it is for the person
+ *  looking at the screen right now, on their own device. */
+function formatLocalDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Today, as a YYYY-MM-DD string, in whoever's timezone this runs. */
+export function todayStr(): string {
+  return formatLocalDate(new Date());
+}
+
 /** Add (or subtract) whole days to a YYYY-MM-DD date string, correctly
  *  crossing month and year boundaries (used by the Shifts timeline's
  *  previous/next day arrows).
@@ -75,10 +93,7 @@ export function dayOfWeekFromDate(dateStr: string): number {
 export function addDays(dateStr: string, delta: number): string {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + delta);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+  return formatLocalDate(d);
 }
 
 /** The Sunday–Saturday week (inclusive) a date falls in. */
