@@ -2,6 +2,59 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { toE164AU } from '@/lib/phone';
 import { requireUser, unauthorized } from '@/lib/auth';
+import { nameKey, fullName } from '@/lib/availabilitySheet';
+import { withNameParts } from '@/lib/staffNames';
+
+// ── Full staff sheet (First Name / Last Name / Employment Type / Default
+//    Department / Default Role / Birth Date / Pay Rate / Mobile) ──────────────
+// A whole-of-store export — likely to list people already in the app, so rows
+// are matched by name and updated rather than blindly re-inserted.
+interface FullStaffRow {
+  'First Name'?: string;
+  'Last Name'?: string;
+  'Employment Type'?: string;
+  'Default Department'?: string;
+  'Default Role'?: string;
+  'Birth Date'?: string;
+  'Pay Rate'?: string;
+  'Mobile'?: string;
+}
+
+function isFullStaffSheet(row: Record<string, string>): boolean {
+  return 'First Name' in row && 'Last Name' in row;
+}
+
+/** "31/03/2000" -> "2000-03-31". Null if it doesn't parse as a real date —
+ *  parsed by hand rather than handed to Postgres raw, since a DD/MM string
+ *  is exactly the kind of thing that silently becomes the wrong day if the
+ *  database ever reads it as MM/DD instead. */
+function parseAuDate(raw: string): string | null {
+  const m = raw.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return null;
+  const day = Number(m[1]), month = Number(m[2]), year = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/** This sheet's "Pay Rate" column is really an age-bracket label ("Adult",
+ *  "17 Years Old", "Under16"), not a dollar figure — pay itself is always
+ *  computed from birthday against the award. "Adult" reads as senior,
+ *  anything else as junior; a blank cell falls back to the birthday. Null
+ *  when neither tells us anything — a guess shouldn't overwrite (or seed)
+ *  a value we have no actual basis for. */
+function ageGroupFromPayRateLabel(payRate: string | undefined, birthday: string | null): 'junior' | 'senior' | null {
+  const label = (payRate ?? '').trim().toLowerCase();
+  if (label === 'adult') return 'senior';
+  if (label) return 'junior';
+  if (birthday) {
+    const [y, mo, d] = birthday.split('-').map(Number);
+    const now = new Date();
+    let age = now.getFullYear() - y;
+    if (now.getMonth() + 1 < mo || (now.getMonth() + 1 === mo && now.getDate() < d)) age--;
+    return age >= 18 ? 'senior' : 'junior';
+  }
+  return null;
+}
 
 // ── Standard staff CSV format ─────────────────────────────────────────────────
 interface StandardRow {
@@ -86,9 +139,95 @@ export async function POST(req: NextRequest) {
     return data.id;
   }
 
-  const results = { created: 0, errors: [] as string[] };
+  const results = { created: 0, updated: 0, errors: [] as string[] };
+  const EMPLOYMENT_TYPES = new Set(['casual', 'part_time', 'full_time', 'salary']);
 
   // ── Detect format from first row ───────────────────────────────────────────
+  if (isFullStaffSheet(rows[0] as unknown as Record<string, string>)) {
+    // Whole-of-store export — most rows likely already exist, so match by
+    // name and update rather than re-inserting duplicates.
+    const { data: existingRows } = await supabase
+      .from('staff').select('id, name, birthday, employment_type, age_group, phone, phone_e164');
+    const existingByName = new Map(
+      (existingRows ?? []).map((s: { name: string }) => [nameKey(s.name ?? ''), s])
+    );
+
+    for (const row of rows as unknown as FullStaffRow[]) {
+      const first = row['First Name']?.trim();
+      const last = row['Last Name']?.trim() ?? '';
+      if (!first) {
+        results.errors.push(`Skipped row (missing First Name): ${JSON.stringify(row)}`);
+        continue;
+      }
+      const name = fullName(first, last);
+
+      const employmentTypeRaw = row['Employment Type']?.toLowerCase().trim().replace(/[\s-]+/g, '_') ?? '';
+      const employmentType = EMPLOYMENT_TYPES.has(employmentTypeRaw) ? employmentTypeRaw : null;
+      if (employmentTypeRaw && !employmentType) {
+        results.errors.push(`"${name}": unrecognized Employment Type "${row['Employment Type']}", left blank.`);
+      }
+
+      const birthdayRaw = row['Birth Date']?.trim();
+      const birthday = birthdayRaw ? parseAuDate(birthdayRaw) : null;
+      if (birthdayRaw && !birthday) {
+        results.errors.push(`"${name}": could not read Birth Date "${birthdayRaw}" (expected DD/MM/YYYY), left blank.`);
+      }
+
+      const ageGroup = ageGroupFromPayRateLabel(row['Pay Rate'], birthday);
+      const phone = row['Mobile']?.trim() || null;
+      const phoneE164 = toE164AU(phone);
+
+      const existing = existingByName.get(nameKey(name)) as
+        { id: string; birthday: string | null; employment_type: string | null; age_group: string | null; phone: string | null } | undefined;
+
+      if (existing) {
+        // These staff already exist — this sheet is the current export of
+        // record, so any field it actually has a value for overwrites what's
+        // on file rather than just filling gaps. A blank cell means "no
+        // update", not "clear this field", so it never wipes existing data.
+        const updates: Record<string, unknown> = {};
+        if (birthday && existing.birthday !== birthday) updates.birthday = birthday;
+        if (employmentType && existing.employment_type !== employmentType) updates.employment_type = employmentType;
+        if (ageGroup && existing.age_group !== ageGroup) updates.age_group = ageGroup;
+        if (phone && existing.phone !== phone) { updates.phone = phone; updates.phone_e164 = phoneE164; }
+
+        if (Object.keys(updates).length) {
+          const { error } = await supabase.from('staff').update(updates).eq('id', existing.id);
+          if (error) { results.errors.push(`Failed to update "${name}": ${error.message}`); continue; }
+          results.updated++;
+        }
+        continue;
+      }
+
+      const payload = await withNameParts({
+        name,
+        age_group: ageGroup ?? 'senior',
+        role_type: 'department_only',
+        phone,
+        phone_e164: phoneE164,
+        birthday,
+        employment_type: employmentType,
+        reliability_score: 50,
+        active: true,
+      }, name);
+
+      const { data: staff, error } = await supabase.from('staff').insert([payload]).select().single();
+      if (error) { results.errors.push(`Failed to import "${name}": ${error.message}`); continue; }
+
+      const deptName = row['Default Department']?.trim();
+      const deptId = deptName ? await findOrCreateDepartment(deptName) : defaultDeptId;
+      if (deptId) {
+        await supabase.from('staff_departments').insert([{
+          staff_id: staff.id, department_id: deptId, training_level: 'trained', is_default: true,
+        }]);
+      }
+
+      results.created++;
+    }
+
+    return NextResponse.json(results);
+  }
+
   if (isAvailabilitySheet(rows[0])) {
     for (const row of rows) {
       const name = row['NAME']?.trim();
@@ -167,8 +306,6 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(results);
   }
-
-  const EMPLOYMENT_TYPES = new Set(['casual', 'part_time', 'full_time', 'salary']);
 
   // ── Standard format ────────────────────────────────────────────────────────
   for (const row of rows as unknown as StandardRow[]) {

@@ -321,7 +321,7 @@ export default function StaffPage() {
         }
 
         // Not the availability sheet — try the plain staff CSV format.
-        const imported = await postJson<{ created?: number; errors?: string[] }>(
+        const imported = await postJson<{ created?: number; updated?: number; errors?: string[] }>(
           '/api/import',
           { rows: matrixToObjects(rows) },
           { timeoutMs: 60_000 }
@@ -329,17 +329,30 @@ export default function StaffPage() {
         const data = imported.data ?? {};
         setStage(null);
 
-        if (!imported.ok || !data.created) {
+        if (!imported.ok) {
+          alert(imported.error ?? `Could not import "${file.name}".`);
+          return;
+        }
+
+        const created = data.created ?? 0;
+        const updated = data.updated ?? 0;
+
+        if (!created && !updated) {
           alert(
             `Nothing was imported from "${file.name}".\n\n` +
-            'It does not look like the availability sheet — that needs a header row with the days of the week, ' +
-            'and columns for the first name, last name and mobile number.\n\n' +
-            'If this is a photo of the sheet, use Capture instead.'
+            (data.errors?.length
+              ? data.errors.join('\n')
+              : 'It does not look like a recognized staff sheet — that needs either the days-of-the-week ' +
+                'availability format, or columns for name, birth date and employment type.\n\n' +
+                'If this is a photo of the sheet, use Capture instead.')
           );
           return;
         }
 
-        alert(`Imported ${data.created} staff. ${data.errors?.length ? `Errors: ${data.errors.join(', ')}` : ''}`);
+        alert(
+          `${created ? `Added ${created} new staff. ` : ''}${updated ? `Updated ${updated} existing staff. ` : ''}` +
+          (data.errors?.length ? `\n\nErrors:\n${data.errors.join('\n')}` : '')
+        );
         load();
       },
       error: (err: Error) => {
