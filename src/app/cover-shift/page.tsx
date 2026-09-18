@@ -38,6 +38,21 @@ function formatMinutes(mins: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
+/** Short label under a blank cost figure — a data gap to fix, not a mystery. */
+function costReasonLabel(reason: CoverCandidate['cost_reason']): string {
+  if (reason === 'no_base_rate') return 'no base rate set';
+  if (reason === 'no_birthday') return 'no birthday on file';
+  if (reason === 'salary') return 'salaried';
+  return 'cost';
+}
+
+function costReasonHint(reason: CoverCandidate['cost_reason']): string | undefined {
+  if (reason === 'no_base_rate') return 'Set the award base rate in Settings to cost this shift.';
+  if (reason === 'no_birthday') return "Add this person's date of birth on the Staff page to cost this shift.";
+  if (reason === 'salary') return 'Salaried staff are paid the same regardless — no shift cost applies.';
+  return undefined;
+}
+
 export default function CoverShiftPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [openShifts, setOpenShifts] = useState<Shift[]>([]);
@@ -385,10 +400,12 @@ export default function CoverShiftPage() {
                   <div className="text-right flex-shrink-0">
                     <p className="text-sm font-semibold text-slate-700">
                       {c.shift_cost === null
-                        ? <span className="text-slate-300 font-normal">no rate</span>
+                        ? <span className="text-slate-300 font-normal" title={costReasonHint(c.cost_reason)}>no rate</span>
                         : formatCost(c.shift_cost)}
                     </p>
-                    <p className="text-xs text-slate-400">cost</p>
+                    <p className="text-xs text-slate-400">
+                      {c.shift_cost === null ? costReasonLabel(c.cost_reason) : 'cost'}
+                    </p>
                   </div>
                   <div className="text-right flex-shrink-0">
                     <p className="text-lg font-bold text-slate-700">{c.computed_score}</p>

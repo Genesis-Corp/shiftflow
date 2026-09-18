@@ -42,6 +42,9 @@ export interface ScoredCandidate {
   weekly_minutes_after: number;
   /** What this shift would cost with them on it, or null if they have no rate set. */
   shift_cost: number | null;
+  /** Why shift_cost is null — surfaced so "no rate" reads as a data gap to
+   *  fix, not a mystery. Null when shift_cost itself isn't null. */
+  cost_reason: 'no_base_rate' | 'salary' | 'no_birthday' | null;
 }
 
 /** Someone whose existing shift overlaps this one closely enough to extend instead of double-booking. */
@@ -179,19 +182,20 @@ export async function findEligibleCandidates(
   const overtimeOverrides = (overridesRes.data ?? []) as OvertimeOverride[];
   const breakMinutes = requiresBreak(start_time.slice(0, 5), end_time.slice(0, 5)) ? BREAK_DURATION_MINUTES : 0;
 
-  const costFor = (s: (typeof allStaff)[number]): number | null => {
-    if (adultBaseRate === null) return null;
-    if (s.employment_type === 'salary') return null;
+  const costFor = (s: (typeof allStaff)[number]): { cost: number | null; reason: ScoredCandidate['cost_reason'] } => {
+    if (adultBaseRate === null) return { cost: null, reason: 'no_base_rate' };
+    if (s.employment_type === 'salary') return { cost: null, reason: 'salary' };
     const category: EmploymentCategory = s.employment_type === 'casual' ? 'casual' : 'ft_pt';
     const bracket = ageBracketFor(s.birthday, date, s.commencement_date, ageBrackets);
-    if (!bracket) return null;
-    return calculateShiftCost(
+    if (!bracket) return { cost: null, reason: 'no_birthday' };
+    const cost = calculateShiftCost(
       {
         date, start_time, end_time, unpaid_break_minutes: breakMinutes,
         employment_category: category, age_percentage: bracket.percentage,
       },
       adultBaseRate, timeLoadings, isPublicHoliday, overtimeTiers, overtimeOverrides
     ).cost;
+    return { cost, reason: null };
   };
 
   const scoreOf = (s: (typeof allStaff)[number]): number => {
@@ -204,21 +208,25 @@ export async function findEligibleCandidates(
     return score;
   };
 
-  const buildCandidate = (s: (typeof allStaff)[number], weeklyBefore: number): ScoredCandidate => ({
-    id: s.id,
-    name: s.name,
-    age_group: s.age_group,
-    role_type: s.role_type,
-    reliability_score: s.reliability_score ?? 50,
-    phone: s.phone ?? null,
-    phone_e164: s.phone_e164 ?? null,
-    sms_opt_out: s.sms_opt_out ?? false,
-    computed_score: scoreOf(s),
-    trained_departments: s.staff_departments ?? [],
-    weekly_minutes_before: weeklyBefore,
-    weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
-    shift_cost: costFor(s),
-  });
+  const buildCandidate = (s: (typeof allStaff)[number], weeklyBefore: number): ScoredCandidate => {
+    const { cost, reason } = costFor(s);
+    return {
+      id: s.id,
+      name: s.name,
+      age_group: s.age_group,
+      role_type: s.role_type,
+      reliability_score: s.reliability_score ?? 50,
+      phone: s.phone ?? null,
+      phone_e164: s.phone_e164 ?? null,
+      sms_opt_out: s.sms_opt_out ?? false,
+      computed_score: scoreOf(s),
+      trained_departments: s.staff_departments ?? [],
+      weekly_minutes_before: weeklyBefore,
+      weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
+      shift_cost: cost,
+      cost_reason: reason,
+    };
+  };
 
   const candidates: ScoredCandidate[] = [];
   const extendable: ExtendableCandidate[] = [];

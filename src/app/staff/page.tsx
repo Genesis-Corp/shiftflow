@@ -139,6 +139,22 @@ export default function StaffPage() {
     return Math.round(rate * 100) / 100;
   }
 
+  /** Why ordinaryRateFor came back null — surfaced so a blank rate reads as
+   *  a data gap to fix, not a mystery. Null for salaried staff (not a gap). */
+  function rateGapReason(s: Staff): string | null {
+    if (!s.employment_type || s.employment_type === 'salary') return null;
+    if (!wages?.base_rate) return 'no base rate set — see Settings';
+    if (!s.birthday) return 'no birthday on file';
+    const category = s.employment_type === 'casual' ? 'casual' : 'ft_pt';
+    const bracket = ageBracketFor(s.birthday, todayStr(), s.commencement_date, wages.age_brackets);
+    if (!bracket) return 'no matching age bracket';
+    const ordinary = wages.time_loadings.find(l =>
+      l.employment_category === category && !l.is_public_holiday && l.days.includes(1)
+    );
+    if (!ordinary) return 'award structure incomplete — see Settings';
+    return null;
+  }
+
   async function load() {
     setLoading(true);
     try {
@@ -532,7 +548,7 @@ export default function StaffPage() {
                 <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${!s.active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-medium text-slate-800">
                     <div>{s.name}</div>
-                    {ordinaryRateFor(s) !== null && (
+                    {ordinaryRateFor(s) !== null ? (
                       <button
                         onClick={() => toggleRateRevealed(s.id)}
                         className="mt-0.5 flex items-center gap-1 text-xs font-normal text-slate-400 hover:text-slate-600"
@@ -543,6 +559,8 @@ export default function StaffPage() {
                           <><Eye size={11} /> Reveal rate</>
                         )}
                       </button>
+                    ) : rateGapReason(s) && (
+                      <p className="mt-0.5 text-xs text-amber-500">{rateGapReason(s)}</p>
                     )}
                   </td>
                   <td className="px-4 py-3">

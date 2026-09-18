@@ -92,6 +92,8 @@ export interface CoverCandidate extends Staff {
   weekly_minutes_after: number;
   /** Cost of this shift with them on it, or null when they have no rate set. */
   shift_cost: number | null;
+  /** Why shift_cost is null — null when shift_cost itself isn't null. */
+  cost_reason: 'no_base_rate' | 'salary' | 'no_birthday' | null;
 }
 
 export interface ExtendableCandidate {
