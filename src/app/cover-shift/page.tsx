@@ -477,6 +477,11 @@ export default function CoverShiftPage() {
                       <span className="badge-slate capitalize">{c.role_type.replace(/_/g, ' ')}</span>
                       {!c.phone_e164 && <span className="badge-red">No mobile</span>}
                       {c.sms_opt_out && <span className="badge-red">Opted out</span>}
+                      {c.recently_absent && (
+                        <span className="badge-amber" title="Called in sick or no-showed in the last 3 days — still offered, ranked near the bottom">
+                          Recently absent
+                        </span>
+                      )}
                     </div>
                     <div className="mt-1.5 w-48">
                       <ReliabilityBar score={c.reliability_score} />

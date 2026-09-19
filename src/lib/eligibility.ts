@@ -2,7 +2,7 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
-  MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday,
+  MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday, addDays, daysBetween,
 } from '@/lib/shiftUtils';
 import {
   calculateShiftCost, ageBracketFor, seniorityFromBirthday,
@@ -53,6 +53,9 @@ export interface ScoredCandidate {
   /** Why shift_cost is null — surfaced so "no rate" reads as a data gap to
    *  fix, not a mystery. Null when shift_cost itself isn't null. */
   cost_reason: 'no_base_rate' | 'salary' | 'no_birthday' | null;
+  /** No-showed or called in sick within the last 3 days — still offered the
+   *  shift, but ranked towards the bottom of the list (see rankCandidates). */
+  recently_absent: boolean;
 }
 
 /** Someone whose existing shift overlaps this one closely enough to extend instead of double-booking. */
@@ -144,6 +147,22 @@ export async function findEligibleCandidates(
     .from('staff_leave').select('staff_id').lte('start_date', date).gte('end_date', date);
   const onLeaveIds = new Set((onLeave ?? []).map((l: { staff_id: string }) => l.staff_id));
 
+  // Called in sick (or otherwise logged a no-show) recently. Same day: out
+  // of the race entirely, for every shift that day, not just the one they
+  // were pulled from — turning up unavailable for one shift means
+  // unavailable for all of them. The 3 days after: still offered shifts,
+  // just ranked towards the bottom of the list (see rankCandidates).
+  const { data: recentNoShows } = await supabaseAdmin
+    .from('reliability_incidents').select('staff_id, date')
+    .eq('incident_type', 'no_show').gte('date', addDays(date, -3)).lte('date', date);
+  const excludedForDayIds = new Set<string>();
+  const recentlyAbsentIds = new Set<string>();
+  for (const r of (recentNoShows ?? []) as { staff_id: string; date: string }[]) {
+    const diff = daysBetween(r.date, date);
+    if (diff === 0) excludedForDayIds.add(r.staff_id);
+    else if (diff >= 1 && diff <= 3) recentlyAbsentIds.add(r.staff_id);
+  }
+
   // NOTE: preserved verbatim from the original /api/cover-shift route — this
   // asks whether any senior exists on the roster at all, not whether one is
   // rostered on this shift. Changing it would change who gets texted, so it is
@@ -166,8 +185,10 @@ export async function findEligibleCandidates(
       // A day off or leave form on file for this date takes them out entirely.
       if (onLeaveIds.has(s.id)) return false;
 
-      // Never re-offer the exact shift someone was just pulled out of.
+      // Never re-offer the exact shift someone was just pulled out of, or
+      // any other shift the same day if they no-showed/called in sick.
       if (exclude_staff_id && s.id === exclude_staff_id) return false;
+      if (excludedForDayIds.has(s.id)) return false;
 
       if (!skipDeptCheck) {
         const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
@@ -305,6 +326,7 @@ export async function findEligibleCandidates(
       weekly_minutes_after: weeklyBefore + shiftDurationMinutes(start_time, end_time),
       shift_cost: cost,
       cost_reason: reason,
+      recently_absent: recentlyAbsentIds.has(s.id),
     };
   };
 

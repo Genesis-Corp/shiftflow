@@ -116,6 +116,26 @@ describe('rankCandidates', () => {
     rankCandidates(original);
     expect(original).toEqual(copy);
   });
+
+  it('sorts someone recently absent after everyone else, even when cheaper and more reliable', () => {
+    const ranked = rankCandidates([
+      { ...person('Cheap but recently absent', 100, 95), recently_absent: true },
+      person('Ordinary', 400, 50),
+    ]);
+    expect(ranked.map(p => p.name)).toEqual(['Ordinary', 'Cheap but recently absent']);
+  });
+
+  it('still ranks by cost/reliability within each of the two groups', () => {
+    const ranked = rankCandidates([
+      { ...person('Absent, dearer', 500, 50), recently_absent: true },
+      { ...person('Absent, cheaper', 200, 50), recently_absent: true },
+      person('Not absent, dearer', 400, 50),
+      person('Not absent, cheaper', 150, 50),
+    ]);
+    expect(ranked.map(p => p.name)).toEqual([
+      'Not absent, cheaper', 'Not absent, dearer', 'Absent, cheaper', 'Absent, dearer',
+    ]);
+  });
 });
 
 describe('batchesOf', () => {

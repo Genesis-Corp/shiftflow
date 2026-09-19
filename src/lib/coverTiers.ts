@@ -81,11 +81,18 @@ export function gatherWindowMinutes(leadMinutes: number): number {
  *
  * Anyone without a rate set sorts last: with no figure they cannot be shown
  * to be the cheapest, and guessing at zero would put them top of every list.
+ *
+ * Anyone who no-showed (or called in sick) within the last 3 days sorts
+ * after everyone else entirely, regardless of cost or reliability — they're
+ * still offered the shift, just never ahead of someone who didn't just miss
+ * one. `recently_absent` is only ever true for the few days right after such
+ * an incident; the same-day one is a full exclusion, handled upstream in
+ * eligibility.ts rather than here.
  */
-export function rankCandidates<T extends { shift_cost: number | null; reliability_score: number }>(
+export function rankCandidates<T extends { shift_cost: number | null; reliability_score: number; recently_absent?: boolean }>(
   candidates: T[]
 ): T[] {
-  return [...candidates].sort((a, b) => {
+  const byCostThenReliability = (list: T[]) => [...list].sort((a, b) => {
     if (a.shift_cost !== null && b.shift_cost !== null) {
       if (a.shift_cost !== b.shift_cost) return a.shift_cost - b.shift_cost;
       return b.reliability_score - a.reliability_score;
@@ -94,6 +101,10 @@ export function rankCandidates<T extends { shift_cost: number | null; reliabilit
     if (b.shift_cost !== null) return 1;
     return b.reliability_score - a.reliability_score;
   });
+
+  const usual = candidates.filter(c => !c.recently_absent);
+  const recentlyAbsent = candidates.filter(c => c.recently_absent);
+  return [...byCostThenReliability(usual), ...byCostThenReliability(recentlyAbsent)];
 }
 
 /** Split a ranked list into the batches the immediate tier works through. */

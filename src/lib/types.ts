@@ -124,6 +124,8 @@ export interface CoverCandidate extends Staff {
   shift_cost: number | null;
   /** Why shift_cost is null — null when shift_cost itself isn't null. */
   cost_reason: 'no_base_rate' | 'salary' | 'no_birthday' | null;
+  /** No-showed or called in sick within the last 3 days — still offered, but ranked near the bottom of the list. */
+  recently_absent: boolean;
 }
 
 export interface ExtendableCandidate {
