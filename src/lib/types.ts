@@ -60,6 +60,23 @@ export interface AvailabilityTemplate {
   available: boolean;
 }
 
+export type LeaveType = 'day_off' | 'leave';
+
+export interface StaffLeave {
+  id: string;
+  staff_id: string;
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  file_path: string | null;
+  file_name: string | null;
+  /** A short-lived signed URL, attached by the API on read — never stored. */
+  file_url?: string | null;
+  notes?: string | null;
+  created_at: string;
+  staff?: Pick<Staff, 'id' | 'name'>;
+}
+
 export interface Shift {
   id: string;
   date: string;

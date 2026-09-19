@@ -137,6 +137,13 @@ export async function findEligibleCandidates(
     availMap.get(a.staff_id)!.push({ start_time: a.start_time, end_time: a.end_time });
   });
 
+  // A day off or leave form on file for this date — same idea as the
+  // birthday exclusion below, just with a manager-uploaded date range
+  // behind it instead of a fixed day each year.
+  const { data: onLeave } = await supabaseAdmin
+    .from('staff_leave').select('staff_id').lte('start_date', date).gte('end_date', date);
+  const onLeaveIds = new Set((onLeave ?? []).map((l: { staff_id: string }) => l.staff_id));
+
   // NOTE: preserved verbatim from the original /api/cover-shift route — this
   // asks whether any senior exists on the roster at all, not whether one is
   // rostered on this shift. Changing it would change who gets texted, so it is
@@ -155,6 +162,9 @@ export async function findEligibleCandidates(
 
       // Nobody gets offered a shift on their own birthday.
       if (isBirthday(s.birthday, date)) return false;
+
+      // A day off or leave form on file for this date takes them out entirely.
+      if (onLeaveIds.has(s.id)) return false;
 
       // Never re-offer the exact shift someone was just pulled out of.
       if (exclude_staff_id && s.id === exclude_staff_id) return false;

@@ -1,13 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Save, List, GanttChartSquare } from 'lucide-react';
+import { Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
-import { Staff, AvailabilityTemplate, DayOfWeek } from '@/lib/types';
+import { Staff, AvailabilityTemplate, DayOfWeek, StaffLeave, LeaveType } from '@/lib/types';
 import {
   DAYS, DAY_SHORT, TIMELINE_START_HOUR, TIMELINE_END_HOUR,
-  timelineBarPosition, formatHour12,
+  timelineBarPosition, formatHour12, formatDate, todayStr,
 } from '@/lib/shiftUtils';
 
 const DEFAULT_SLOTS = [
@@ -52,14 +52,26 @@ export default function AvailabilityPage() {
   const [loadError, setLoadError] = useState('');
   const [timelineDay, setTimelineDay] = useState<DayOfWeek>(new Date().getDay() as DayOfWeek);
 
+  // Time off — Request Day Off / Leave forms, each excluding that person
+  // from claim races for the date range on file (see @/lib/eligibility).
+  const [leaveEntries, setLeaveEntries] = useState<StaffLeave[]>([]);
+  const [leaveForm, setLeaveForm] = useState({
+    staff_id: '', leave_type: 'day_off' as LeaveType, start_date: '', end_date: '', notes: '',
+  });
+  const [leaveFile, setLeaveFile] = useState<File | null>(null);
+  const [uploadingLeave, setUploadingLeave] = useState(false);
+  const [leaveError, setLeaveError] = useState('');
+
   async function load() {
     try {
-      const [staffData, templateData] = await Promise.all([
+      const [staffData, templateData, leaveData] = await Promise.all([
         fetchJson<Staff[]>('/api/staff'),
         fetchJson<AvailabilityTemplate[]>('/api/availability'),
+        fetchJson<StaffLeave[]>('/api/staff-leave'),
       ]);
       setStaff(staffData.filter(s => s.active));
       setAllTemplates(templateData);
+      setLeaveEntries(leaveData);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load availability data');
@@ -67,6 +79,40 @@ export default function AvailabilityPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  async function loadLeave() {
+    try {
+      setLeaveEntries(await fetchJson<StaffLeave[]>('/api/staff-leave'));
+    } catch {
+      // Non-critical for the rest of the page — leave the existing list showing.
+    }
+  }
+
+  async function submitLeave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!leaveForm.staff_id || !leaveForm.start_date || !leaveForm.end_date) return;
+    setLeaveError('');
+    setUploadingLeave(true);
+    const fd = new FormData();
+    fd.append('staff_id', leaveForm.staff_id);
+    fd.append('leave_type', leaveForm.leave_type);
+    fd.append('start_date', leaveForm.start_date);
+    fd.append('end_date', leaveForm.end_date);
+    if (leaveForm.notes.trim()) fd.append('notes', leaveForm.notes.trim());
+    if (leaveFile) fd.append('file', leaveFile);
+    const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
+    setUploadingLeave(false);
+    if (!res.ok) { setLeaveError((await res.json().catch(() => ({}))).error ?? 'Could not save that.'); return; }
+    setLeaveForm({ staff_id: '', leave_type: 'day_off', start_date: '', end_date: '', notes: '' });
+    setLeaveFile(null);
+    await loadLeave();
+  }
+
+  async function deleteLeave(id: string) {
+    if (!confirm('Delete this record? This removes the exclusion for those dates too.')) return;
+    await fetch(`/api/staff-leave/${id}`, { method: 'DELETE' });
+    loadLeave();
+  }
 
   function loadStaffTemplates(s: Staff) {
     setSelectedStaff(s);
@@ -361,6 +407,114 @@ export default function AvailabilityPage() {
           )}
         </div>
       )}
+
+      {/* Time off — Request Day Off / Leave forms. Any file type, never
+          parsed, just kept on file against a date range that excludes that
+          person from claim races, same as a birthday already does. */}
+      <div className="card p-4">
+        <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
+          <CalendarX size={16} className="text-slate-400" /> Time Off
+        </h2>
+        <p className="text-xs text-slate-500 mb-4">
+          Upload a Request Day Off or Leave form — they&apos;re excluded from claim races for the dates on file.
+        </p>
+
+        <form onSubmit={submitLeave} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end mb-4 pb-4 border-b border-slate-100">
+          <div className="lg:col-span-2">
+            <label className="label">Staff Member</label>
+            <select className="input" required value={leaveForm.staff_id} onChange={e => setLeaveForm(f => ({ ...f, staff_id: e.target.value }))}>
+              <option value="">Select staff...</option>
+              {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="label">Type</label>
+            <select
+              className="input"
+              value={leaveForm.leave_type}
+              onChange={e => {
+                const leave_type = e.target.value as LeaveType;
+                setLeaveForm(f => ({ ...f, leave_type, end_date: leave_type === 'day_off' ? f.start_date : f.end_date }));
+              }}
+            >
+              <option value="day_off">Day Off</option>
+              <option value="leave">Leave</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Start</label>
+            <input
+              type="date" className="input" required value={leaveForm.start_date}
+              onChange={e => {
+                const start_date = e.target.value;
+                setLeaveForm(f => ({
+                  ...f, start_date,
+                  end_date: f.leave_type === 'day_off' || !f.end_date || f.end_date < start_date ? start_date : f.end_date,
+                }));
+              }}
+            />
+          </div>
+          <div>
+            <label className="label">End</label>
+            <input
+              type="date" className="input" required value={leaveForm.end_date} min={leaveForm.start_date || undefined}
+              disabled={leaveForm.leave_type === 'day_off'}
+              onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))}
+            />
+          </div>
+          <div className="lg:col-span-2">
+            <label className="label">Form (optional, any file)</label>
+            <input type="file" className="input py-1.5" onChange={e => setLeaveFile(e.target.files?.[0] ?? null)} />
+          </div>
+          <div className="lg:col-span-5">
+            <label className="label">Notes (optional)</label>
+            <input className="input" value={leaveForm.notes} onChange={e => setLeaveForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any context..." />
+          </div>
+          <button type="submit" disabled={uploadingLeave} className="btn-primary justify-center">
+            <Upload size={14} /> {uploadingLeave ? 'Saving...' : 'Save'}
+          </button>
+        </form>
+
+        {leaveError && <p className="text-sm text-red-600 mb-3">{leaveError}</p>}
+
+        {leaveEntries.length === 0 ? (
+          <p className="text-sm text-slate-400 text-center py-4">No time off on file.</p>
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {leaveEntries.map(l => {
+              const today = todayStr();
+              const active = l.start_date <= today && l.end_date >= today;
+              return (
+                <div key={l.id} className="py-2.5 flex items-center gap-3 flex-wrap">
+                  <span className={l.leave_type === 'leave' ? 'badge-blue' : 'badge-amber'}>
+                    {l.leave_type === 'leave' ? <Umbrella size={11} className="mr-1" /> : <CalendarX size={11} className="mr-1" />}
+                    {l.leave_type === 'leave' ? 'Leave' : 'Day Off'}
+                  </span>
+                  <span className="font-medium text-slate-700">{l.staff?.name ?? '—'}</span>
+                  <span className="text-sm text-slate-500">
+                    {formatDate(l.start_date)}{l.end_date !== l.start_date && ` – ${formatDate(l.end_date)}`}
+                  </span>
+                  {active && <span className="badge-green text-xs">Active now</span>}
+                  {l.notes && <span className="text-xs text-slate-400">{l.notes}</span>}
+                  <div className="ml-auto flex items-center gap-2">
+                    {l.file_url && (
+                      <a
+                        href={l.file_url} target="_blank" rel="noreferrer"
+                        className="btn-ghost p-1.5 text-blue-500" title={l.file_name ?? 'View form'}
+                      >
+                        <Paperclip size={14} />
+                      </a>
+                    )}
+                    <button onClick={() => deleteLeave(l.id)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
