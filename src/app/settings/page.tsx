@@ -1,10 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { UserPlus, Trash2, Mail, Loader2, ShieldCheck, Clock } from 'lucide-react';
+import Link from 'next/link';
+import { UserPlus, Trash2, Mail, Loader2, ShieldCheck, Clock, History } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import WageTable from '@/components/WageTable';
 import { fetchJson } from '@/lib/apiClient';
+import { ReliabilityIncident } from '@/lib/types';
+import { INCIDENT_META } from '@/lib/incidentMeta';
+import { formatDate, formatTimeOfDay } from '@/lib/shiftUtils';
 
 interface Manager {
   id: string;
@@ -23,6 +27,13 @@ export default function SettingsPage() {
   const [inviteMsg, setInviteMsg] = useState('');
   const [removing, setRemoving] = useState('');
 
+  // Read-only copy of the Reliability page's incident log — no shows, sick
+  // calls (logged as a no-show), lates and rejections all land here so a
+  // manager can skim it without leaving Settings. Logging a new one, or
+  // seeing scores, still happens on the Reliability page itself.
+  const [incidents, setIncidents] = useState<ReliabilityIncident[]>([]);
+  const [incidentsError, setIncidentsError] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -32,6 +43,12 @@ export default function SettingsPage() {
       setLoadError(err instanceof Error ? err.message : 'Failed to load managers');
     }
     setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchJson<ReliabilityIncident[]>('/api/reliability')
+      .then(setIncidents)
+      .catch(err => setIncidentsError(err instanceof Error ? err.message : 'Failed to load incident log'));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -120,6 +137,46 @@ export default function SettingsPage() {
           ))}
         </div>
       )}
+
+      <details className="card overflow-hidden">
+        <summary className="cursor-pointer select-none px-5 py-4 flex items-center justify-between gap-3 flex-wrap">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+            <History size={16} className="text-slate-400" /> Incident Log
+            {incidents.length > 0 && <span className="text-xs font-normal text-slate-400">({incidents.length})</span>}
+          </h2>
+          <span className="text-xs text-slate-400">No shows, sick calls, lates and more</span>
+        </summary>
+        <div className="border-t border-slate-100">
+          {incidentsError && <p className="px-5 py-3 text-sm text-red-600">{incidentsError}</p>}
+          {!incidentsError && incidents.length === 0 && (
+            <p className="px-5 py-4 text-sm text-slate-400 text-center">No incidents recorded yet.</p>
+          )}
+          {incidents.length > 0 && (
+            <div className="divide-y divide-slate-100 max-h-[28rem] overflow-y-auto">
+              {incidents.map(inc => {
+                const meta = INCIDENT_META[inc.incident_type];
+                return (
+                  <div key={inc.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
+                    <span className={`${meta.badge} flex items-center gap-1`}>{meta.icon}{meta.label}</span>
+                    <span className="font-medium text-slate-700">{inc.staff?.name ?? '—'}</span>
+                    <span className="text-slate-400 text-sm">
+                      {formatDate(inc.date)}
+                      {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}
+                    </span>
+                    <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{meta.delta}</span>
+                    {inc.notes && <span className="text-xs text-slate-400 w-full sm:w-auto">{inc.notes}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <div className="px-5 py-3 border-t border-slate-100">
+            <Link href="/reliability" className="text-xs text-blue-600 hover:text-blue-700 font-medium">
+              Log an incident or view staff scores →
+            </Link>
+          </div>
+        </div>
+      </details>
 
       <div className="pt-2">
         <WageTable />

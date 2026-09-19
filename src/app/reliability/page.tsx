@@ -1,21 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, PhoneMissed, XCircle, UserX, CheckCircle, Clock, Plus } from 'lucide-react';
+import { AlertTriangle, Plus } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
+import { INCIDENT_META } from '@/lib/incidentMeta';
 import { formatDate, formatTimeOfDay, todayStr } from '@/lib/shiftUtils';
-
-const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string; delta: string }> = {
-  no_show:  { label: 'No Show',    icon: <UserX size={13} />,      badge: 'badge-red',    delta: '−15' },
-  no_answer:{ label: 'No Answer',  icon: <PhoneMissed size={13} />, badge: 'badge-amber',  delta: '−5'  },
-  rejected: { label: 'Rejected',   icon: <XCircle size={13} />,    badge: 'badge-amber',  delta: '−3'  },
-  covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green',  delta: '+10' },
-  late:     { label: 'Late',       icon: <Clock size={13} />,      badge: 'badge-amber',  delta: '−5'  },
-};
 
 export default function ReliabilityPage() {
   const [incidents, setIncidents] = useState<ReliabilityIncident[]>([]);
