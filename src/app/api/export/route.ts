@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
   if (type === 'shifts') {
     const { data, error } = await supabase
       .from('shifts')
-      .select(`*, departments ( name ), assigned_staff:staff ( name )`)
+      .select(`*, departments ( name ), assigned_staff:staff!assigned_staff_id ( name )`)
       .order('date').order('start_time');
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

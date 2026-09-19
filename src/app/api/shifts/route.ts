@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
     .select(`
       *,
       departments ( id, name, requires_supervisor, color ),
-      assigned_staff:staff ( id, name, age_group, role_type, birthday )
+      assigned_staff:staff!assigned_staff_id ( id, name, age_group, role_type, birthday )
     `)
     .order('date')
     .order('start_time');
