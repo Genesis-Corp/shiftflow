@@ -27,6 +27,10 @@ export interface EligibilityQuery {
   /** Someone who was just reopened out of this exact shift (a sick call) —
    *  never eligible for it again until it's assigned to someone for real. */
   exclude_staff_id?: string | null;
+  /** Manual override: ignore department training entirely and consider
+   *  every active staff member, for whenever the automatic Checkout
+   *  fallback still doesn't turn up anyone. */
+  expand_search?: boolean;
 }
 
 export interface ScoredCandidate {
@@ -80,15 +84,16 @@ export interface EligibilityResult {
   /** Excluded from the race — taking this shift would exceed 38 weekly hours. Shown as a backup option, not raced. */
   backup: ScoredCandidate[];
   /** Set when nobody trained in the shift's own department was eligible and
-   *  the pool was widened to Checkout staff instead — juniors first, then
-   *  seniors too if no juniors were available either. */
-  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
+   *  the pool was widened — automatically to Checkout staff (juniors first,
+   *  seniors too if no juniors were available either), or to absolutely
+   *  everyone when the caller asked for expand_search. */
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | 'expanded' | null;
 }
 
 export async function findEligibleCandidates(
   query: EligibilityQuery
 ): Promise<EligibilityResult> {
-  const { date, start_time, end_time, department_id, required_role, exclude_staff_id } = query;
+  const { date, start_time, end_time, department_id, required_role, exclude_staff_id, expand_search } = query;
 
   const [{ data: dept, error: deptErr }, { data: checkoutDept }] = await Promise.all([
     supabaseAdmin.from('departments').select('*').eq('id', department_id).single(),
@@ -139,8 +144,10 @@ export async function findEligibleCandidates(
   const seniorAvailable = (allStaff ?? []).some(s => ageGroupOf(s) === 'senior');
 
   /** Everyone trained in `poolDeptId`, available, and otherwise eligible —
-   *  `ageFilter` narrows further for the Checkout fallback pool below. */
-  const eligibleIn = (poolDeptId: string, ageFilter?: 'junior' | 'senior') =>
+   *  `ageFilter` narrows further for the Checkout fallback pool below;
+   *  `skipDeptCheck` drops the training requirement entirely, for the
+   *  manual "Expand Search" override. */
+  const eligibleIn = (poolDeptId: string, ageFilter?: 'junior' | 'senior', skipDeptCheck = false) =>
     (allStaff ?? []).filter(s => {
       // Salaried staff are paid the same whether or not they cover a shift, so
       // there's no incentive to offer it to them. Never enters the race.
@@ -152,8 +159,10 @@ export async function findEligibleCandidates(
       // Never re-offer the exact shift someone was just pulled out of.
       if (exclude_staff_id && s.id === exclude_staff_id) return false;
 
-      const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
-      if (!deptIds.includes(poolDeptId)) return false;
+      if (!skipDeptCheck) {
+        const deptIds = (s.staff_departments ?? []).map((d: { department_id: string }) => d.department_id);
+        if (!deptIds.includes(poolDeptId)) return false;
+      }
 
       if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !seniorAvailable) return false;
 
@@ -169,24 +178,33 @@ export async function findEligibleCandidates(
       return true;
     });
 
-  let eligible = eligibleIn(department_id);
+  let eligible: typeof allStaff;
   let fallbackPool: EligibilityResult['fallback_pool'] = null;
 
-  // Nobody trained in the shift's own department is both eligible and
-  // available — rather than come back empty, widen to Checkout staff,
-  // juniors preferred and seniors only if that's still nobody. A shift's
-  // required_role (if set) still applies within this wider pool, same as
-  // it did in the home department.
-  if (eligible.length === 0 && checkoutDept && checkoutDept.id !== department_id) {
-    const juniors = eligibleIn(checkoutDept.id, 'junior');
-    if (juniors.length > 0) {
-      eligible = juniors;
-      fallbackPool = 'checkout_junior';
-    } else {
-      const seniors = eligibleIn(checkoutDept.id, 'senior');
-      if (seniors.length > 0) {
-        eligible = seniors;
-        fallbackPool = 'checkout_senior';
+  if (expand_search) {
+    // The manual override — every active, available staff member,
+    // regardless of what department (if any) they're trained in.
+    eligible = eligibleIn(department_id, undefined, true);
+    fallbackPool = 'expanded';
+  } else {
+    eligible = eligibleIn(department_id);
+
+    // Nobody trained in the shift's own department is both eligible and
+    // available — rather than come back empty, widen to Checkout staff,
+    // juniors preferred and seniors only if that's still nobody. A shift's
+    // required_role (if set) still applies within this wider pool, same as
+    // it did in the home department.
+    if (eligible.length === 0 && checkoutDept && checkoutDept.id !== department_id) {
+      const juniors = eligibleIn(checkoutDept.id, 'junior');
+      if (juniors.length > 0) {
+        eligible = juniors;
+        fallbackPool = 'checkout_junior';
+      } else {
+        const seniors = eligibleIn(checkoutDept.id, 'senior');
+        if (seniors.length > 0) {
+          eligible = seniors;
+          fallbackPool = 'checkout_senior';
+        }
       }
     }
   }

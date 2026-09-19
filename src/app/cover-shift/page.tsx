@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed,
-  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert,
+  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users,
 } from 'lucide-react';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
@@ -29,7 +29,7 @@ interface CoverResult {
   extendable: ExtendableCandidate[];
   overlapExcluded: OverlapConflict[];
   backup: CoverCandidate[];
-  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | 'expanded' | null;
 }
 
 /** "543 minutes" -> "9h 3m" */
@@ -124,12 +124,17 @@ export default function CoverShiftPage() {
     setRaceError('');
   }
 
-  async function findCover() {
+  /** `expand` ignores department training entirely (still respects
+   *  availability, required_role, supervisor cover and the excluded sick
+   *  caller) — a manual escape hatch for whenever the automatic Checkout
+   *  fallback doesn't turn up anyone either, or a manager just wants to see
+   *  every warm body regardless of training. */
+  async function findCover(expand = false) {
     if (!form.department_id || underMinimum || searchIsPast) return;
     setLoading(true); setResult(null); setRaceError('');
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, shift_id: selectedShiftId }),
+      body: JSON.stringify({ ...form, shift_id: selectedShiftId, expand_search: expand }),
     });
     const data = await res.json();
     setLoading(false);
@@ -317,7 +322,7 @@ export default function CoverShiftPage() {
         )}
 
         <div className="flex items-center gap-4 mt-4 flex-wrap">
-          <button onClick={findCover} disabled={loading || !form.department_id || underMinimum || searchIsPast} className="btn-primary">
+          <button onClick={() => findCover()} disabled={loading || !form.department_id || underMinimum || searchIsPast} className="btn-primary">
             <Search size={16} /> {loading ? 'Searching...' : 'Find Available Staff'}
           </button>
           <p className={`text-sm ${underMinimum ? 'text-red-600' : 'text-slate-500'}`}>
@@ -364,32 +369,48 @@ export default function CoverShiftPage() {
                   </span>
                 )}
             </p>
-            {result.candidates.length > 0 && (
-              <div className="flex items-center gap-3">
-                {!selectedShiftId && (
-                  <span className="text-xs text-slate-400 max-w-xs text-right">
-                    No open shift selected — starting a race will create one for this time
-                  </span>
-                )}
+            <div className="flex items-center gap-3">
+              {result.fallback_pool !== 'expanded' && (
                 <button
-                  onClick={openRacePreview}
-                  disabled={previewLoading}
-                  className="btn-primary"
-                  title={selectedShiftId ? undefined : 'Creates a new open shift for this time, then starts the race'}
+                  onClick={() => findCover(true)}
+                  disabled={loading}
+                  title="Ignore department training entirely and show every available staff member — a manual override for whenever the automatic Checkout fallback still doesn't turn up anyone"
+                  className="btn-secondary text-sm"
                 >
-                  {previewLoading
-                    ? <Loader2 size={14} className="animate-spin" />
-                    : <Phone size={14} />} Start Claim Race
+                  <Users size={14} /> Expand Search
                 </button>
-              </div>
-            )}
+              )}
+              {result.candidates.length > 0 && (
+                <>
+                  {!selectedShiftId && (
+                    <span className="text-xs text-slate-400 max-w-xs text-right">
+                      No open shift selected — starting a race will create one for this time
+                    </span>
+                  )}
+                  <button
+                    onClick={openRacePreview}
+                    disabled={previewLoading}
+                    className="btn-primary"
+                    title={selectedShiftId ? undefined : 'Creates a new open shift for this time, then starts the race'}
+                  >
+                    {previewLoading
+                      ? <Loader2 size={14} className="animate-spin" />
+                      : <Phone size={14} />} Start Claim Race
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {result.fallback_pool && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
               <ShieldAlert size={15} className="flex-shrink-0 mt-0.5" />
-              No one trained in {result.shift.department?.name} was eligible and available, so this list is
-              Checkout staff instead{result.fallback_pool === 'checkout_junior' ? ' (juniors)' : ' — including seniors, since no juniors were available either'}.
+              {result.fallback_pool === 'expanded'
+                ? <>Expanded search — showing every available staff member regardless of department training.</>
+                : <>
+                    No one trained in {result.shift.department?.name} was eligible and available, so this list is
+                    Checkout staff instead{result.fallback_pool === 'checkout_junior' ? ' (juniors)' : ' — including seniors, since no juniors were available either'}.
+                  </>}
             </div>
           )}
 

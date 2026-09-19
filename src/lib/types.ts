@@ -128,9 +128,10 @@ export interface CoverShiftResult {
   overlapExcluded: OverlapConflict[];
   backup: CoverCandidate[];
   /** Set when nobody trained in the shift's own department was eligible and
-   *  the candidate pool was widened to Checkout staff instead — juniors
-   *  first, seniors only if no juniors were available either. */
-  fallback_pool: 'checkout_junior' | 'checkout_senior' | null;
+   *  the candidate pool was widened — automatically to Checkout staff
+   *  (juniors first, seniors only if no juniors were available either), or
+   *  to absolutely everyone via the manual "Expand Search" override. */
+  fallback_pool: 'checkout_junior' | 'checkout_senior' | 'expanded' | null;
 }
 
 // ── Claim race ───────────────────────────────────────────────────────────────

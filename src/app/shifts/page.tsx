@@ -11,7 +11,7 @@ import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
-import { Shift, Department } from '@/lib/types';
+import { Shift, Department, Staff } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
@@ -213,6 +213,7 @@ function ShiftDayGroup({
 export default function ShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
@@ -231,6 +232,10 @@ export default function ShiftsPage() {
   });
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
+  /** Who a shift being edited is assigned to — '' means unassigned. Kept
+   *  separate from `form` since it only applies in edit mode and drives the
+   *  shift's status (covered/open) alongside assigned_staff_id on save. */
+  const [editAssignedStaffId, setEditAssignedStaffId] = useState('');
   const [saveError, setSaveError] = useState('');
 
   // Roster photos/PDFs waiting to become shifts.
@@ -247,12 +252,14 @@ export default function ShiftsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [shiftsData, deptData] = await Promise.all([
+      const [shiftsData, deptData, staffData] = await Promise.all([
         fetchJson<Shift[]>('/api/shifts'),
         fetchJson<Department[]>('/api/departments'),
+        fetchJson<Staff[]>('/api/staff'),
       ]);
       setShifts(shiftsData);
       setDepartments(deptData);
+      setStaff(staffData.filter(s => s.active && !s.archived).sort((a, b) => a.name.localeCompare(b.name)));
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load shifts');
@@ -478,6 +485,7 @@ export default function ShiftsPage() {
 
   function openAdd() {
     setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
+    setEditAssignedStaffId('');
     setSaveError('');
     setModal('add');
   }
@@ -485,6 +493,7 @@ export default function ShiftsPage() {
   function openEdit(s: Shift) {
     setEditing(s);
     setForm({ date: s.date, start_time: s.start_time, end_time: s.end_time, department_id: s.department_id, required_role: s.required_role, notes: s.notes ?? '' });
+    setEditAssignedStaffId(s.assigned_staff_id ?? '');
     setSaveError('');
     setModal('edit');
   }
@@ -506,7 +515,18 @@ export default function ShiftsPage() {
     const res = modal === 'add'
       ? await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
       : editing
-      ? await fetch(`/api/shifts/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      ? await fetch(`/api/shifts/${editing.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...form,
+            assigned_staff_id: editAssignedStaffId || null,
+            // A cancelled shift stays cancelled from this form — assigning
+            // someone to it is done by reopening it first, not implicitly
+            // here. Otherwise the assignment always decides open vs covered,
+            // whether or not it actually changed.
+            ...(editing.status !== 'cancelled' ? { status: editAssignedStaffId ? 'covered' : 'open' } : {}),
+          }),
+        })
       : null;
     if (!res) return;
     if (!res.ok) { setSaveError((await res.json()).error ?? 'Could not save that shift.'); return; }
@@ -902,6 +922,25 @@ export default function ShiftsPage() {
                 <option value="junior">Junior only</option>
               </select>
             </div>
+            {modal === 'edit' && (
+              <div>
+                <label className="label">Assigned Staff</label>
+                <select className="input" value={editAssignedStaffId} onChange={e => setEditAssignedStaffId(e.target.value)}>
+                  <option value="">— Unassigned —</option>
+                  {[...staff]
+                    .sort((a, b) => {
+                      const aTrained = (a.staff_departments ?? []).some(d => d.department_id === form.department_id);
+                      const bTrained = (b.staff_departments ?? []).some(d => d.department_id === form.department_id);
+                      if (aTrained !== bTrained) return aTrained ? -1 : 1;
+                      return a.name.localeCompare(b.name);
+                    })
+                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <p className="text-xs text-slate-400 mt-1">
+                  Picking someone marks this shift covered; clearing it reopens it — same as it already would elsewhere.
+                </p>
+              </div>
+            )}
             <div>
               <label className="label">Notes (optional)</label>
               <input className="input" value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any notes..." />

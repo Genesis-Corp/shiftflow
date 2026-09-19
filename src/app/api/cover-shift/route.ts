@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { date, start_time, end_time, department_id, required_role, shift_id } = body;
+  const { date, start_time, end_time, department_id, required_role, shift_id, expand_search } = body;
 
   if (!date || !start_time || !end_time || !department_id)
     return NextResponse.json({ error: 'date, start_time, end_time, department_id required' }, { status: 400 });
@@ -31,7 +31,8 @@ export async function POST(req: NextRequest) {
     }
 
     const { department, candidates, extendable, overlapExcluded, backup, fallback_pool } = await findEligibleCandidates({
-      date, start_time, end_time, department_id, required_role, exclude_staff_id: excludeStaffId,
+      date, start_time, end_time, department_id, required_role,
+      exclude_staff_id: excludeStaffId, expand_search: !!expand_search,
     });
 
     return NextResponse.json({
