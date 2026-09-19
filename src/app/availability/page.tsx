@@ -1,9 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella } from 'lucide-react';
+import { Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
+import { postJson } from '@/lib/api';
+import { downscalePhoto } from '@/lib/image';
+import { readPdfAsBase64 } from '@/lib/pdf';
+import { matchStaffName } from '@/lib/leaveForm';
 import { Staff, AvailabilityTemplate, DayOfWeek, StaffLeave, LeaveType } from '@/lib/types';
 import {
   DAYS, DAY_SHORT, TIMELINE_START_HOUR, TIMELINE_END_HOUR,
@@ -62,6 +66,14 @@ export default function AvailabilityPage() {
   const [uploadingLeave, setUploadingLeave] = useState(false);
   const [leaveError, setLeaveError] = useState('');
 
+  // A scanned form can name more than one staff member (e.g. a Request Day
+  // Off form signed "Eli and Aria") — the primary Staff Member field covers
+  // the first, these extra rows cover the rest, each excluded for the same
+  // date range once saved.
+  const [extraStaff, setExtraStaff] = useState<{ id: string; rawName: string }[]>([]);
+  const [scanningLeave, setScanningLeave] = useState(false);
+  const [scanNote, setScanNote] = useState('');
+
   async function load() {
     try {
       const [staffData, templateData, leaveData] = await Promise.all([
@@ -90,21 +102,30 @@ export default function AvailabilityPage() {
 
   async function submitLeave(e: React.FormEvent) {
     e.preventDefault();
-    if (!leaveForm.staff_id || !leaveForm.start_date || !leaveForm.end_date) return;
+    const staffIds = Array.from(new Set([leaveForm.staff_id, ...extraStaff.map(s => s.id)].filter(Boolean)));
+    if (!staffIds.length || !leaveForm.start_date || !leaveForm.end_date) return;
     setLeaveError('');
     setUploadingLeave(true);
-    const fd = new FormData();
-    fd.append('staff_id', leaveForm.staff_id);
-    fd.append('leave_type', leaveForm.leave_type);
-    fd.append('start_date', leaveForm.start_date);
-    fd.append('end_date', leaveForm.end_date);
-    if (leaveForm.notes.trim()) fd.append('notes', leaveForm.notes.trim());
-    if (leaveFile) fd.append('file', leaveFile);
-    const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
+    for (const staff_id of staffIds) {
+      const fd = new FormData();
+      fd.append('staff_id', staff_id);
+      fd.append('leave_type', leaveForm.leave_type);
+      fd.append('start_date', leaveForm.start_date);
+      fd.append('end_date', leaveForm.end_date);
+      if (leaveForm.notes.trim()) fd.append('notes', leaveForm.notes.trim());
+      if (leaveFile) fd.append('file', leaveFile);
+      const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
+      if (!res.ok) {
+        setUploadingLeave(false);
+        setLeaveError((await res.json().catch(() => ({}))).error ?? 'Could not save that.');
+        return;
+      }
+    }
     setUploadingLeave(false);
-    if (!res.ok) { setLeaveError((await res.json().catch(() => ({}))).error ?? 'Could not save that.'); return; }
     setLeaveForm({ staff_id: '', leave_type: 'day_off', start_date: '', end_date: '', notes: '' });
     setLeaveFile(null);
+    setExtraStaff([]);
+    setScanNote('');
     await loadLeave();
   }
 
@@ -112,6 +133,62 @@ export default function AvailabilityPage() {
     if (!confirm('Delete this record? This removes the exclusion for those dates too.')) return;
     await fetch(`/api/staff-leave/${id}`, { method: 'DELETE' });
     loadLeave();
+  }
+
+  /**
+   * A photo or PDF of the form gets read automatically the moment it's
+   * chosen — any other file type (a phone-scanned doc, etc.) is still
+   * attached as-is, just without the auto-fill. Failing to read it never
+   * blocks the upload; it only means the fields below stay manual.
+   */
+  async function handleLeaveFileChange(file: File | null) {
+    setLeaveFile(file);
+    setScanNote('');
+    setExtraStaff([]);
+    if (!file) return;
+
+    const isImage = file.type.startsWith('image/');
+    const isPdf = file.type === 'application/pdf';
+    if (!isImage && !isPdf) return;
+
+    setScanningLeave(true);
+    setLeaveError('');
+    try {
+      const payload = isPdf
+        ? { pdf: await readPdfAsBase64(file) }
+        : await downscalePhoto(file).then(({ base64, mediaType }) => ({ image: base64, mediaType }));
+
+      const res = await postJson<{ form_type: string; staff_names: string[]; start_date: string; end_date: string; notes: string }>(
+        '/api/scan-leave-form', payload, { timeoutMs: 70_000 }
+      );
+      if (!res.ok || !res.data) { setScanNote(res.error ?? 'Could not read that form — fill it in by hand.'); return; }
+
+      const { form_type, staff_names, start_date, end_date, notes } = res.data;
+      const matches = staff_names.map(rawName => ({ rawName, id: matchStaffName(rawName, staff) ?? '' }));
+
+      setLeaveForm(f => ({
+        ...f,
+        staff_id: matches[0]?.id || f.staff_id,
+        leave_type: form_type === 'request_day_off' ? 'day_off' : form_type === 'farmer_jacks_leave' ? 'leave' : f.leave_type,
+        start_date: start_date || f.start_date,
+        end_date: end_date || start_date || f.end_date,
+        notes: f.notes || notes,
+      }));
+      setExtraStaff(matches.slice(1));
+
+      const unmatchedCount = matches.filter(m => !m.id).length;
+      setScanNote([
+        staff_names.length ? `Read from form: ${staff_names.join(', ')}.` : '',
+        unmatchedCount
+          ? `Could not auto-match ${unmatchedCount === 1 ? 'one of these' : `${unmatchedCount} of these`} to a staff member — check the staff field${matches.length > 1 ? 's' : ''} below.`
+          : '',
+        start_date ? '' : 'Could not read a date off the form — check it by hand.',
+      ].filter(Boolean).join(' '));
+    } catch (err) {
+      setScanNote(err instanceof Error ? err.message : 'Could not read that form — fill it in by hand.');
+    } finally {
+      setScanningLeave(false);
+    }
   }
 
   function loadStaffTemplates(s: Staff) {
@@ -408,70 +485,115 @@ export default function AvailabilityPage() {
         </div>
       )}
 
-      {/* Time off — Request Day Off / Leave forms. Any file type, never
-          parsed, just kept on file against a date range that excludes that
-          person from claim races, same as a birthday already does. */}
+      {/* Time off — Request Day Off / Leave forms. Uploading a photo or PDF
+          reads it automatically (staff name(s), dates, leave type) and
+          fills the fields below — still editable, and any other file type
+          still just gets kept on file. Either way, the date range on file
+          is what excludes that person from claim races, same as a birthday
+          already does. */}
       <div className="card p-4">
         <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
           <CalendarX size={16} className="text-slate-400" /> Time Off
         </h2>
         <p className="text-xs text-slate-500 mb-4">
-          Upload a Request Day Off or Leave form — they&apos;re excluded from claim races for the dates on file.
+          Upload a Request Day Off or Leave form — a photo or PDF is read automatically, and they&apos;re excluded from claim races for the dates on file.
         </p>
 
-        <form onSubmit={submitLeave} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end mb-4 pb-4 border-b border-slate-100">
-          <div className="lg:col-span-2">
-            <label className="label">Staff Member</label>
-            <select className="input" required value={leaveForm.staff_id} onChange={e => setLeaveForm(f => ({ ...f, staff_id: e.target.value }))}>
-              <option value="">Select staff...</option>
-              {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+        <form onSubmit={submitLeave} className="mb-4 pb-4 border-b border-slate-100">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+            <div className="lg:col-span-2">
+              <label className="label">Staff Member</label>
+              <select className="input" required value={leaveForm.staff_id} onChange={e => setLeaveForm(f => ({ ...f, staff_id: e.target.value }))}>
+                <option value="">Select staff...</option>
+                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Type</label>
+              <select
+                className="input"
+                value={leaveForm.leave_type}
+                onChange={e => {
+                  const leave_type = e.target.value as LeaveType;
+                  setLeaveForm(f => ({ ...f, leave_type, end_date: leave_type === 'day_off' ? f.start_date : f.end_date }));
+                }}
+              >
+                <option value="day_off">Day Off</option>
+                <option value="leave">Leave</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Start</label>
+              <input
+                type="date" className="input" required value={leaveForm.start_date}
+                onChange={e => {
+                  const start_date = e.target.value;
+                  setLeaveForm(f => ({
+                    ...f, start_date,
+                    end_date: f.leave_type === 'day_off' || !f.end_date || f.end_date < start_date ? start_date : f.end_date,
+                  }));
+                }}
+              />
+            </div>
+            <div>
+              <label className="label">End</label>
+              <input
+                type="date" className="input" required value={leaveForm.end_date} min={leaveForm.start_date || undefined}
+                disabled={leaveForm.leave_type === 'day_off'}
+                onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))}
+              />
+            </div>
+            <div className="lg:col-span-2">
+              <label className="label">Form (optional, any file)</label>
+              <div className="relative">
+                <input type="file" className="input py-1.5" onChange={e => handleLeaveFileChange(e.target.files?.[0] ?? null)} />
+                {scanningLeave && (
+                  <Loader2 size={14} className="animate-spin text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
+            </div>
+            <div className="lg:col-span-5">
+              <label className="label">Notes (optional)</label>
+              <input className="input" value={leaveForm.notes} onChange={e => setLeaveForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any context..." />
+            </div>
+            <button type="submit" disabled={uploadingLeave || scanningLeave} className="btn-primary justify-center">
+              <Upload size={14} /> {uploadingLeave ? 'Saving...' : 'Save'}
+            </button>
           </div>
-          <div>
-            <label className="label">Type</label>
-            <select
-              className="input"
-              value={leaveForm.leave_type}
-              onChange={e => {
-                const leave_type = e.target.value as LeaveType;
-                setLeaveForm(f => ({ ...f, leave_type, end_date: leave_type === 'day_off' ? f.start_date : f.end_date }));
-              }}
-            >
-              <option value="day_off">Day Off</option>
-              <option value="leave">Leave</option>
-            </select>
-          </div>
-          <div>
-            <label className="label">Start</label>
-            <input
-              type="date" className="input" required value={leaveForm.start_date}
-              onChange={e => {
-                const start_date = e.target.value;
-                setLeaveForm(f => ({
-                  ...f, start_date,
-                  end_date: f.leave_type === 'day_off' || !f.end_date || f.end_date < start_date ? start_date : f.end_date,
-                }));
-              }}
-            />
-          </div>
-          <div>
-            <label className="label">End</label>
-            <input
-              type="date" className="input" required value={leaveForm.end_date} min={leaveForm.start_date || undefined}
-              disabled={leaveForm.leave_type === 'day_off'}
-              onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))}
-            />
-          </div>
-          <div className="lg:col-span-2">
-            <label className="label">Form (optional, any file)</label>
-            <input type="file" className="input py-1.5" onChange={e => setLeaveFile(e.target.files?.[0] ?? null)} />
-          </div>
-          <div className="lg:col-span-5">
-            <label className="label">Notes (optional)</label>
-            <input className="input" value={leaveForm.notes} onChange={e => setLeaveForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any context..." />
-          </div>
-          <button type="submit" disabled={uploadingLeave} className="btn-primary justify-center">
-            <Upload size={14} /> {uploadingLeave ? 'Saving...' : 'Save'}
+
+          {scanNote && <p className="text-xs text-amber-600 mt-2.5">{scanNote}</p>}
+
+          {extraStaff.length > 0 && (
+            <div className="mt-3 space-y-2">
+              <p className="label">Also on this form</p>
+              {extraStaff.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <select
+                    className="input flex-1"
+                    value={row.id}
+                    onChange={e => setExtraStaff(rows => rows.map((r, j) => j === i ? { ...r, id: e.target.value } : r))}
+                  >
+                    <option value="">{row.rawName ? `Select who "${row.rawName}" is...` : 'Select staff...'}</option>
+                    {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setExtraStaff(rows => rows.filter((_, j) => j !== i))}
+                    className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setExtraStaff(rows => [...rows, { id: '', rawName: '' }])}
+            className="mt-2.5 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+          >
+            <Plus size={12} /> Add another staff member on this form
           </button>
         </form>
 
