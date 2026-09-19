@@ -417,6 +417,43 @@ export default function CoverShiftPage() {
             </div>
           )}
 
+          {/* Already rostered overlapping this time, but extending covers it
+              within 10h — shown first so it's never missed below a long
+              ranked list further down the page. */}
+          {result.extendable.length > 0 && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ArrowRight size={14} className="text-blue-500" />
+                <h3 className="text-sm font-semibold text-slate-700">
+                  Extend an existing shift instead ({result.extendable.length})
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500">
+                Already rostered overlapping this time — excluded from the claim race, but stretching their shift covers it without double-booking them.
+              </p>
+              {result.extendable.map(c => (
+                <div key={c.id} className="card p-4 flex items-center gap-4 border-blue-200 bg-blue-50/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-800">{c.name}</p>
+                    <p className="text-xs text-slate-500 mt-0.5 font-mono">
+                      {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}
+                      <span className="mx-1.5 text-slate-400">→</span>
+                      <span className="text-blue-700">{c.proposed.start_time.slice(0, 5)}–{c.proposed.end_time.slice(0, 5)}</span>
+                      <span className="ml-1.5 text-slate-400">({formatDuration(c.proposed.start_time, c.proposed.end_time)})</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => extendShift(c.id)}
+                    disabled={extending !== null}
+                    className="btn-primary flex-shrink-0"
+                  >
+                    {extending === c.id ? <Loader2 size={14} className="animate-spin" /> : 'Extend their shift'}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
           {result.candidates.length === 0 && result.extendable.length === 0 &&
            result.overlapExcluded.length === 0 && result.backup.length === 0 ? (
             <div className="card p-8 text-center text-slate-400">
@@ -472,41 +509,6 @@ export default function CoverShiftPage() {
                       className="btn-ghost p-1.5 text-slate-500 hover:bg-slate-100"
                     ><PhoneMissed size={16} /></button>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Already rostered overlapping this time, but extending covers it within 10h */}
-          {result.extendable.length > 0 && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <ArrowRight size={14} className="text-blue-500" />
-                <h3 className="text-sm font-semibold text-slate-700">
-                  Extend an existing shift instead ({result.extendable.length})
-                </h3>
-              </div>
-              <p className="text-xs text-slate-500">
-                Already rostered overlapping this time — excluded from the claim race, but stretching their shift covers it without double-booking them.
-              </p>
-              {result.extendable.map(c => (
-                <div key={c.id} className="card p-4 flex items-center gap-4 border-blue-200 bg-blue-50/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-800">{c.name}</p>
-                    <p className="text-xs text-slate-500 mt-0.5 font-mono">
-                      {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}
-                      <span className="mx-1.5 text-slate-400">→</span>
-                      <span className="text-blue-700">{c.proposed.start_time.slice(0, 5)}–{c.proposed.end_time.slice(0, 5)}</span>
-                      <span className="ml-1.5 text-slate-400">({formatDuration(c.proposed.start_time, c.proposed.end_time)})</span>
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => extendShift(c.id)}
-                    disabled={extending !== null}
-                    className="btn-primary flex-shrink-0"
-                  >
-                    {extending === c.id ? <Loader2 size={14} className="animate-spin" /> : 'Extend their shift'}
-                  </button>
                 </div>
               ))}
             </div>
