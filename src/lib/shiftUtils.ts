@@ -212,7 +212,9 @@ export function formatDate(dateStr: string): string {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-/** Reliability score delta for each incident type */
+/** Reliability score delta for each incident type. A negative entry is a
+ *  PERCENTAGE of the person's current score (see applyReliabilityDelta),
+ *  not a flat point value — covered stays a flat point gain. */
 export const RELIABILITY_DELTAS: Record<string, number> = {
   no_show: -15,
   no_answer: -5,
@@ -223,6 +225,25 @@ export const RELIABILITY_DELTAS: Record<string, number> = {
 
 export function clampScore(score: number): number {
   return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Apply one incident's effect to a reliability score.
+ *
+ * A bad incident shrinks the CURRENT score by a percentage of itself,
+ * rather than subtracting a flat number of points — so a -15% no-show
+ * takes someone from 50 to 43 the first time, not straight to 35. It takes
+ * a genuine pattern of repeat incidents to compound down towards where a
+ * flat deduction would have landed instantly (a second no-show takes that
+ * same 43 to 37): someone new with one incident on record isn't judged as
+ * harshly as someone with a history of them. A good outcome (covered) still
+ * adds a flat number of points — recovering trust is a fixed, predictable
+ * reward, not scaled down by how little trust is currently left.
+ */
+export function applyReliabilityDelta(currentScore: number, incidentType: string): number {
+  const delta = RELIABILITY_DELTAS[incidentType] ?? 0;
+  const next = delta >= 0 ? currentScore + delta : currentScore + currentScore * (delta / 100);
+  return clampScore(Math.round(next));
 }
 
 // ── Daily availability timeline ─────────────────────────────────────────────

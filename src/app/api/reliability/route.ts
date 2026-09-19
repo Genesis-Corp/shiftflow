@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
-import { RELIABILITY_DELTAS, clampScore } from '@/lib/shiftUtils';
+import { RELIABILITY_DELTAS, applyReliabilityDelta } from '@/lib/shiftUtils';
 import { requireUser, unauthorized } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
@@ -45,10 +45,9 @@ export async function POST(req: NextRequest) {
   if (incErr) return NextResponse.json({ error: incErr.message }, { status: 500 });
 
   // Update reliability score
-  const delta = RELIABILITY_DELTAS[incident_type] ?? 0;
-  if (delta !== 0) {
+  if ((RELIABILITY_DELTAS[incident_type] ?? 0) !== 0) {
     const { data: staff } = await supabase.from('staff').select('reliability_score').eq('id', staff_id).single();
-    const newScore = clampScore((staff?.reliability_score ?? 50) + delta);
+    const newScore = applyReliabilityDelta(staff?.reliability_score ?? 50, incident_type);
     await supabase.from('staff').update({ reliability_score: newScore }).eq('id', staff_id);
   }
 

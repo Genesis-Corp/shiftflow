@@ -154,7 +154,7 @@ export default function RosterQueue({
                       <label className="flex items-start gap-2 cursor-pointer">
                         <input type="checkbox" checked={job.logNoShows} onChange={e => onToggleNoShows(job.id, e.target.checked)} className="mt-0.5 accent-red-600" />
                         <span className="text-xs text-red-800">
-                          Also log this against their reliability, which lowers their score by {Math.abs(RELIABILITY_DELTAS.no_show)} points each.
+                          Also log this against their reliability, which lowers their score by {Math.abs(RELIABILITY_DELTAS.no_show)}% each.
                         </span>
                       </label>
                     </div>

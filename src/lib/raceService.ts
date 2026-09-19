@@ -20,7 +20,7 @@ import {
   getSmsMode, getExpiryMinutes, getMaxRecipients, isQuietHours, getTimezone,
   localDateNow, localTimeNow,
 } from '@/lib/sms/config';
-import { timeToMinutes } from '@/lib/shiftUtils';
+import { timeToMinutes, applyReliabilityDelta } from '@/lib/shiftUtils';
 
 export interface StartRaceResult {
   raceId: string;
@@ -769,7 +769,7 @@ async function onRaceWon(
   const { data: staffRow } = await supabaseAdmin
     .from('staff').select('reliability_score').eq('id', staffId).single();
   await supabaseAdmin.from('staff').update({
-    reliability_score: Math.min(100, (staffRow?.reliability_score ?? 50) + 10),
+    reliability_score: applyReliabilityDelta(staffRow?.reliability_score ?? 50, 'covered'),
   }).eq('id', staffId);
 
   // Tell everyone else. Anyone who already declined is skipped — they have

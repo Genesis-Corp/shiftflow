@@ -1,6 +1,6 @@
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { RosterEntry, matchStaffName, hasNameCandidate } from '@/lib/roster';
-import { requiresBreak, BREAK_DURATION_MINUTES, RELIABILITY_DELTAS, clampScore } from '@/lib/shiftUtils';
+import { requiresBreak, BREAK_DURATION_MINUTES, applyReliabilityDelta } from '@/lib/shiftUtils';
 
 /**
  * Comparing roster entries against the staff list and existing shifts, and
@@ -290,7 +290,6 @@ async function recordNoShows(plan: RosterPlan, date: string): Promise<number> {
     return 0;
   }
 
-  const delta = RELIABILITY_DELTAS.no_show ?? 0;
   const { data: scores } = await supabase
     .from('staff')
     .select('id, reliability_score')
@@ -299,7 +298,7 @@ async function recordNoShows(plan: RosterPlan, date: string): Promise<number> {
   for (const row of (scores ?? []) as { id: string; reliability_score: number }[]) {
     await supabase
       .from('staff')
-      .update({ reliability_score: clampScore(row.reliability_score + delta) })
+      .update({ reliability_score: applyReliabilityDelta(row.reliability_score, 'no_show') })
       .eq('id', row.id);
   }
 

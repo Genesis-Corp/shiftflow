@@ -1,8 +1,42 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   shiftsOverlap, mergeShiftRanges, clashesWithOtherShift, weekBounds, isBirthday,
-  addDays, todayStr, minutesUntil, formatTimeOfDay,
+  addDays, todayStr, minutesUntil, formatTimeOfDay, applyReliabilityDelta,
 } from '../shiftUtils';
+
+describe('applyReliabilityDelta', () => {
+  it('shrinks a bad incident by a percentage of the current score, not a flat amount', () => {
+    // -15% of 50, not a flat -15 — 43, not 35.
+    expect(applyReliabilityDelta(50, 'no_show')).toBe(43);
+  });
+
+  it('compounds down over a repeated pattern, landing near where a flat deduction would have', () => {
+    const afterFirst = applyReliabilityDelta(50, 'no_show');
+    const afterSecond = applyReliabilityDelta(afterFirst, 'no_show');
+    expect(afterFirst).toBe(43);
+    expect(afterSecond).toBe(37);
+  });
+
+  it('has a smaller absolute effect on someone already low than someone starting high', () => {
+    const highDrop = 100 - applyReliabilityDelta(100, 'no_show');
+    const lowDrop = 20 - applyReliabilityDelta(20, 'no_show');
+    expect(highDrop).toBeGreaterThan(lowDrop);
+  });
+
+  it('keeps "covered" a flat point gain, not scaled to the current score', () => {
+    expect(applyReliabilityDelta(50, 'covered')).toBe(60);
+    expect(applyReliabilityDelta(10, 'covered')).toBe(20);
+  });
+
+  it('never lets the score leave the 0-100 range', () => {
+    expect(applyReliabilityDelta(95, 'covered')).toBe(100);
+    expect(applyReliabilityDelta(1, 'no_show')).toBeGreaterThanOrEqual(0);
+  });
+
+  it('is a no-op for an unrecognised incident type', () => {
+    expect(applyReliabilityDelta(50, 'not_a_real_type')).toBe(50);
+  });
+});
 
 describe('formatTimeOfDay', () => {
   it('drops the minutes on the hour', () => {
