@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const { name, requires_supervisor, color } = await req.json();
+  const { name, requires_supervisor, excluded_from_claim_race, color } = await req.json();
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 });
 
   const { count } = await supabase.from('departments').select('id', { count: 'exact', head: true });
@@ -29,6 +29,7 @@ export async function POST(req: NextRequest) {
     .from('departments')
     .insert([{
       name, requires_supervisor: requires_supervisor ?? false,
+      excluded_from_claim_race: excluded_from_claim_race ?? false,
       color: color ?? autoDeptColor(count ?? 0),
     }])
     .select()

@@ -95,7 +95,8 @@ export default function CoverShiftPage() {
     try {
       const data = await fetchJson<Department[]>('/api/departments');
       setDepartments(data);
-      if (data[0]) setForm(f => ({ ...f, department_id: data[0].id }));
+      const firstSelectable = data.find(d => !d.excluded_from_claim_race);
+      if (firstSelectable) setForm(f => ({ ...f, department_id: firstSelectable.id }));
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load departments');
@@ -301,7 +302,7 @@ export default function CoverShiftPage() {
             <label className="label">Department</label>
             <select className="input" value={form.department_id}
               onChange={e => { setForm(f => ({ ...f, department_id: e.target.value })); setSelectedShiftId(null); }}>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              {departments.filter(d => !d.excluded_from_claim_race).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
           <div>

@@ -30,7 +30,7 @@ export default function Navbar({ userEmail, userName }: { userEmail: string | nu
 
   return (
     <nav className="bg-blue-700 text-white shadow-lg">
-      <div className="max-w-7xl mx-auto px-4">
+      <div className="px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-1 h-14 overflow-x-auto">
           <span className="font-bold text-lg mr-4 whitespace-nowrap">⚡ ShiftFlow</span>
 

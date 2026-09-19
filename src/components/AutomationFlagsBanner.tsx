@@ -52,7 +52,7 @@ export default function AutomationFlagsBanner() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 pt-4 space-y-2">
+    <div className="px-4 sm:px-6 lg:px-8 pt-4 space-y-2">
       {runs.map(run => (
         <div key={run.id} className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <div className="flex items-start justify-between gap-3">

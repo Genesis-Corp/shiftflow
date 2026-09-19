@@ -6,7 +6,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const { name, requires_supervisor, color, is_default } = await req.json();
+  const { name, requires_supervisor, excluded_from_claim_race, color, is_default } = await req.json();
 
   // Only one department can be default — clear it off every other row first,
   // since the unique index would otherwise reject setting a second one.
@@ -15,6 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const updates: Record<string, unknown> = { name, requires_supervisor };
+  if (excluded_from_claim_race !== undefined) updates.excluded_from_claim_race = excluded_from_claim_race;
   if (color !== undefined) updates.color = color;
   if (is_default !== undefined) updates.is_default = is_default;
 

@@ -36,6 +36,8 @@ export interface Department {
   id: string;
   name: string;
   requires_supervisor: boolean;
+  /** Never offered in the Cover Shift picker — a manager can't start a claim race for it. */
+  excluded_from_claim_race: boolean;
   color?: string | null;
   is_default?: boolean;
   created_at: string;

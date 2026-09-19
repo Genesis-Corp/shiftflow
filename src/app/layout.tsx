@@ -35,7 +35,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <Navbar userEmail={user?.email ?? null} userName={managerName} />
         <AutomationFlagsBanner />
         <CompleteProfileGate />
-        <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
+        <main className="px-4 sm:px-6 lg:px-8 py-6">{children}</main>
       </body>
     </html>
   );

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users, Star } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users, Star, Ban } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
@@ -16,8 +16,8 @@ export default function DepartmentsPage() {
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
   const [editing, setEditing] = useState<Department | null>(null);
-  const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; color: string }>({
-    name: '', requires_supervisor: false, color: PRESET_DEPARTMENT_COLORS[0],
+  const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; excluded_from_claim_race: boolean; color: string }>({
+    name: '', requires_supervisor: false, excluded_from_claim_race: false, color: PRESET_DEPARTMENT_COLORS[0],
   });
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -55,13 +55,16 @@ export default function DepartmentsPage() {
   function openAdd() {
     const used = new Set(departments.map(d => normalizeDeptColor(d.color)));
     const next = PRESET_DEPARTMENT_COLORS.find(c => !used.has(c)) ?? autoDeptColor(departments.length);
-    setForm({ name: '', requires_supervisor: false, color: next });
+    setForm({ name: '', requires_supervisor: false, excluded_from_claim_race: false, color: next });
     setModal('add');
   }
 
   function openEdit(d: Department) {
     setEditing(d);
-    setForm({ name: d.name, requires_supervisor: d.requires_supervisor, color: normalizeDeptColor(d.color) });
+    setForm({
+      name: d.name, requires_supervisor: d.requires_supervisor,
+      excluded_from_claim_race: d.excluded_from_claim_race, color: normalizeDeptColor(d.color),
+    });
     setModal('edit');
   }
 
@@ -135,6 +138,11 @@ export default function DepartmentsPage() {
                       {d.requires_supervisor && (
                         <span className="badge-amber">
                           <ShieldCheck size={11} className="mr-1" /> Supervisor required
+                        </span>
+                      )}
+                      {d.excluded_from_claim_race && (
+                        <span className="badge-slate">
+                          <Ban size={11} className="mr-1" /> Excluded from claim race
                         </span>
                       )}
                       {d.is_default && (
@@ -231,6 +239,13 @@ export default function DepartmentsPage() {
               <div>
                 <p className="text-sm font-medium text-slate-700">Requires Supervisor</p>
                 <p className="text-xs text-slate-400">Juniors cannot work here alone without a senior on shift</p>
+              </div>
+            </label>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" checked={form.excluded_from_claim_race} onChange={e => setForm(f => ({ ...f, excluded_from_claim_race: e.target.checked }))} className="w-4 h-4 accent-blue-600" />
+              <div>
+                <p className="text-sm font-medium text-slate-700">Excluded from Claim Race</p>
+                <p className="text-xs text-slate-400">Won&apos;t appear in the Department picker when a manager starts a claim race on Cover Shift</p>
               </div>
             </label>
             <div className="flex justify-end gap-2 pt-2">
