@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr, minutesUntil, formatTimeOfDay } from '../shiftUtils';
+import {
+  shiftsOverlap, mergeShiftRanges, clashesWithOtherShift, weekBounds, isBirthday,
+  addDays, todayStr, minutesUntil, formatTimeOfDay,
+} from '../shiftUtils';
 
 describe('formatTimeOfDay', () => {
   it('drops the minutes on the hour', () => {
@@ -57,6 +60,29 @@ describe('mergeShiftRanges', () => {
 
   it('is a no-op when one range fully contains the other', () => {
     expect(mergeShiftRanges('08:00', '18:00', '10:00', '12:00')).toEqual({ start_time: '08:00', end_time: '18:00' });
+  });
+});
+
+describe('clashesWithOtherShift', () => {
+  it('is true when the proposed range reaches into another same-day shift', () => {
+    // A split shift: 09:00-12:00 and 15:30-21:15. Extending the evening
+    // part out to 13:00 would reach back into the morning part.
+    const otherShifts = [{ start_time: '09:00', end_time: '12:00' }];
+    expect(clashesWithOtherShift('11:00', '21:15', otherShifts)).toBe(true);
+  });
+
+  it('is false when the proposed range stays clear of the other shift', () => {
+    const otherShifts = [{ start_time: '09:00', end_time: '12:00' }];
+    expect(clashesWithOtherShift('15:30', '21:15', otherShifts)).toBe(false);
+  });
+
+  it('is false when there are no other shifts that day', () => {
+    expect(clashesWithOtherShift('15:30', '21:15', [])).toBe(false);
+  });
+
+  it('touching endpoints do not count as a clash', () => {
+    const otherShifts = [{ start_time: '09:00', end_time: '12:00' }];
+    expect(clashesWithOtherShift('12:00', '18:00', otherShifts)).toBe(false);
   });
 });
 

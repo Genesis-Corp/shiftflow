@@ -171,6 +171,21 @@ export function mergeShiftRanges(
 }
 
 /**
+ * Whether stretching a shift to `proposedStart`-`proposedEnd` would reach
+ * into any of a person's OTHER shifts that same day — the split-shift case:
+ * one part of the split shift overlaps the open shift and gets offered for
+ * extension, but the other part doesn't overlap it directly and so is easy
+ * to miss, even though the two parts are really one day's commitment and
+ * stretching into it means the same person in two places at once.
+ */
+export function clashesWithOtherShift(
+  proposedStart: string, proposedEnd: string,
+  otherShifts: { start_time: string; end_time: string }[]
+): boolean {
+  return otherShifts.some(s => shiftsOverlap(s.start_time, s.end_time, proposedStart, proposedEnd));
+}
+
+/**
  * Adjust a shift's start/end time.
  * Returns new start, end, and whether a break is now required.
  */

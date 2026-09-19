@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
 import {
-  shiftsOverlap, mergeShiftRanges, shiftDurationMinutes, requiresBreak,
+  shiftsOverlap, mergeShiftRanges, shiftDurationMinutes, requiresBreak, clashesWithOtherShift,
   BREAK_DURATION_MINUTES, MAX_EXTENDED_SHIFT_MINUTES,
 } from '@/lib/shiftUtils';
 
@@ -65,6 +65,17 @@ export async function POST(req: NextRequest) {
 
   const existing = overlapping[0];
   const merged = mergeShiftRanges(existing.start_time, existing.end_time, openShift.start_time, openShift.end_time);
+
+  // A split shift — another shift they already have the same day that
+  // doesn't itself overlap the open one — can still rule this out if
+  // stretching to the merged range would reach into it.
+  const otherSameDayShifts = (sameDayShifts ?? []).filter(s => s.id !== existing.id);
+  if (clashesWithOtherShift(merged.start_time, merged.end_time, otherSameDayShifts)) {
+    return NextResponse.json(
+      { error: `Extending to ${merged.start_time}–${merged.end_time} would overlap another shift they already have that day.` },
+      { status: 409 }
+    );
+  }
 
   if (shiftDurationMinutes(merged.start_time, merged.end_time) > MAX_EXTENDED_SHIFT_MINUTES) {
     return NextResponse.json(

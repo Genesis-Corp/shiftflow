@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
-  shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES,
+  shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES, clashesWithOtherShift,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday, addDays, daysBetween,
 } from '@/lib/shiftUtils';
 import {
@@ -337,11 +337,21 @@ export async function findEligibleCandidates(
 
   for (const s of eligible) {
     const weekShifts = shiftsByStaff.get(s.id) ?? [];
-    const conflict = weekShifts.find(w => w.date === date && shiftsOverlap(w.start_time, w.end_time, start_time, end_time));
+    const sameDayShifts = weekShifts.filter(w => w.date === date);
+    const overlapping = sameDayShifts.filter(w => shiftsOverlap(w.start_time, w.end_time, start_time, end_time));
 
-    if (conflict) {
+    if (overlapping.length === 1) {
+      const conflict = overlapping[0];
       const merged = mergeShiftRanges(conflict.start_time, conflict.end_time, start_time, end_time);
-      if (shiftDurationMinutes(merged.start_time, merged.end_time) <= MAX_EXTENDED_SHIFT_MINUTES) {
+
+      // A split shift — another shift they already have the same day that
+      // doesn't itself overlap this one — can still rule out the extension
+      // if stretching to the merged range would reach into it. The two
+      // parts are really one day's commitment; they can't be in both at once.
+      const otherSameDayShifts = sameDayShifts.filter(w => w.id !== conflict.id);
+      const clashesWithSplitShift = clashesWithOtherShift(merged.start_time, merged.end_time, otherSameDayShifts);
+
+      if (!clashesWithSplitShift && shiftDurationMinutes(merged.start_time, merged.end_time) <= MAX_EXTENDED_SHIFT_MINUTES) {
         extendable.push({
           id: s.id, name: s.name, phone: s.phone ?? null, phone_e164: s.phone_e164 ?? null,
           existing_shift: { id: conflict.id, start_time: conflict.start_time, end_time: conflict.end_time },
@@ -353,6 +363,18 @@ export async function findEligibleCandidates(
           existing_shift: { start_time: conflict.start_time, end_time: conflict.end_time },
         });
       }
+      continue;
+    }
+
+    if (overlapping.length > 1) {
+      // Overlaps more than one of their shifts at once — not a single clean
+      // extension, so exclude rather than guess which one to stretch.
+      const earliestStart = overlapping.reduce((min, w) => w.start_time < min ? w.start_time : min, overlapping[0].start_time);
+      const latestEnd = overlapping.reduce((max, w) => w.end_time > max ? w.end_time : max, overlapping[0].end_time);
+      overlapExcluded.push({
+        id: s.id, name: s.name,
+        existing_shift: { start_time: earliestStart, end_time: latestEnd },
+      });
       continue;
     }
 

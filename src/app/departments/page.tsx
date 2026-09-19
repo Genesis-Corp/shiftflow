@@ -202,7 +202,12 @@ export default function DepartmentsPage() {
                                 </Link>
                                 <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
                               </div>
-                              <div className="flex items-center justify-between">
+                              {/* Bounded to a fixed width rather than the
+                                  full (now much wider) row — otherwise
+                                  justify-between stretches 7 tiny columns
+                                  across the whole card instead of keeping
+                                  them together as one compact strip. */}
+                              <div className="flex items-center justify-between w-52">
                                 {DAY_SHORT.map((day, i) => {
                                   const available = availableDays?.has(i) ?? false;
                                   return (
