@@ -1,5 +1,19 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr } from '../shiftUtils';
+import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr, minutesUntil } from '../shiftUtils';
+
+describe('minutesUntil', () => {
+  it('is positive when the target is later the same day', () => {
+    expect(minutesUntil('2026-09-19', '13:00', '2026-09-19', '11:30')).toBe(90);
+  });
+
+  it('is negative once the target has passed', () => {
+    expect(minutesUntil('2026-09-19', '10:30', '2026-09-19', '11:00')).toBe(-30);
+  });
+
+  it('crosses a day boundary correctly', () => {
+    expect(minutesUntil('2026-09-20', '01:00', '2026-09-19', '23:00')).toBe(120);
+  });
+});
 
 describe('shiftsOverlap', () => {
   it('is true when ranges genuinely overlap', () => {

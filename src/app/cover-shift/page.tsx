@@ -14,7 +14,7 @@ import {
 } from '@/lib/types';
 import {
   formatDuration, requiresBreak, BREAK_DURATION_MINUTES, formatDate, WEEKLY_HOURS_CAP_MINUTES, todayStr,
-  shiftDurationMinutes, MIN_SHIFT_MINUTES,
+  shiftDurationMinutes, MIN_SHIFT_MINUTES, minutesUntil, MIN_COVERABLE_MINUTES,
 } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
 import { formatCost } from '@/lib/wages';
@@ -130,7 +130,7 @@ export default function CoverShiftPage() {
    *  fallback doesn't turn up anyone either, or a manager just wants to see
    *  every warm body regardless of training. */
   async function findCover(expand = false) {
-    if (!form.department_id || underMinimum || searchIsPast) return;
+    if (!form.department_id || underMinimum || notEnoughTimeLeft) return;
     setLoading(true); setResult(null); setRaceError('');
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -152,7 +152,7 @@ export default function CoverShiftPage() {
    * the Shifts page, then raced like any other open shift.
    */
   async function openRacePreview() {
-    if (underMinimum || searchIsPast) return;
+    if (underMinimum || notEnoughTimeLeft) return;
     setPreviewLoading(true); setRaceError('');
 
     let shiftId = selectedShiftId;
@@ -218,10 +218,13 @@ export default function CoverShiftPage() {
 
   const needsBreak = requiresBreak(form.start_time, form.end_time);
   const underMinimum = shiftDurationMinutes(form.start_time, form.end_time) < MIN_SHIFT_MINUTES;
-  // Both sides parsed as local time (no timezone suffix), same as Date.now()
-  // reads the browser's own clock — a manager searching "today" late in the
-  // evening is comparing against their own "now", not a server's.
-  const searchIsPast = new Date(`${form.date}T${form.start_time}`).getTime() < Date.now();
+  // Judged by time left until the shift ENDS, not its start — a no-show
+  // shift is exactly the case where the start time has already passed and
+  // it's still worth covering, so this only blocks once there's under 3
+  // hours left either way. Both sides read from the browser's own clock,
+  // same as a manager searching "today" late in the evening is comparing
+  // against their own "now", not a server's.
+  const notEnoughTimeLeft = minutesUntil(form.date, form.end_time, todayStr(), new Date().toTimeString().slice(0, 5)) < MIN_COVERABLE_MINUTES;
   const deptName = (id: string) => departments.find(d => d.id === id)?.name ?? '';
 
   return (
@@ -322,7 +325,7 @@ export default function CoverShiftPage() {
         )}
 
         <div className="flex items-center gap-4 mt-4 flex-wrap">
-          <button onClick={() => findCover()} disabled={loading || !form.department_id || underMinimum || searchIsPast} className="btn-primary">
+          <button onClick={() => findCover()} disabled={loading || !form.department_id || underMinimum || notEnoughTimeLeft} className="btn-primary">
             <Search size={16} /> {loading ? 'Searching...' : 'Find Available Staff'}
           </button>
           <p className={`text-sm ${underMinimum ? 'text-red-600' : 'text-slate-500'}`}>
@@ -333,9 +336,9 @@ export default function CoverShiftPage() {
           </p>
         </div>
 
-        {searchIsPast && (
+        {notEnoughTimeLeft && (
           <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 flex items-start gap-2">
-            <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" /> Selected time has already passed, try a different time.
+            <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" /> Less than {MIN_COVERABLE_MINUTES / 60} hours remain until this shift ends — try a different time.
           </div>
         )}
       </div>

@@ -18,6 +18,14 @@ export const MAX_EXTENDED_SHIFT_MINUTES = 10 * 60;
 /** Ordinary weekly hours cap (Sunday–Saturday) — going over excludes someone from a claim race. */
 export const WEEKLY_HOURS_CAP_MINUTES = 38 * 60;
 
+/** Once an open shift has less than this long left until it ends, it's no
+ *  longer worth covering — texting someone to come in for the last half
+ *  hour of a shift nobody showed up for helps no one. This is deliberately
+ *  the shift's END time, not its start: a no-show shift is exactly the
+ *  case where the start time has already passed and it's still very much
+ *  worth covering. */
+export const MIN_COVERABLE_MINUTES = 3 * 60;
+
 /** Convert "HH:MM" to total minutes since midnight */
 export function timeToMinutes(time: string): number {
   const [h, m] = time.split(':').map(Number);
@@ -77,6 +85,15 @@ export function daysBetween(a: string, b: string): number {
     return Date.UTC(y, m - 1, d);
   };
   return Math.round((toUTC(b) - toUTC(a)) / 86_400_000);
+}
+
+/** Minutes from (nowDate, nowTime) until (targetDate, targetTime) — negative
+ *  once the target has passed. Pure string math (via daysBetween), so it's
+ *  safe to call with either the browser's own clock or a server's
+ *  timezone-aware "now", as long as both sides are read the same way. */
+export function minutesUntil(targetDate: string, targetTime: string, nowDate: string, nowTime: string): number {
+  const dayDiff = daysBetween(nowDate, targetDate);
+  return dayDiff * 24 * 60 + (timeToMinutes(targetTime.slice(0, 5)) - timeToMinutes(nowTime.slice(0, 5)));
 }
 
 /** A Date's own calendar date, as the device sees it — never toISOString(),

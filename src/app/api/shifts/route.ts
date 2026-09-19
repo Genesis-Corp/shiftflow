@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
-import { requiresBreak, BREAK_DURATION_MINUTES, shiftDurationMinutes, MIN_SHIFT_MINUTES } from '@/lib/shiftUtils';
+import {
+  requiresBreak, BREAK_DURATION_MINUTES, shiftDurationMinutes, MIN_SHIFT_MINUTES,
+  minutesUntil, MIN_COVERABLE_MINUTES,
+} from '@/lib/shiftUtils';
 import { requireUser, unauthorized } from '@/lib/auth';
-import { localDateNow } from '@/lib/sms/config';
+import { localDateNow, localTimeNow } from '@/lib/sms/config';
 
 export async function GET(req: NextRequest) {
   const user = await requireUser();
@@ -10,10 +13,17 @@ export async function GET(req: NextRequest) {
 
   // Open shifts nobody ever covered used to sit around forever. Swept here,
   // on every read, rather than on a schedule — no cron needed, and it can
-  // never go stale itself. Only whole days already in the past: today's
-  // shifts stay, however far into the day, so one still in progress (or
-  // simply not yet covered) is never pulled out from under a manager mid-shift.
-  await supabase.from('shifts').delete().eq('status', 'open').lt('date', localDateNow());
+  // never go stale itself. Judged by time left until the shift ENDS, not
+  // its start — a no-show shift is exactly the case where the start time
+  // has already passed and it's still very much worth covering, so it
+  // stays right up until there's under 3 hours of it left either way.
+  const nowDate = localDateNow();
+  const nowTime = localTimeNow();
+  const { data: openShifts } = await supabase.from('shifts').select('id, date, end_time').eq('status', 'open');
+  const staleIds = (openShifts ?? [])
+    .filter((s: { date: string; end_time: string }) => minutesUntil(s.date, s.end_time, nowDate, nowTime) < MIN_COVERABLE_MINUTES)
+    .map((s: { id: string }) => s.id);
+  if (staleIds.length) await supabase.from('shifts').delete().in('id', staleIds);
 
   const { searchParams } = new URL(req.url);
   const date = searchParams.get('date');
