@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   Plus, Pencil, Trash2, Download, UserCheck, UserX, ChevronUp, ChevronDown, ChevronsUpDown,
   Camera, FileText, FileSpreadsheet, Eye, EyeOff, Star, Archive, ArchiveRestore,
@@ -84,7 +85,9 @@ function SortableHeader({ label, sortKey, active, dir, onClick }: {
   );
 }
 
-export default function StaffPage() {
+function StaffPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [staff, setStaff] = useState<Staff[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -182,6 +185,21 @@ export default function StaffPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Deep link from the Departments page ("?edit=<staff_id>") — open that
+  // person's edit card the moment their record is in, then drop the param
+  // so a refresh doesn't reopen it.
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedRef.current || loading) return;
+    const editId = searchParams.get('edit');
+    if (!editId) return;
+    const target = staff.find(s => s.id === editId);
+    if (!target) return;
+    autoOpenedRef.current = true;
+    openEdit(target);
+    router.replace('/staff');
+  }, [staff, loading, searchParams, router]);
 
   function openAdd() {
     setEditing(null);
@@ -945,5 +963,13 @@ export default function StaffPage() {
         </Modal>
       )}
     </div>
+  );
+}
+
+export default function StaffPage() {
+  return (
+    <Suspense fallback={null}>
+      <StaffPageInner />
+    </Suspense>
   );
 }

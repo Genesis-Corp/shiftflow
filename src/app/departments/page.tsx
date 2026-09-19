@@ -1,17 +1,20 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users, Star, Ban } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import { fetchJson } from '@/lib/apiClient';
-import { Department, Staff } from '@/lib/types';
+import { Department, Staff, AvailabilityTemplate } from '@/lib/types';
+import { DAY_SHORT } from '@/lib/shiftUtils';
 import { PRESET_DEPARTMENT_COLORS, normalizeDeptColor, autoDeptColor } from '@/lib/deptColors';
 
 export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [availability, setAvailability] = useState<AvailabilityTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | null>(null);
@@ -24,12 +27,14 @@ export default function DepartmentsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [deptData, staffData] = await Promise.all([
+      const [deptData, staffData, availData] = await Promise.all([
         fetchJson<Department[]>('/api/departments'),
         fetchJson<Staff[]>('/api/staff'),
+        fetchJson<AvailabilityTemplate[]>('/api/availability'),
       ]);
       setDepartments(deptData);
       setStaff(staffData);
+      setAvailability(availData);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load departments');
@@ -38,6 +43,19 @@ export default function DepartmentsPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Which days (0=Sun..6=Sat) each staff member is available, per their
+  // availability template — a day with no row, or one marked unavailable,
+  // reads the same as the Availability page itself: not available.
+  const availableDaysByStaff = useMemo(() => {
+    const map = new Map<string, Set<number>>();
+    for (const a of availability) {
+      if (!a.available) continue;
+      if (!map.has(a.staff_id)) map.set(a.staff_id, new Set());
+      map.get(a.staff_id)!.add(a.day_of_week);
+    }
+    return map;
+  }, [availability]);
 
   // Who's assigned to each department, sorted by name — looked up once per
   // load rather than filtered fresh on every render/expand.
@@ -171,12 +189,33 @@ export default function DepartmentsPage() {
                       <p className="px-4 py-3 text-xs text-slate-400">No staff assigned to this department.</p>
                     ) : (
                       <ul className="divide-y divide-slate-100">
-                        {assigned.map(s => (
-                          <li key={s.id} className={`px-4 py-2 flex items-center justify-between gap-2 ${!s.active ? 'opacity-50' : ''}`}>
-                            <span className="text-sm text-slate-700 truncate">{s.name}</span>
-                            <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
-                          </li>
-                        ))}
+                        {assigned.map(s => {
+                          const availableDays = availableDaysByStaff.get(s.id);
+                          return (
+                            <li key={s.id} className={`px-4 py-2 space-y-1.5 ${!s.active ? 'opacity-50' : ''}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <Link
+                                  href={`/staff?edit=${s.id}`}
+                                  className="text-sm text-slate-700 truncate hover:text-blue-600 hover:underline"
+                                >
+                                  {s.name}
+                                </Link>
+                                <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                {DAY_SHORT.map((day, i) => {
+                                  const available = availableDays?.has(i) ?? false;
+                                  return (
+                                    <div key={day} className="flex flex-col items-center gap-0.5" title={`${day}: ${available ? 'Available' : 'Not available'}`}>
+                                      <span className={`w-1.5 h-1.5 rounded-full ${available ? 'bg-green-500' : 'bg-red-400'}`} />
+                                      <span className="text-[9px] leading-none text-slate-400">{day}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                   </div>
