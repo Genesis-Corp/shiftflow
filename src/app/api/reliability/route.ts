@@ -26,14 +26,20 @@ export async function POST(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const { staff_id, incident_type, shift_id, date, notes } = await req.json();
+  const { staff_id, incident_type, shift_id, date, late_time, notes } = await req.json();
   if (!staff_id || !incident_type || !date)
     return NextResponse.json({ error: 'staff_id, incident_type, date required' }, { status: 400 });
+  if (incident_type === 'late' && !late_time)
+    return NextResponse.json({ error: 'late_time required for a Late incident' }, { status: 400 });
 
   // Record incident
   const { data: incident, error: incErr } = await supabase
     .from('reliability_incidents')
-    .insert([{ staff_id, incident_type, shift_id: shift_id ?? null, date, notes: notes ?? null }])
+    .insert([{
+      staff_id, incident_type, shift_id: shift_id ?? null, date,
+      late_time: incident_type === 'late' ? late_time : null,
+      notes: notes ?? null,
+    }])
     .select()
     .single();
   if (incErr) return NextResponse.json({ error: incErr.message }, { status: 500 });

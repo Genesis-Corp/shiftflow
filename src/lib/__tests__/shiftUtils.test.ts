@@ -1,5 +1,18 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr, minutesUntil } from '../shiftUtils';
+import { shiftsOverlap, mergeShiftRanges, weekBounds, isBirthday, addDays, todayStr, minutesUntil, formatTimeOfDay } from '../shiftUtils';
+
+describe('formatTimeOfDay', () => {
+  it('drops the minutes on the hour', () => {
+    expect(formatTimeOfDay('09:00')).toBe('9am');
+    expect(formatTimeOfDay('00:00')).toBe('12am');
+    expect(formatTimeOfDay('12:00')).toBe('12pm');
+  });
+
+  it('keeps the minutes off the hour', () => {
+    expect(formatTimeOfDay('17:30')).toBe('5:30pm');
+    expect(formatTimeOfDay('09:05')).toBe('9:05am');
+  });
+});
 
 describe('minutesUntil', () => {
   it('is positive when the target is later the same day', () => {

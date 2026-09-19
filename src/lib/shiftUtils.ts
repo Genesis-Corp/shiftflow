@@ -203,6 +203,7 @@ export const RELIABILITY_DELTAS: Record<string, number> = {
   no_answer: -5,
   rejected: -3,
   covered: +10,
+  late: -5,
 };
 
 export function clampScore(score: number): number {
@@ -254,4 +255,14 @@ export function formatHour12(hour: number): string {
   if (h < 12) return `${h}am`;
   if (h === 12) return '12pm';
   return `${h - 12}pm`;
+}
+
+/** "09:00" -> "9am", "17:30" -> "5:30pm" — a compact 12-hour label for a
+ *  logged time, e.g. when someone showed up late. */
+export function formatTimeOfDay(time: string): string {
+  const [hStr, mStr] = time.split(':');
+  const h = Number(hStr);
+  const period = h < 12 ? 'am' : 'pm';
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return mStr === '00' ? `${h12}${period}` : `${h12}:${mStr}${period}`;
 }

@@ -1,19 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertTriangle, PhoneMissed, XCircle, UserX, CheckCircle, Plus } from 'lucide-react';
+import { AlertTriangle, PhoneMissed, XCircle, UserX, CheckCircle, Clock, Plus } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
-import { formatDate, todayStr } from '@/lib/shiftUtils';
+import { formatDate, formatTimeOfDay, todayStr } from '@/lib/shiftUtils';
 
 const INCIDENT_META: Record<IncidentType, { label: string; icon: React.ReactNode; badge: string; delta: string }> = {
   no_show:  { label: 'No Show',    icon: <UserX size={13} />,      badge: 'badge-red',    delta: '−15' },
   no_answer:{ label: 'No Answer',  icon: <PhoneMissed size={13} />, badge: 'badge-amber',  delta: '−5'  },
   rejected: { label: 'Rejected',   icon: <XCircle size={13} />,    badge: 'badge-amber',  delta: '−3'  },
   covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green',  delta: '+10' },
+  late:     { label: 'Late',       icon: <Clock size={13} />,      badge: 'badge-amber',  delta: '−5'  },
 };
 
 export default function ReliabilityPage() {
@@ -21,7 +22,7 @@ export default function ReliabilityPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState(false);
-  const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: todayStr(), notes: '' });
+  const [form, setForm] = useState({ staff_id: '', incident_type: 'no_show' as IncidentType, date: todayStr(), late_time: '', notes: '' });
   const [filterStaff, setFilterStaff] = useState('');
 
   async function load() {
@@ -42,6 +43,7 @@ export default function ReliabilityPage() {
 
   async function save() {
     if (!form.staff_id) return;
+    if (form.incident_type === 'late' && !form.late_time) return;
     await fetch('/api/reliability', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
     setModal(false);
     load();
@@ -55,6 +57,7 @@ export default function ReliabilityPage() {
       no_shows: sIncidents.filter(i => i.incident_type === 'no_show').length,
       no_answers: sIncidents.filter(i => i.incident_type === 'no_answer').length,
       rejections: sIncidents.filter(i => i.incident_type === 'rejected').length,
+      lates: sIncidents.filter(i => i.incident_type === 'late').length,
       covered: sIncidents.filter(i => i.incident_type === 'covered').length,
       total: sIncidents.length,
     };
@@ -87,7 +90,7 @@ export default function ReliabilityPage() {
             <h2 className="font-semibold text-red-800">Flagged Staff ({flagged.length})</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {flagged.map(({ staff: s, no_shows, no_answers, rejections }) => (
+            {flagged.map(({ staff: s, no_shows, no_answers, rejections, lates }) => (
               <div key={s.id} className="bg-white rounded-lg border border-red-200 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-medium text-slate-800">{s.name}</span>
@@ -98,6 +101,7 @@ export default function ReliabilityPage() {
                   {no_shows > 0 && <span className="text-red-600">{no_shows}× no-show</span>}
                   {no_answers > 0 && <span>{no_answers}× no-answer</span>}
                   {rejections > 0 && <span>{rejections}× rejected</span>}
+                  {lates > 0 && <span>{lates}× late</span>}
                 </div>
               </div>
             ))}
@@ -113,7 +117,7 @@ export default function ReliabilityPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              {['Name', 'Reliability', 'No Shows', 'No Answer', 'Rejections', 'Covered'].map(h => (
+              {['Name', 'Reliability', 'No Shows', 'No Answer', 'Rejections', 'Late', 'Covered'].map(h => (
                 <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
               ))}
             </tr>
@@ -128,6 +132,7 @@ export default function ReliabilityPage() {
                   <td className="px-4 py-3"><span className={stat?.no_shows ? 'badge-red' : 'text-slate-300'}>{stat?.no_shows ?? 0}</span></td>
                   <td className="px-4 py-3"><span className={stat?.no_answers ? 'badge-amber' : 'text-slate-300'}>{stat?.no_answers ?? 0}</span></td>
                   <td className="px-4 py-3"><span className={stat?.rejections ? 'badge-amber' : 'text-slate-300'}>{stat?.rejections ?? 0}</span></td>
+                  <td className="px-4 py-3"><span className={stat?.lates ? 'badge-amber' : 'text-slate-300'}>{stat?.lates ?? 0}</span></td>
                   <td className="px-4 py-3"><span className={stat?.covered ? 'badge-green' : 'text-slate-300'}>{stat?.covered ?? 0}</span></td>
                 </tr>
               );
@@ -151,7 +156,10 @@ export default function ReliabilityPage() {
               <div key={inc.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
                 <span className={`${meta.badge} flex items-center gap-1`}>{meta.icon}{meta.label}</span>
                 <span className="font-medium text-slate-700">{inc.staff?.name ?? '—'}</span>
-                <span className="text-slate-400 text-sm">{formatDate(inc.date)}</span>
+                <span className="text-slate-400 text-sm">
+                  {formatDate(inc.date)}
+                  {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}
+                </span>
                 <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{meta.delta}</span>
                 {inc.notes && <span className="text-xs text-slate-400">{inc.notes}</span>}
               </div>
@@ -182,9 +190,17 @@ export default function ReliabilityPage() {
                 ))}
               </div>
             </div>
-            <div>
-              <label className="label">Date</label>
-              <input type="date" className="input" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+            <div className={form.incident_type === 'late' ? 'grid grid-cols-2 gap-3' : undefined}>
+              <div>
+                <label className="label">Date</label>
+                <input type="date" className="input" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} />
+              </div>
+              {form.incident_type === 'late' && (
+                <div>
+                  <label className="label">Arrived at</label>
+                  <input type="time" className="input" value={form.late_time} onChange={e => setForm(f => ({ ...f, late_time: e.target.value }))} />
+                </div>
+              )}
             </div>
             <div>
               <label className="label">Notes (optional)</label>
@@ -192,7 +208,7 @@ export default function ReliabilityPage() {
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(false)} className="btn-secondary">Cancel</button>
-              <button onClick={save} disabled={!form.staff_id} className="btn-primary">Log Incident</button>
+              <button onClick={save} disabled={!form.staff_id || (form.incident_type === 'late' && !form.late_time)} className="btn-primary">Log Incident</button>
             </div>
           </div>
         </Modal>

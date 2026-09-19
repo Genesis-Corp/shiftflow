@@ -3,7 +3,7 @@ export type RoleType = 'department_only' | 'all_rounder' | 'potential_all_rounde
 export type ShiftStatus = 'open' | 'covered' | 'cancelled';
 export type RequiredRole = 'junior' | 'senior' | 'any';
 export type TrainingLevel = 'trained' | 'supervised' | 'advanced';
-export type IncidentType = 'no_show' | 'no_answer' | 'rejected' | 'covered';
+export type IncidentType = 'no_show' | 'no_answer' | 'rejected' | 'covered' | 'late';
 export type DayOfWeek = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 export type EmploymentType = 'casual' | 'part_time' | 'full_time' | 'salary';
 
@@ -106,6 +106,8 @@ export interface ReliabilityIncident {
   incident_type: IncidentType;
   shift_id?: string;
   date: string;
+  /** Time they actually arrived — only set (and only meaningful) for a 'late' incident. */
+  late_time?: string | null;
   notes?: string;
   created_at: string;
   staff?: Staff;
