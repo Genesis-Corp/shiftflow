@@ -71,13 +71,13 @@ describe('allocateOptionNumber', () => {
 });
 
 describe('availability flow copy', () => {
-  it('asks about availability without offering the shift or a claim code', () => {
+  it('asks about availability without offering the shift or a claim code, but still offers an opt-out', () => {
     const msg = availabilityMessage(SHIFT);
     expect(msg).toContain('are you available');
     expect(msg).toContain('Checkout');
     expect(msg).not.toMatch(/first reply wins/i);
-    expect(msg).not.toMatch(/STOP/);
     expect(msg).not.toMatch(/claim/i);
+    expect(msg).toMatch(/STOP/);
   });
 
   it('says somebody is needed now in the no-show case', () => {

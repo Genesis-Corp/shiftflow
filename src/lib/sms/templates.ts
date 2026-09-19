@@ -8,9 +8,14 @@ import { addDays } from '@/lib/shiftUtils';
  * splits it into two segments and the cost doubles, silently. `smsSegments()`
  * below is used by the tests to hold that line.
  *
- * The Spam Act 2003 expects the sender to be identifiable and to offer a free
- * opt-out, so the business name leads and STOP is offered on the offer message
- * (the only one a recipient can receive without having opted in to this race).
+ * No message shows a claim code or promises "first reply wins" — every tier
+ * reads the same plain availability ask (see availabilityMessage and
+ * urgentAvailabilityMessage below); a YES still resolves fairly through the
+ * atomic claim behind the scenes, the recipient just never sees the
+ * mechanics. The Spam Act 2003 expects the sender to be identifiable and to
+ * offer a free opt-out, so the business name leads and STOP is offered on
+ * both of those — the only messages a recipient can receive without having
+ * opted in to a race.
  */
 
 export interface ShiftSummary {
@@ -41,14 +46,6 @@ export function formatShiftTimes(start: string, end: string): string {
 
 export function describeShift(shift: ShiftSummary, nowDate: string = localDateNow()): string {
   return `${formatShiftDate(shift.date, nowDate)} ${formatShiftTimes(shift.start_time, shift.end_time)}, ${shift.departmentName}`;
-}
-
-/** Sent to every eligible staff member when the race starts. `managerName`,
- *  when known, opens the message with who started it. */
-export function offerMessage(shift: ShiftSummary, claimCode: string, managerName?: string | null): string {
-  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
-  return `${greeting}${BUSINESS}: shift available ${describeShift(shift)}. ` +
-    `Reply YES ${claimCode} to claim it - first reply wins. Reply STOP to opt out.`;
 }
 
 /** Sent to the winner, confirming the shift is theirs. */
@@ -84,12 +81,16 @@ export function optOutMessage(): string {
 // Enough notice to collect options: the manager who started the race picks
 // from who's free, rather than it going to whoever replies first. The
 // message itself carries no claim code and makes no "first reply wins"
-// promise — replying YES here only records that someone is available.
+// promise — replying YES here only records that someone is available. This
+// same wording is also what the gather tier falls back to once its window
+// closes with nobody available (see raceService.ts's advanceGather) — a YES
+// from here on wins the shift through the same atomic claim as always, the
+// message just never changes to announce that.
 
 /** Wave one: are you free? Not an offer — nobody is given the shift by replying. */
 export function availabilityMessage(shift: ShiftSummary, managerName?: string | null): string {
   const greeting = managerName ? `Hey it's ${managerName} - ` : '';
-  return `${greeting}${BUSINESS}: are you available for ${describeShift(shift)}? Reply YES or NO.`;
+  return `${greeting}${BUSINESS}: are you available for ${describeShift(shift)}? Reply YES or NO. Reply STOP to opt out.`;
 }
 
 /** Acknowledges a YES during the gather window — it does not win them the shift. */
@@ -106,7 +107,7 @@ export function urgentAvailabilityMessage(shift: ShiftSummary, isTonight: boolea
   const greeting = managerName ? `Hey it's ${managerName} - ` : '';
   const when = isTonight ? 'tonight' : 'today';
   return `${greeting}${BUSINESS}: are you available to work ${when} at ${formatShiftTimes(shift.start_time, shift.end_time)}, ` +
-    `${shift.departmentName}? Let me know YES or NO ASAP.`;
+    `${shift.departmentName}? Reply YES or NO ASAP. Reply STOP to opt out.`;
 }
 
 /** Sent to whoever the manager picked. */

@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
-  offerMessage, winnerMessage, coveredMessage, tooLateMessage,
+  winnerMessage, coveredMessage, tooLateMessage, urgentAvailabilityMessage,
   declinedMessage, smsSegments, isGsm7, formatShiftTimes, formatShiftDate, describeShift,
   availabilityMessage, availabilityAckMessage, managerListMessage, managerStaleSelectionMessage,
   managerInvalidPickMessage, managerOutcomeMessage,
@@ -12,22 +12,14 @@ const SHIFT = {
 };
 
 describe('message templates', () => {
-  it('includes the claim code and the business name in the offer', () => {
-    const msg = offerMessage(SHIFT, '4F7K');
-    expect(msg).toContain('4F7K');
-    expect(msg).toContain('Bakery');
-    expect(msg).toContain('STOP');
-  });
-
   it('trims the seconds Postgres returns on a time column', () => {
     expect(formatShiftTimes('09:00:00', '17:00:00')).toBe('09:00-17:00');
-    expect(offerMessage(SHIFT, '4F7K')).not.toContain(':00:00');
+    expect(availabilityMessage(SHIFT)).not.toContain(':00:00');
   });
 
   it('keeps every message to a single SMS segment', () => {
     // At 161 GSM-7 characters the cost silently doubles.
     const messages = [
-      offerMessage(SHIFT, '4F7K'),
       winnerMessage(SHIFT, 'Christopher'),
       coveredMessage(SHIFT),
       tooLateMessage(SHIFT),
@@ -39,20 +31,8 @@ describe('message templates', () => {
   });
 
   it('uses only GSM-7 characters, so no message drops to a 70-char segment', () => {
-    expect(isGsm7(offerMessage(SHIFT, '4F7K'))).toBe(true);
+    expect(isGsm7(availabilityMessage(SHIFT))).toBe(true);
     expect(isGsm7(coveredMessage(SHIFT))).toBe(true);
-  });
-
-  it('opens with the starting manager\'s name when given one', () => {
-    const withName = offerMessage(SHIFT, '4F7K', 'John');
-    expect(withName.startsWith("Hey it's John - ")).toBe(true);
-    expect(smsSegments(withName)).toBe(1);
-
-    const withoutName = offerMessage(SHIFT, '4F7K');
-    expect(withoutName.startsWith("Hey it's")).toBe(false);
-
-    const withNullName = offerMessage(SHIFT, '4F7K', null);
-    expect(withNullName).toBe(withoutName);
   });
 });
 
@@ -62,16 +42,33 @@ describe('gather-tier and manager-pick messages', () => {
     { option: 2, name: 'Bob', cost: null },
   ];
 
-  it('asks availability without a claim code or "first reply wins"', () => {
+  it('asks availability without a claim code or "first reply wins", but still offers an opt-out', () => {
     const msg = availabilityMessage(SHIFT);
     expect(msg).not.toContain('claim');
+    expect(msg).not.toContain('first reply wins');
     expect(msg).toContain('YES or NO');
+    expect(msg).toContain('STOP');
   });
 
-  it('opens the availability ask with the manager\'s name too, same as the offer', () => {
+  it('opens the availability ask with the manager\'s name too', () => {
     const withName = availabilityMessage(SHIFT, 'John');
     expect(withName.startsWith("Hey it's John - ")).toBe(true);
     expect(availabilityMessage(SHIFT).startsWith("Hey it's")).toBe(false);
+
+    const withNullName = availabilityMessage(SHIFT, null);
+    expect(withNullName).toBe(availabilityMessage(SHIFT));
+  });
+
+  it('the immediate tier\'s urgent ask also carries no claim code but does offer an opt-out', () => {
+    const msg = urgentAvailabilityMessage(SHIFT, false);
+    expect(msg).not.toContain('claim');
+    expect(msg).not.toContain('first reply wins');
+    expect(msg).toContain('YES or NO');
+    expect(msg).toContain('STOP');
+    expect(smsSegments(msg)).toBe(1);
+
+    const withName = urgentAvailabilityMessage(SHIFT, false, 'John');
+    expect(withName.startsWith("Hey it's John - ")).toBe(true);
   });
 
   it('acknowledges a gather-tier yes without implying it won the shift', () => {
@@ -153,15 +150,15 @@ describe('date-relative messages, against the real clock', () => {
     // Noon in Perth (UTC+8) on the shift's own date.
     vi.useFakeTimers();
     vi.setSystemTime(new Date(`${SHIFT.date}T04:00:00Z`));
-    expect(offerMessage(SHIFT, '4F7K')).toContain('Today');
     expect(availabilityMessage(SHIFT)).toContain('Today');
+    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('today');
   });
 
   it('reads "Tomorrow" when the shift is the day after the current date', () => {
     // Noon in Perth the day before the shift.
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-14T04:00:00Z'));
-    expect(offerMessage(SHIFT, '4F7K')).toContain('Tomorrow');
+    expect(availabilityMessage(SHIFT)).toContain('Tomorrow');
   });
 });
 

@@ -368,14 +368,16 @@ describe('gather tier end-to-end', () => {
     expect(race?.status).toBe('active'); // not awaiting_pick — degraded instead
     expect(race?.degraded_at).toBeTruthy();
 
-    // Finn (silent, not declined) gets a fresh, real offer with a claim code.
+    // Finn (silent, not declined) gets the same plain availability re-ask,
+    // no claim code — but a bare YES still wins it through the same atomic
+    // claim as any other tier, matched by phone number rather than a code.
     const finnMsgs = messagesTo(F.phone_e164);
     expect(finnMsgs.length).toBeGreaterThanOrEqual(1);
     const lastFinnMsg = finnMsgs[finnMsgs.length - 1];
-    expect(lastFinnMsg.body).toMatch(/YES [A-Z0-9]{4}/);
+    expect(lastFinnMsg.body).not.toMatch(/YES [A-Z0-9]{4}/);
+    expect(lastFinnMsg.body).toContain('are you available');
 
-    const code = lastFinnMsg.body.match(/YES ([A-Z0-9]{4})/)?.[1];
-    const won = await handleInboundReply({ from: F.phone_e164, body: `YES ${code}` });
+    const won = await handleInboundReply({ from: F.phone_e164, body: 'YES' });
     expect(won.result).toBe('won');
 
     // Re-running advanceRace after degrading must not re-blast the offer.

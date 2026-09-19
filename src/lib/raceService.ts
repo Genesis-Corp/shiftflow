@@ -11,7 +11,7 @@ import {
 } from '@/lib/coverTiers';
 import { sendSms, logInbound } from '@/lib/sms/send';
 import {
-  offerMessage, winnerMessage, coveredMessage, tooLateMessage,
+  winnerMessage, coveredMessage, tooLateMessage,
   declinedMessage, optOutMessage, availabilityMessage, availabilityAckMessage,
   urgentAvailabilityMessage, managerListMessage, managerOutcomeMessage,
   managerInvalidPickMessage, managerStaleSelectionMessage, ShiftSummary,
@@ -110,9 +110,9 @@ function expiryMillisFor(tier: CoverTier, leadMinutes: number, contactableCount:
 /** Send the tier's opening message to whichever slice of the ranked,
  *  contactable list is live right now, and record each send's outcome.
  *  Immediate asks urgently ("today"/"tonight" + ASAP); gather and sequential
- *  both just ask availability, same wording — none of the three show a
- *  claim code any more, only the gather tier's post-window degrade does
- *  (see sendBatch), since that's the one case genuinely framed as a race. */
+ *  both just ask availability, same wording — no tier, including the gather
+ *  tier's post-window degrade (see advanceGather), ever shows a claim code
+ *  or says "first reply wins". */
 async function sendToCandidates(
   liveSlice: ScoredCandidate[], summary: ShiftSummary,
   raceId: string, tier: CoverTier, managerName: string | null
@@ -476,7 +476,10 @@ async function advanceGather(
 
   // degrade: nobody was available, so switch to first-yes-wins for whoever
   // hasn't explicitly declined. Race stays 'active' and tier stays 'gather'
-  // — degraded_at is the only record that this happened.
+  // — degraded_at is the only record that this happened; the message sent
+  // from here is the same plain availability ask as before (see
+  // handleInboundReply — a YES now resolves through the same atomic claim
+  // as any other tier, it's just never announced as a race).
   const { data: updated } = await supabaseAdmin.from('shift_claim_races')
     .update({ degraded_at: now.toISOString() })
     .eq('id', race.id).eq('status', 'active').is('degraded_at', null).select().maybeSingle();
@@ -484,7 +487,7 @@ async function advanceGather(
 
   const manager = await managerProfileFor(race.started_by);
   const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
-  await sendBatch(toSend, race.id, r => offerMessage(summary, r.claim_code, manager?.name ?? null));
+  await sendBatch(toSend, race.id, () => availabilityMessage(summary, manager?.name ?? null));
 }
 
 async function advanceSequential(
