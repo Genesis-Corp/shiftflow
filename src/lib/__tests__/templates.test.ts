@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   offerMessage, winnerMessage, coveredMessage, tooLateMessage,
-  declinedMessage, smsSegments, isGsm7, formatShiftTimes,
+  declinedMessage, smsSegments, isGsm7, formatShiftTimes, formatShiftDate, describeShift,
   availabilityMessage, availabilityAckMessage, managerListMessage, managerStaleSelectionMessage,
   managerInvalidPickMessage, managerOutcomeMessage,
 } from '../sms/templates';
@@ -112,6 +112,56 @@ describe('gather-tier and manager-pick messages', () => {
       expect(isGsm7(m), `"${m}" is not GSM-7`).toBe(true);
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
     }
+  });
+});
+
+describe('formatShiftDate', () => {
+  it('says "Today" when the shift date matches the reference date', () => {
+    expect(formatShiftDate('2026-09-15', '2026-09-15')).toBe('Today');
+  });
+
+  it('says "Tomorrow" when the shift is the day after the reference date', () => {
+    expect(formatShiftDate('2026-09-16', '2026-09-15')).toBe('Tomorrow');
+  });
+
+  it('falls back to the weekday and date for anything further out', () => {
+    // Exact separators/abbreviations come from the ICU data on the running
+    // Node version — assert the parts rather than the whole string.
+    const further = formatShiftDate('2026-09-17', '2026-09-15');
+    expect(further).toContain('Thu');
+    expect(further).toContain('17');
+    expect(further).not.toBe('Today');
+    expect(further).not.toBe('Tomorrow');
+
+    const dayBefore = formatShiftDate('2026-09-14', '2026-09-15');
+    expect(dayBefore).toContain('Mon');
+    expect(dayBefore).toContain('14');
+  });
+});
+
+describe('describeShift', () => {
+  it('uses formatShiftDate\'s Today/Tomorrow reading in place of the weekday', () => {
+    expect(describeShift(SHIFT, SHIFT.date)).toMatch(/^Today /);
+    expect(describeShift(SHIFT, '2026-09-14')).toMatch(/^Tomorrow /);
+  });
+});
+
+describe('date-relative messages, against the real clock', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('reads "Today" when the shift falls on the current date', () => {
+    // Noon in Perth (UTC+8) on the shift's own date.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(`${SHIFT.date}T04:00:00Z`));
+    expect(offerMessage(SHIFT, '4F7K')).toContain('Today');
+    expect(availabilityMessage(SHIFT)).toContain('Today');
+  });
+
+  it('reads "Tomorrow" when the shift is the day after the current date', () => {
+    // Noon in Perth the day before the shift.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-14T04:00:00Z'));
+    expect(offerMessage(SHIFT, '4F7K')).toContain('Tomorrow');
   });
 });
 

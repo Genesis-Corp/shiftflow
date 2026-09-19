@@ -1,4 +1,5 @@
-import { getTimezone } from './config';
+import { getTimezone, localDateNow } from './config';
+import { addDays } from '@/lib/shiftUtils';
 
 /**
  * Message copy.
@@ -21,8 +22,13 @@ export interface ShiftSummary {
 
 const BUSINESS = process.env.SMS_BUSINESS_NAME?.trim() || "Farmer Jack's";
 
-/** "Mon 15 Sep" in the configured timezone. */
-export function formatShiftDate(date: string): string {
+/** "Today", "Tomorrow", or "Mon 15 Sep" in the configured timezone — relative
+ *  to `nowDate` (defaults to the real current date), so a shift created for
+ *  today or tomorrow reads unambiguously instead of making the reader check
+ *  a weekday against today's date. */
+export function formatShiftDate(date: string, nowDate: string = localDateNow()): string {
+  if (date === nowDate) return 'Today';
+  if (date === addDays(nowDate, 1)) return 'Tomorrow';
   return new Intl.DateTimeFormat('en-AU', {
     timeZone: getTimezone(), weekday: 'short', day: 'numeric', month: 'short',
   }).format(new Date(`${date}T00:00:00`));
@@ -33,8 +39,8 @@ export function formatShiftTimes(start: string, end: string): string {
   return `${start.slice(0, 5)}-${end.slice(0, 5)}`;
 }
 
-export function describeShift(shift: ShiftSummary): string {
-  return `${formatShiftDate(shift.date)} ${formatShiftTimes(shift.start_time, shift.end_time)}, ${shift.departmentName}`;
+export function describeShift(shift: ShiftSummary, nowDate: string = localDateNow()): string {
+  return `${formatShiftDate(shift.date, nowDate)} ${formatShiftTimes(shift.start_time, shift.end_time)}, ${shift.departmentName}`;
 }
 
 /** Sent to every eligible staff member when the race starts. `managerName`,
