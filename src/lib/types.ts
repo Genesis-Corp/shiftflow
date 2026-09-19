@@ -100,6 +100,10 @@ export interface Shift {
   // joined fields
   departments?: Department;
   assigned_staff?: Staff;
+  /** The currently active shift_claim_races row for this shift, if any —
+   *  a shift stays 'open' for its whole duration, so a second race can
+   *  otherwise be started for one that's already mid-race. */
+  active_race_id?: string | null;
 }
 
 export interface ReliabilityIncident {

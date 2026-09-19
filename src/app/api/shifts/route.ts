@@ -44,7 +44,25 @@ export async function GET(req: NextRequest) {
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+
+  // A shift stays 'open' for its whole duration, including while a claim
+  // race for it is running — so the client needs to know which ones already
+  // have one, to stop a manager starting a second race on top of it.
+  const shiftIds = (data ?? []).map((s: { id: string }) => s.id);
+  const activeRaceByShift = new Map<string, string>();
+  if (shiftIds.length) {
+    const { data: activeRaces } = await supabase
+      .from('shift_claim_races').select('id, shift_id').eq('status', 'active').in('shift_id', shiftIds);
+    for (const r of (activeRaces ?? []) as { id: string; shift_id: string }[]) {
+      activeRaceByShift.set(r.shift_id, r.id);
+    }
+  }
+
+  const withRaceInfo = (data ?? []).map((s: { id: string }) => ({
+    ...s, active_race_id: activeRaceByShift.get(s.id) ?? null,
+  }));
+
+  return NextResponse.json(withRaceInfo);
 }
 
 export async function POST(req: NextRequest) {

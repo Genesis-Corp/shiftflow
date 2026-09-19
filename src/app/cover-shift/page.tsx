@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed,
-  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users,
+  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users, ChevronDown, Radio,
 } from 'lucide-react';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
@@ -18,6 +18,7 @@ import {
 } from '@/lib/shiftUtils';
 import { formatAUMobile } from '@/lib/phone';
 import { formatCost } from '@/lib/wages';
+import { normalizeDeptColor } from '@/lib/deptColors';
 import ErrorBanner from '@/components/ErrorBanner';
 import { fetchJson } from '@/lib/apiClient';
 
@@ -82,6 +83,7 @@ export default function CoverShiftPage() {
   const [raceId, setRaceId] = useState<string | null>(null);
   const [raceError, setRaceError] = useState('');
   const [loadError, setLoadError] = useState('');
+  const [deptPickerOpen, setDeptPickerOpen] = useState(false);
 
   const loadOpenShifts = useCallback(async () => {
     try {
@@ -125,6 +127,26 @@ export default function CoverShiftPage() {
     setRaceError('');
   }
 
+  /** A shift stays 'open' for its whole duration, including while a claim
+   *  race for it is already running — clicking one of those jumps straight
+   *  to watching that race instead of letting a second one be started on
+   *  top of it. */
+  function viewRace(shift: Shift) {
+    if (!shift.active_race_id) return;
+    setSelectedShiftId(shift.id);
+    setForm({
+      date: shift.date,
+      start_time: shift.start_time.slice(0, 5),
+      end_time: shift.end_time.slice(0, 5),
+      department_id: shift.department_id,
+      required_role: shift.required_role ?? 'any',
+      notes: shift.notes ?? '',
+    });
+    setResult(null);
+    setRaceError('');
+    setRaceId(shift.active_race_id);
+  }
+
   /** `expand` ignores department training entirely (still respects
    *  availability, required_role, supervisor cover and the excluded sick
    *  caller) — a manual escape hatch for whenever the automatic Checkout
@@ -132,7 +154,10 @@ export default function CoverShiftPage() {
    *  every warm body regardless of training. */
   async function findCover(expand = false) {
     if (!form.department_id || underMinimum || notEnoughTimeLeft) return;
-    setLoading(true); setResult(null); setRaceError('');
+    // Starting a fresh search supersedes whatever was on screen before —
+    // without this, a race left showing from an earlier shift hid this
+    // search's own results, since they only render while raceId is unset.
+    setLoading(true); setResult(null); setRaceError(''); setRaceId(null); setPreview(null);
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, shift_id: selectedShiftId, expand_search: expand }),
@@ -227,6 +252,14 @@ export default function CoverShiftPage() {
   // against their own "now", not a server's.
   const notEnoughTimeLeft = minutesUntil(form.date, form.end_time, todayStr(), new Date().toTimeString().slice(0, 5)) < MIN_COVERABLE_MINUTES;
   const deptName = (id: string) => departments.find(d => d.id === id)?.name ?? '';
+  const selectableDepartments = departments.filter(d => !d.excluded_from_claim_race);
+  const selectedDept = departments.find(d => d.id === form.department_id) ?? null;
+
+  function pickDepartment(id: string) {
+    setForm(f => ({ ...f, department_id: id }));
+    setSelectedShiftId(null);
+    setDeptPickerOpen(false);
+  }
 
   return (
     <div className="space-y-6">
@@ -255,25 +288,36 @@ export default function CoverShiftPage() {
           </p>
         ) : (
           <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
-            {openShifts.map(s => (
-              <button
-                key={s.id}
-                onClick={() => selectShift(s)}
-                className={`text-left p-3 rounded-lg border transition-colors ${
-                  selectedShiftId === s.id
-                    ? 'border-blue-400 bg-blue-50'
-                    : 'border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                <p className="font-medium text-sm text-slate-800">
-                  {formatDate(s.date)} · {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}
-                </p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  {s.departments?.name ?? deptName(s.department_id)}
-                  {s.required_role && s.required_role !== 'any' && ` · ${s.required_role}`}
-                </p>
-              </button>
-            ))}
+            {openShifts.map(s => {
+              const racing = !!s.active_race_id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => racing ? viewRace(s) : selectShift(s)}
+                  title={racing ? 'A claim race is already running for this shift — click to watch it' : undefined}
+                  className={`text-left p-3 rounded-lg border transition-colors ${
+                    racing
+                      ? 'border-amber-300 bg-amber-50 hover:bg-amber-100'
+                      : selectedShiftId === s.id
+                        ? 'border-blue-400 bg-blue-50'
+                        : 'border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="font-medium text-sm text-slate-800 flex items-center gap-1.5">
+                    {formatDate(s.date)} · {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}
+                    {racing && (
+                      <span className="badge-amber text-[10px]">
+                        <Radio size={10} className="mr-1" /> Race in progress
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {s.departments?.name ?? deptName(s.department_id)}
+                    {s.required_role && s.required_role !== 'any' && ` · ${s.required_role}`}
+                  </p>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -300,10 +344,21 @@ export default function CoverShiftPage() {
           </div>
           <div>
             <label className="label">Department</label>
-            <select className="input" value={form.department_id}
-              onChange={e => { setForm(f => ({ ...f, department_id: e.target.value })); setSelectedShiftId(null); }}>
-              {departments.filter(d => !d.excluded_from_claim_race).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            <button
+              type="button"
+              onClick={() => setDeptPickerOpen(true)}
+              className="input flex items-center justify-between text-left"
+            >
+              {selectedDept ? (
+                <span className="flex items-center gap-2 min-w-0">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: normalizeDeptColor(selectedDept.color) }} />
+                  <span className="truncate">{selectedDept.name}</span>
+                </span>
+              ) : (
+                <span className="text-slate-400">Select department...</span>
+              )}
+              <ChevronDown size={14} className="text-slate-400 shrink-0" />
+            </button>
           </div>
           <div>
             <label className="label">Role</label>
@@ -650,6 +705,30 @@ export default function CoverShiftPage() {
                   : <><Phone size={14} /> Text {preview.contactable.length} staff</>}
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {deptPickerOpen && (
+        <Modal title="Select Department" onClose={() => setDeptPickerOpen(false)}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {selectableDepartments.map(d => (
+              <button
+                key={d.id}
+                onClick={() => pickDepartment(d.id)}
+                className={`text-left p-3 rounded-lg border transition-colors flex items-center gap-2 ${
+                  form.department_id === d.id
+                    ? 'border-blue-400 bg-blue-50'
+                    : 'border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: normalizeDeptColor(d.color) }} />
+                <span className="flex-1 min-w-0">
+                  <span className="font-medium text-sm text-slate-800 truncate block">{d.name}</span>
+                  {d.requires_supervisor && <span className="text-xs text-amber-600">Supervisor required</span>}
+                </span>
+              </button>
+            ))}
           </div>
         </Modal>
       )}
