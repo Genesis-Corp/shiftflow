@@ -759,9 +759,10 @@ async function onRaceWon(
     status: 'covered', assigned_staff_id: staffId,
   }).eq('id', shift.id);
 
-  // Credit the winner (+10). Declines and silence are deliberately NOT scored
-  // automatically — turning down an optional extra shift shouldn't quietly
-  // damage someone's reliability. The manual buttons remain for judgement calls.
+  // Credit the winner (+10% of their remaining headroom to 100). Declines
+  // and silence are deliberately NOT scored automatically — turning down an
+  // optional extra shift shouldn't quietly damage someone's reliability.
+  // The manual buttons remain for judgement calls.
   await supabaseAdmin.from('reliability_incidents').insert([{
     staff_id: staffId, incident_type: 'covered', shift_id: shift.id,
     date: shift.date, notes: 'Claimed via SMS claim race',

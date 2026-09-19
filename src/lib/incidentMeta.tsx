@@ -9,6 +9,6 @@ export const INCIDENT_META: Record<IncidentType, { label: string; icon: ReactNod
   no_show:  { label: 'No Show',    icon: <UserX size={13} />,       badge: 'badge-red',   delta: '−15%' },
   no_answer:{ label: 'No Answer',  icon: <PhoneMissed size={13} />, badge: 'badge-amber', delta: '−5%'  },
   rejected: { label: 'Rejected',   icon: <XCircle size={13} />,     badge: 'badge-amber', delta: '−3%'  },
-  covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green', delta: '+10'  },
+  covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green', delta: '+10%' },
   late:     { label: 'Late',       icon: <Clock size={13} />,       badge: 'badge-amber', delta: '−5%'  },
 };

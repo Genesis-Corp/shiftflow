@@ -23,13 +23,20 @@ describe('applyReliabilityDelta', () => {
     expect(highDrop).toBeGreaterThan(lowDrop);
   });
 
-  it('keeps "covered" a flat point gain, not scaled to the current score', () => {
-    expect(applyReliabilityDelta(50, 'covered')).toBe(60);
-    expect(applyReliabilityDelta(10, 'covered')).toBe(20);
+  it('grows "covered" by a percentage of the remaining headroom to 100', () => {
+    // +10% of the 50 points left to reach 100, not a flat +10 — 55, not 60.
+    expect(applyReliabilityDelta(50, 'covered')).toBe(55);
+    expect(applyReliabilityDelta(20, 'covered')).toBe(28);
+  });
+
+  it('has a smaller absolute gain close to 100 than far from it', () => {
+    const highGain = applyReliabilityDelta(95, 'covered') - 95;
+    const lowGain = applyReliabilityDelta(20, 'covered') - 20;
+    expect(lowGain).toBeGreaterThan(highGain);
   });
 
   it('never lets the score leave the 0-100 range', () => {
-    expect(applyReliabilityDelta(95, 'covered')).toBe(100);
+    expect(applyReliabilityDelta(100, 'covered')).toBe(100);
     expect(applyReliabilityDelta(1, 'no_show')).toBeGreaterThanOrEqual(0);
   });
 
