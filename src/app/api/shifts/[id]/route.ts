@@ -8,9 +8,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { start_time, end_time, department_id, required_role, status, assigned_staff_id, excluded_staff_id, notes } = body;
+  const { date, start_time, end_time, department_id, required_role, status, assigned_staff_id, excluded_staff_id, notes } = body;
 
   const updates: Record<string, unknown> = {};
+  if (date !== undefined) updates.date = date;
   if (start_time !== undefined) updates.start_time = start_time;
   if (end_time !== undefined) updates.end_time = end_time;
   if (department_id !== undefined) updates.department_id = department_id;
