@@ -20,6 +20,7 @@ import {
   ParsedSheet, SheetStaffRow, describeLayout, parseSheet, normalizePhone, nameKey,
 } from './availabilitySheet';
 import { hasNameColumns } from './staffNames';
+import { toE164AU } from './phone';
 
 export interface FieldChange {
   field: string;
@@ -75,6 +76,7 @@ interface DbStaff {
   id: string;
   name: string;
   phone: string | null;
+  phone_e164: string | null;
   archived: boolean;
   first_name?: string | null;
   last_name?: string | null;
@@ -154,7 +156,9 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
     );
   }
 
-  const columns = withNameParts ? 'id, name, phone, archived, first_name, last_name' : 'id, name, phone, archived';
+  const columns = withNameParts
+    ? 'id, name, phone, phone_e164, archived, first_name, last_name'
+    : 'id, name, phone, phone_e164, archived';
   const [staffRes, availRes] = await Promise.all([
     supabase.from('staff').select(columns),
     supabase.from('availability_templates').select('staff_id, day_of_week, start_time, end_time, available'),
@@ -205,6 +209,10 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
           name: row.name,
           ...(withNameParts ? { first_name: row.first_name, last_name: row.last_name || null } : {}),
           phone: row.phone,
+          // The sheet's mobile column is normalised to a display string
+          // ("0433 821 798"), never the +61 form SMS sending needs — that
+          // has to be derived separately or this person can never be texted.
+          phone_e164: toE164AU(row.phone),
           age_group: row.age_group,
           role_type: 'department_only',
           reliability_score: 50,
@@ -248,9 +256,22 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
       }
     }
     const existingPhone = normalizePhone(existing.phone);
-    if (!row.phone_unreadable && existingPhone !== row.phone) {
+    const phoneChanged = !row.phone_unreadable && existingPhone !== row.phone;
+    if (phoneChanged) {
       payload.phone = row.phone;
       changes.push({ field: 'Mobile', from: existing.phone ?? null, to: row.phone });
+    }
+
+    // phone_e164 is derived, not read off the sheet, so it needs recomputing
+    // whenever the number itself changes — and also backfilling for a
+    // record stuck without one from before this derivation existed, even
+    // when this particular sheet's number happens to match what's on file.
+    if (!row.phone_unreadable && row.phone) {
+      const e164 = toE164AU(row.phone);
+      if (e164 && e164 !== existing.phone_e164 && (phoneChanged || !existing.phone_e164)) {
+        payload.phone_e164 = e164;
+        if (!phoneChanged) changes.push({ field: 'Mobile (SMS format)', from: existing.phone_e164 ?? 'missing', to: e164 });
+      }
     }
 
     // Availability, day by day. Unreadable cells are left exactly as they are.
