@@ -8,6 +8,10 @@ export const BREAK_DURATION_MINUTES = 30;
 export const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 export const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/** Juniors are treated as in school, and so unavailable, before this time
+ *  on a school-term weekday (see isSchoolTermWeekday). */
+export const JUNIOR_SCHOOL_CUTOFF = '15:00';
+
 /** Shortest a shift can be, hand-entered or ad hoc — guards against a typo'd
  *  end time (e.g. 9:00-9:30 instead of 9:00-17:00) rather than reflecting a
  *  real rule of the award. */
@@ -140,6 +144,22 @@ export function weekBounds(dateStr: string): { weekStart: string; weekEnd: strin
 export function isBirthday(birthday: string | null | undefined, dateStr: string): boolean {
   if (!birthday) return false;
   return birthday.slice(5, 10) === dateStr.slice(5, 10);
+}
+
+/** Whether `dateStr` is a school day — a weekday, not a public holiday, and
+ *  not inside any stored school-holiday range. Juniors are only unavailable
+ *  before JUNIOR_SCHOOL_CUTOFF on a day this returns true for (see
+ *  eligibility.ts and the Assigned Staff picker on the Shifts page). Ranges
+ *  are inclusive; YYYY-MM-DD strings compare correctly as plain strings. */
+export function isSchoolTermWeekday(
+  dateStr: string,
+  schoolHolidayRanges: { start_date: string; end_date: string }[],
+  isPublicHoliday: boolean
+): boolean {
+  const dow = dayOfWeekFromDate(dateStr);
+  if (dow === 0 || dow === 6) return false;
+  if (isPublicHoliday) return false;
+  return !schoolHolidayRanges.some(r => dateStr >= r.start_date && dateStr <= r.end_date);
 }
 
 /**

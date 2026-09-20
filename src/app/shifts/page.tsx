@@ -12,11 +12,12 @@ import DropOverlay from '@/components/DropOverlay';
 import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
-import { Shift, Department, Staff } from '@/lib/types';
+import { Shift, Department, Staff, SchoolHoliday } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
   shiftDurationMinutes, MIN_SHIFT_MINUTES, DAYS, dayOfWeekFromDate, seniorCoversWholeShift,
+  isSchoolTermWeekday, timeToMinutes, JUNIOR_SCHOOL_CUTOFF,
 } from '@/lib/shiftUtils';
 import { seniorityFromBirthday } from '@/lib/wages';
 import { normalizeDeptColor, deptTextColor } from '@/lib/deptColors';
@@ -263,20 +264,31 @@ export default function ShiftsPage() {
   /** Sources are read one at a time; this stops a second reader starting. */
   const reading = useRef(false);
 
+  // School holiday ranges and public holiday dates — juniors are treated as
+  // unavailable before 3pm on any weekday that's neither, same rule Cover
+  // Shift applies server-side (see eligibility.ts). Optional: a failed fetch
+  // just leaves the restriction unapplied rather than breaking the page.
+  const [schoolHolidays, setSchoolHolidays] = useState<SchoolHoliday[]>([]);
+  const [publicHolidayDates, setPublicHolidayDates] = useState<Set<string>>(new Set());
+
   // Load everything once. List/Past/Timeline are all just different slices
   // of the same array — no per-view refetch, and stepping the timeline's day
   // is instant instead of a round trip.
   async function load() {
     setLoading(true);
     try {
-      const [shiftsData, deptData, staffData] = await Promise.all([
+      const [shiftsData, deptData, staffData, schoolHolidaysData, wagesData] = await Promise.all([
         fetchJson<Shift[]>('/api/shifts'),
         fetchJson<Department[]>('/api/departments'),
         fetchJson<Staff[]>('/api/staff'),
+        fetchJson<SchoolHoliday[]>('/api/school-holidays').catch(() => []),
+        fetchJson<{ public_holidays: { date: string }[] }>('/api/wages').catch(() => null),
       ]);
       setShifts(shiftsData);
       setDepartments(deptData);
       setStaff(staffData.filter(s => s.active && !s.archived).sort((a, b) => a.name.localeCompare(b.name)));
+      setSchoolHolidays(schoolHolidaysData);
+      setPublicHolidayDates(new Set((wagesData?.public_holidays ?? []).map(h => h.date)));
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load shifts');
@@ -555,20 +567,36 @@ export default function ShiftsPage() {
     });
   }, [requiresSupervisorDept, form.department_id, form.date, form.start_time, form.end_time, shifts, staff, editing]);
 
+  // Juniors are treated as in school, and so unavailable, before 3pm on a
+  // school-term weekday — same rule Cover Shift applies server-side.
+  const termRestricted = useMemo(() => {
+    if (!form.date) return false;
+    return isSchoolTermWeekday(form.date, schoolHolidays, publicHolidayDates.has(form.date))
+      && timeToMinutes(form.start_time) < timeToMinutes(JUNIOR_SCHOOL_CUTOFF);
+  }, [form.date, form.start_time, schoolHolidays, publicHolidayDates]);
+
+  const juniorRestricted = (requiresSupervisorDept && !hasSeniorCoverage) || termRestricted;
+  function isSeniorStaff(s: Staff): boolean {
+    return (seniorityFromBirthday(s.birthday, form.date) ?? s.age_group) === 'senior';
+  }
+
   // Guards against a stale selection left over from before the department
   // or times changed underneath it — the <select> only stops a *new* pick
   // of a blocked junior, not one already sitting in state.
   const assignedStaffBlocked = (() => {
-    if (modal !== 'edit' || !requiresSupervisorDept || hasSeniorCoverage || !editAssignedStaffId) return false;
+    if (modal !== 'edit' || !juniorRestricted || !editAssignedStaffId) return false;
     const assignee = staff.find(s => s.id === editAssignedStaffId);
-    if (!assignee) return false;
-    return (seniorityFromBirthday(assignee.birthday, form.date) ?? assignee.age_group) !== 'senior';
+    return !!assignee && !isSeniorStaff(assignee);
   })();
 
   async function save() {
     if (!form.date || !form.department_id || underMinimum) return;
     if (assignedStaffBlocked) {
-      setSaveError('This department requires a supervisor and no other senior is covering the whole shift — only a senior can be assigned.');
+      setSaveError(
+        termRestricted
+          ? 'Juniors are treated as in school (and unavailable) before 3pm on a school day — only a senior can be assigned to this shift.'
+          : 'This department requires a supervisor and no other senior is covering the whole shift — only a senior can be assigned.'
+      );
       return;
     }
     setSaveError('');
@@ -1033,11 +1061,10 @@ export default function ShiftsPage() {
                       return a.name.localeCompare(b.name);
                     })
                     .map(s => {
-                      const isSenior = (seniorityFromBirthday(s.birthday, form.date) ?? s.age_group) === 'senior';
-                      const blocked = requiresSupervisorDept && !isSenior && !hasSeniorCoverage;
+                      const blocked = juniorRestricted && !isSeniorStaff(s);
                       return (
                         <option key={s.id} value={s.id} disabled={blocked}>
-                          {s.name}{blocked ? ' (senior supervision required)' : ''}
+                          {s.name}{blocked ? ' (senior only)' : ''}
                         </option>
                       );
                     })}
@@ -1048,6 +1075,11 @@ export default function ShiftsPage() {
                 {requiresSupervisorDept && !hasSeniorCoverage && (
                   <p className="text-xs text-amber-600 mt-1">
                     This department requires a supervisor. No other senior is rostered here covering the whole shift, so only seniors can be assigned right now.
+                  </p>
+                )}
+                {termRestricted && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    This is a school day before 3pm — juniors are treated as unavailable, so only seniors can be assigned right now.
                   </p>
                 )}
               </div>

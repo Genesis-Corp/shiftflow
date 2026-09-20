@@ -64,6 +64,14 @@ export interface AvailabilityTemplate {
 
 export type LeaveType = 'day_off' | 'leave';
 
+export interface SchoolHoliday {
+  id: string;
+  start_date: string;
+  end_date: string;
+  name: string;
+  created_at: string;
+}
+
 export interface StaffLeave {
   id: string;
   staff_id: string;

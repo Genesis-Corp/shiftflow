@@ -3,7 +3,7 @@ import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES, clashesWithOtherShift,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday, addDays, daysBetween,
-  seniorCoversWholeShift,
+  seniorCoversWholeShift, isSchoolTermWeekday, timeToMinutes, JUNIOR_SCHOOL_CUTOFF,
 } from '@/lib/shiftUtils';
 import {
   calculateShiftCost, ageBracketFor, seniorityFromBirthday,
@@ -187,6 +187,21 @@ export async function findEligibleCandidates(
     );
   }
 
+  // Juniors are treated as in school, and so unavailable, before 3pm on a
+  // school day — a weekday that's neither a public holiday nor inside a
+  // stored school-holiday range (Settings > School Holidays). This is a
+  // hard cutoff independent of whatever's on their own availability
+  // template: even someone with no template at all (which otherwise
+  // defaults to "always available") can't be offered an early shift on a
+  // real school day.
+  const [{ data: shiftDatePublicHoliday }, { data: schoolHolidayRanges }] = await Promise.all([
+    supabaseAdmin.from('public_holidays').select('date').eq('date', date).maybeSingle(),
+    supabaseAdmin.from('school_holidays').select('start_date, end_date'),
+  ]);
+  const termRestricted =
+    isSchoolTermWeekday(date, schoolHolidayRanges ?? [], !!shiftDatePublicHoliday) &&
+    timeToMinutes(start_time) < timeToMinutes(JUNIOR_SCHOOL_CUTOFF);
+
   /** Everyone trained in `poolDeptId`, available, and otherwise eligible —
    *  `ageFilter` narrows further for the Checkout fallback pool below;
    *  `skipDeptCheck` drops the training requirement entirely, for the
@@ -214,6 +229,8 @@ export async function findEligibleCandidates(
       }
 
       if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !hasSeniorCoverage) return false;
+
+      if (termRestricted && ageGroupOf(s) === 'junior') return false;
 
       if (required_role && required_role !== 'any' && ageGroupOf(s) !== required_role) return false;
       if (ageFilter && ageGroupOf(s) !== ageFilter) return false;
@@ -284,19 +301,20 @@ export async function findEligibleCandidates(
 
   // The award structure, so a manager can weigh cost alongside suitability.
   // A missing birthday isn't an error: the person still shows, just without
-  // a figure, which is more honest than costing them at zero.
-  const [baseRes, bracketsRes, loadingsRes, holidayRes, tiersRes, overridesRes] = await Promise.all([
+  // a figure, which is more honest than costing them at zero. Whether this
+  // date is a public holiday was already fetched above for the school-term
+  // check — reused here rather than queried a second time.
+  const [baseRes, bracketsRes, loadingsRes, tiersRes, overridesRes] = await Promise.all([
     supabaseAdmin.from('wage_base_rate').select('adult_hourly_rate').eq('id', 'current').maybeSingle(),
     supabaseAdmin.from('age_brackets').select('*'),
     supabaseAdmin.from('time_loadings').select('*'),
-    supabaseAdmin.from('public_holidays').select('date').eq('date', date).maybeSingle(),
     supabaseAdmin.from('overtime_tiers').select('*'),
     supabaseAdmin.from('overtime_overrides').select('*'),
   ]);
   const adultBaseRate = baseRes.data?.adult_hourly_rate ? Number(baseRes.data.adult_hourly_rate) : null;
   const ageBrackets = (bracketsRes.data ?? []) as AgeBracket[];
   const timeLoadings = (loadingsRes.data ?? []) as TimeLoading[];
-  const isPublicHoliday = !!holidayRes.data;
+  const isPublicHoliday = !!shiftDatePublicHoliday;
   const overtimeTiers = (tiersRes.data ?? []) as OvertimeTier[];
   const overtimeOverrides = (overridesRes.data ?? []) as OvertimeOverride[];
   const breakMinutes = requiresBreak(start_time.slice(0, 5), end_time.slice(0, 5)) ? BREAK_DURATION_MINUTES : 0;

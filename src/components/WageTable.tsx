@@ -15,6 +15,7 @@ import { fetchJson } from '@/lib/apiClient';
 import { DAY_SHORT, formatDate } from '@/lib/shiftUtils';
 import Papa from 'papaparse';
 import type { AgeBracket, TimeLoading, EmploymentCategory, OvertimeTier, OvertimeOverride } from '@/lib/wages';
+import type { SchoolHoliday } from '@/lib/types';
 
 interface BaseRate {
   id: string;
@@ -50,6 +51,7 @@ interface ScanResult {
 }
 
 const EMPTY_HOLIDAY = { date: '', name: '' };
+const EMPTY_SCHOOL_HOLIDAY = { start_date: '', end_date: '', name: '' };
 
 const CATEGORY_LABELS: Record<string, string> = {
   sunday: 'Sunday Rates',
@@ -84,8 +86,13 @@ export default function WageTable() {
   const [scanned, setScanned] = useState<ScanResult | null>(null);
   const [applying, setApplying] = useState(false);
 
+  const [holidayTab, setHolidayTab] = useState<'public' | 'school'>('public');
   const [newHoliday, setNewHoliday] = useState(EMPTY_HOLIDAY);
   const [addingHoliday, setAddingHoliday] = useState(false);
+
+  const [schoolHolidays, setSchoolHolidays] = useState<SchoolHoliday[]>([]);
+  const [newSchoolHoliday, setNewSchoolHoliday] = useState(EMPTY_SCHOOL_HOLIDAY);
+  const [addingSchoolHoliday, setAddingSchoolHoliday] = useState(false);
 
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [countryInput, setCountryInput] = useState('');
@@ -130,7 +137,15 @@ export default function WageTable() {
     }
   }, []);
 
-  useEffect(() => { load(); loadSettings(); }, [load, loadSettings]);
+  const loadSchoolHolidays = useCallback(async () => {
+    try {
+      setSchoolHolidays(await fetchJson<SchoolHoliday[]>('/api/school-holidays'));
+    } catch {
+      // Not essential to the rest of the page — leave the list empty rather than blocking.
+    }
+  }, []);
+
+  useEffect(() => { load(); loadSettings(); loadSchoolHolidays(); }, [load, loadSettings, loadSchoolHolidays]);
 
   function pickFile(file: File) {
     const name = file.name.toLowerCase();
@@ -215,6 +230,21 @@ export default function WageTable() {
   async function removeHoliday(date: string) {
     await fetch(`/api/wages/holidays?date=${date}`, { method: 'DELETE' });
     load();
+  }
+
+  async function addSchoolHoliday(e: React.FormEvent) {
+    e.preventDefault();
+    setAddingSchoolHoliday(true);
+    const res = await postJson('/api/school-holidays', newSchoolHoliday);
+    setAddingSchoolHoliday(false);
+    if (!res.ok) { setError(res.error ?? 'Could not add that school holiday'); return; }
+    setNewSchoolHoliday(EMPTY_SCHOOL_HOLIDAY);
+    loadSchoolHolidays();
+  }
+
+  async function removeSchoolHoliday(id: string) {
+    await fetch(`/api/school-holidays?id=${id}`, { method: 'DELETE' });
+    loadSchoolHolidays();
   }
 
   async function saveSettings(e: React.FormEvent) {
@@ -578,73 +608,153 @@ export default function WageTable() {
         )}
       </div>
 
-      {/* ── Public holidays ──────────────────────────────────────────────── */}
+      {/* ── Public / school holidays ─────────────────────────────────────── */}
       <div className="card p-5">
-        <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-1">
-          <CalendarDays size={16} className="text-slate-400" /> Public Holidays
-        </h2>
-        <p className="text-xs text-slate-500 mb-3">
-          A shift on one of these dates is costed at the public-holiday rate, whatever day of the week it falls on.
-        </p>
-
-        <form onSubmit={saveSettings} className="flex flex-wrap items-end gap-2 mb-4 pb-4 border-b border-slate-100">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">Country</label>
-            <input
-              className="input text-xs px-2 py-1.5 w-28" placeholder="AU" required maxLength={2}
-              value={countryInput} onChange={e => setCountryInput(e.target.value.toUpperCase())}
-            />
+        <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
+          <h2 className="font-semibold text-slate-800 flex items-center gap-2">
+            <CalendarDays size={16} className="text-slate-400" />
+            {holidayTab === 'public' ? 'Public Holidays' : 'School Holidays'}
+          </h2>
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+            <button
+              type="button" onClick={() => setHolidayTab('public')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                holidayTab === 'public' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              Public Holidays
+            </button>
+            <button
+              type="button" onClick={() => setHolidayTab('school')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                holidayTab === 'school' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              School Holidays
+            </button>
           </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">State</label>
-            <input
-              className="input text-xs px-2 py-1.5 w-28" placeholder="WA"
-              value={stateInput} onChange={e => setStateInput(e.target.value.toUpperCase())}
-            />
-          </div>
-          <button type="submit" disabled={savingSettings} className="btn-secondary text-xs px-2 py-1.5 flex items-center gap-1">
-            <Globe size={12} /> {savingSettings ? 'Saving…' : 'Save'}
-          </button>
-          <button
-            type="button" onClick={generateHolidays} disabled={generating || !settings?.country}
-            className="btn-primary text-xs px-2 py-1.5 flex items-center gap-1"
-            title={!settings?.country ? 'Save a country first' : `Generate ${new Date().getFullYear()} public holidays`}
-          >
-            {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-            Generate {new Date().getFullYear()} holidays
-          </button>
-        </form>
-
-        <div className="divide-y divide-slate-100">
-          {(data?.public_holidays ?? []).map(h => (
-            <div key={h.date} className="py-2 flex items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-medium text-slate-800">{h.name}</span>
-                <span className="text-xs text-slate-500 ml-2">{formatDate(h.date)}</span>
-              </div>
-              <button onClick={() => removeHoliday(h.date)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-          {(data?.public_holidays ?? []).length === 0 && !loading && (
-            <p className="text-sm text-slate-400 py-2">No public holidays added yet.</p>
-          )}
         </div>
 
-        <form onSubmit={addHoliday} className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
-          <input
-            type="date" className="input w-auto" required
-            value={newHoliday.date} onChange={e => setNewHoliday(h => ({ ...h, date: e.target.value }))}
-          />
-          <input
-            className="input flex-1 min-w-[160px]" placeholder="e.g. Labour Day" required
-            value={newHoliday.name} onChange={e => setNewHoliday(h => ({ ...h, name: e.target.value }))}
-          />
-          <button type="submit" disabled={addingHoliday} className="btn-primary">
-            {addingHoliday ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
-          </button>
-        </form>
+        {holidayTab === 'public' ? (
+          <>
+            <p className="text-xs text-slate-500 mb-3">
+              A shift on one of these dates is costed at the public-holiday rate, whatever day of the week it falls on.
+            </p>
+
+            <form onSubmit={saveSettings} className="flex flex-wrap items-end gap-2 mb-4 pb-4 border-b border-slate-100">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Country</label>
+                <input
+                  className="input text-xs px-2 py-1.5 w-28" placeholder="AU" required maxLength={2}
+                  value={countryInput} onChange={e => setCountryInput(e.target.value.toUpperCase())}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">State</label>
+                <input
+                  className="input text-xs px-2 py-1.5 w-28" placeholder="WA"
+                  value={stateInput} onChange={e => setStateInput(e.target.value.toUpperCase())}
+                />
+              </div>
+              <button type="submit" disabled={savingSettings} className="btn-secondary text-xs px-2 py-1.5 flex items-center gap-1">
+                <Globe size={12} /> {savingSettings ? 'Saving…' : 'Save'}
+              </button>
+              <button
+                type="button" onClick={generateHolidays} disabled={generating || !settings?.country}
+                className="btn-primary text-xs px-2 py-1.5 flex items-center gap-1"
+                title={!settings?.country ? 'Save a country first' : `Generate ${new Date().getFullYear()} public holidays`}
+              >
+                {generating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                Generate {new Date().getFullYear()} holidays
+              </button>
+            </form>
+
+            <div className="divide-y divide-slate-100">
+              {(data?.public_holidays ?? []).map(h => (
+                <div key={h.date} className="py-2 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-slate-800">{h.name}</span>
+                    <span className="text-xs text-slate-500 ml-2">{formatDate(h.date)}</span>
+                  </div>
+                  <button onClick={() => removeHoliday(h.date)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+              {(data?.public_holidays ?? []).length === 0 && !loading && (
+                <p className="text-sm text-slate-400 py-2">No public holidays added yet.</p>
+              )}
+            </div>
+
+            <form onSubmit={addHoliday} className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2">
+              <input
+                type="date" className="input w-auto" required
+                value={newHoliday.date} onChange={e => setNewHoliday(h => ({ ...h, date: e.target.value }))}
+              />
+              <input
+                className="input flex-1 min-w-[160px]" placeholder="e.g. Labour Day" required
+                value={newHoliday.name} onChange={e => setNewHoliday(h => ({ ...h, name: e.target.value }))}
+              />
+              <button type="submit" disabled={addingHoliday} className="btn-primary">
+                {addingHoliday ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+              </button>
+            </form>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-slate-500 mb-3">
+              On a weekday that falls inside none of these ranges (and isn&apos;t a public holiday), juniors are treated as in
+              school and unavailable before 3pm — for Cover Shift and for manually assigning a shift. There&apos;s no public data
+              feed for individual school terms the way there is for public holidays, so these are entered by hand; the WA
+              Department of Education&apos;s{' '}
+              <a href="https://www.education.wa.edu.au/future-term-dates" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                confirmed term dates
+              </a>{' '}
+              are the source a few years of these were seeded from.
+            </p>
+
+            <div className="divide-y divide-slate-100">
+              {schoolHolidays.map(h => (
+                <div key={h.id} className="py-2 flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm font-medium text-slate-800">{h.name}</span>
+                    <span className="text-xs text-slate-500 ml-2">{formatDate(h.start_date)} – {formatDate(h.end_date)}</span>
+                  </div>
+                  <button onClick={() => removeSchoolHoliday(h.id)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50">
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+              {schoolHolidays.length === 0 && (
+                <p className="text-sm text-slate-400 py-2">No school holidays added yet.</p>
+              )}
+            </div>
+
+            <form onSubmit={addSchoolHoliday} className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-2 items-end">
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">Start date</label>
+                <input
+                  type="date" className="input w-auto" required
+                  value={newSchoolHoliday.start_date} onChange={e => setNewSchoolHoliday(h => ({ ...h, start_date: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-500 mb-1">End date</label>
+                <input
+                  type="date" className="input w-auto" required
+                  value={newSchoolHoliday.end_date} onChange={e => setNewSchoolHoliday(h => ({ ...h, end_date: e.target.value }))}
+                />
+              </div>
+              <input
+                className="input flex-1 min-w-[160px]" placeholder="e.g. Term 1 holidays 2030" required
+                value={newSchoolHoliday.name} onChange={e => setNewSchoolHoliday(h => ({ ...h, name: e.target.value }))}
+              />
+              <button type="submit" disabled={addingSchoolHoliday} className="btn-primary">
+                {addingSchoolHoliday ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
+              </button>
+            </form>
+          </>
+        )}
       </div>
 
       {/* ── Scan preview ─────────────────────────────────────────────────── */}

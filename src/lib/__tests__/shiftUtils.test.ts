@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   shiftsOverlap, mergeShiftRanges, clashesWithOtherShift, weekBounds, isBirthday,
   addDays, todayStr, minutesUntil, formatTimeOfDay, applyReliabilityDelta, seniorCoversWholeShift,
+  isSchoolTermWeekday,
 } from '../shiftUtils';
 
 describe('applyReliabilityDelta', () => {
@@ -208,6 +209,39 @@ describe('isBirthday', () => {
   it('is false when there is no birthday on file', () => {
     expect(isBirthday(null, '2026-09-18')).toBe(false);
     expect(isBirthday(undefined, '2026-09-18')).toBe(false);
+  });
+});
+
+describe('isSchoolTermWeekday', () => {
+  const termBreak = [{ start_date: '2026-04-03', end_date: '2026-04-19' }];
+
+  it('is true for an ordinary weekday in term, with no holidays on file', () => {
+    expect(isSchoolTermWeekday('2026-09-16', [], false)).toBe(true); // a Wednesday
+  });
+
+  it('is false on a Saturday', () => {
+    expect(isSchoolTermWeekday('2026-09-19', [], false)).toBe(false);
+  });
+
+  it('is false on a Sunday', () => {
+    expect(isSchoolTermWeekday('2026-09-20', [], false)).toBe(false);
+  });
+
+  it('is false on a public holiday, even on a weekday', () => {
+    expect(isSchoolTermWeekday('2026-09-16', [], true)).toBe(false);
+  });
+
+  it('is false for a weekday inside a stored school-holiday range', () => {
+    expect(isSchoolTermWeekday('2026-04-10', termBreak, false)).toBe(false);
+  });
+
+  it('is true for a weekday just outside a stored range (range is exclusive at the edges beyond its own dates)', () => {
+    expect(isSchoolTermWeekday('2026-04-20', termBreak, false)).toBe(true); // the Monday term resumes
+  });
+
+  it('treats range boundaries as inclusive', () => {
+    expect(isSchoolTermWeekday('2026-04-03', termBreak, false)).toBe(false);
+    expect(isSchoolTermWeekday('2026-04-19', termBreak, false)).toBe(false);
   });
 });
 
