@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { UserPlus, Trash2, Mail, Loader2, ShieldCheck, Clock, History } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import WageTable from '@/components/WageTable';
+import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { ReliabilityIncident } from '@/lib/types';
 import { INCIDENT_META } from '@/lib/incidentMeta';
@@ -158,7 +159,11 @@ export default function SettingsPage() {
                 return (
                   <div key={inc.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
                     <span className={`${meta.badge} flex items-center gap-1`}>{meta.icon}{meta.label}</span>
-                    <span className="font-medium text-slate-700">{inc.staff?.name ?? '—'}</span>
+                    {inc.staff?.name ? (
+                      <StaffName staffId={inc.staff_id} name={inc.staff.name} className="font-medium text-slate-700" />
+                    ) : (
+                      <span className="font-medium text-slate-700">—</span>
+                    )}
                     <span className="text-slate-400 text-sm">
                       {formatDate(inc.date)}
                       {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}

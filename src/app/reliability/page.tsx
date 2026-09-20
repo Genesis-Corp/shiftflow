@@ -5,6 +5,7 @@ import { AlertTriangle, Plus } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
+import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { Staff, ReliabilityIncident, IncidentType } from '@/lib/types';
 import { INCIDENT_META } from '@/lib/incidentMeta';
@@ -86,7 +87,7 @@ export default function ReliabilityPage() {
             {flagged.map(({ staff: s, no_shows, no_answers, rejections, lates }) => (
               <div key={s.id} className="bg-white rounded-lg border border-red-200 p-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-slate-800">{s.name}</span>
+                  <StaffName staffId={s.id} name={s.name} className="font-medium text-slate-800" />
                   <span className="text-xs font-bold text-red-600">{s.reliability_score}/100</span>
                 </div>
                 <ReliabilityBar score={s.reliability_score} showLabel={false} />
@@ -120,7 +121,7 @@ export default function ReliabilityPage() {
               const stat = staffStats.find(st => st.staff.id === s.id);
               return (
                 <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800">{s.name}</td>
+                  <td className="px-4 py-3 font-medium text-slate-800"><StaffName staffId={s.id} name={s.name} /></td>
                   <td className="px-4 py-3 min-w-[160px]"><ReliabilityBar score={s.reliability_score} /></td>
                   <td className="px-4 py-3"><span className={stat?.no_shows ? 'badge-red' : 'text-slate-300'}>{stat?.no_shows ?? 0}</span></td>
                   <td className="px-4 py-3"><span className={stat?.no_answers ? 'badge-amber' : 'text-slate-300'}>{stat?.no_answers ?? 0}</span></td>
@@ -148,7 +149,11 @@ export default function ReliabilityPage() {
             return (
               <div key={inc.id} className="flex items-center gap-3 py-2 border-b border-slate-100 last:border-0">
                 <span className={`${meta.badge} flex items-center gap-1`}>{meta.icon}{meta.label}</span>
-                <span className="font-medium text-slate-700">{inc.staff?.name ?? '—'}</span>
+                {inc.staff?.name ? (
+                  <StaffName staffId={inc.staff_id} name={inc.staff.name} className="font-medium text-slate-700" />
+                ) : (
+                  <span className="font-medium text-slate-700">—</span>
+                )}
                 <span className="text-slate-400 text-sm">
                   {formatDate(inc.date)}
                   {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}

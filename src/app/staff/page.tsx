@@ -11,6 +11,7 @@ import ReliabilityBar from '@/components/ReliabilityBar';
 import ErrorBanner from '@/components/ErrorBanner';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
+import StaffName from '@/components/StaffName';
 import { useFileDrop } from '@/lib/useFileDrop';
 import ProgressBar, { ProgressStage } from '@/components/ProgressBar';
 import { STAGES } from '@/lib/progressStages';
@@ -616,7 +617,7 @@ function StaffPageInner() {
               {sorted.map(s => (
                 <tr key={s.id} className={`hover:bg-slate-50 transition-colors ${!s.active ? 'opacity-50' : ''}`}>
                   <td className="px-4 py-3 font-medium text-slate-800">
-                    <div>{s.name}</div>
+                    <div><StaffName staffId={s.id} name={s.name} /></div>
                     {ordinaryRateFor(s) !== null ? (
                       <button
                         onClick={() => toggleRateRevealed(s.id)}
@@ -686,7 +687,7 @@ function StaffPageInner() {
                 {archivedStaff.map(s => (
                   <li key={s.id} className="px-3 py-2.5 flex items-center justify-between gap-2">
                     <div>
-                      <p className="font-medium text-slate-700">{s.name}</p>
+                      <StaffName staffId={s.id} name={s.name} className="font-medium text-slate-700" />
                       <p className="text-xs text-slate-400">
                         Archived {s.archived_at ? formatDate(s.archived_at.slice(0, 10)) : ''}
                       </p>

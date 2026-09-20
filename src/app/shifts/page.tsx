@@ -9,6 +9,7 @@ import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
+import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
 import { Shift, Department, Staff } from '@/lib/types';
@@ -129,7 +130,7 @@ function ShiftDayGroup({
           {splitShiftStaff.map(g => (
             <div key={g.staff_id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <p className="text-sm text-slate-700">
-                <span className="font-medium">{g.name}</span>
+                <StaffName staffId={g.staff_id} name={g.name} className="font-medium" />
                 <span className="text-xs text-slate-500 ml-2">
                   {g.shifts.map(s => `${s.departments?.name ?? 'Unknown'} ${s.start_time.slice(0, 5)}–${s.end_time.slice(0, 5)}`).join(' · ')}
                 </span>
@@ -181,7 +182,10 @@ function ShiftDayGroup({
                       <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
                     </td>
                     <td className="px-4 py-3 text-slate-500 text-xs">
-                      {name ?? '—'}{isBday && <span title="Birthday today" className="ml-1">🎁</span>}
+                      {name && s.assigned_staff_id
+                        ? <StaffName staffId={s.assigned_staff_id} name={name} />
+                        : '—'}
+                      {isBday && <span title="Birthday today" className="ml-1">🎁</span>}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1">
@@ -633,13 +637,13 @@ export default function ShiftsPage() {
     [shifts, timelineDate, timelineDept]
   );
   const { unassigned, staffRows } = useMemo(() => {
-    const byStaff = new Map<string, { name: string; birthday?: string | null; shifts: Shift[] }>();
+    const byStaff = new Map<string, { staffId: string; name: string; birthday?: string | null; shifts: Shift[] }>();
     const open: Shift[] = [];
     for (const s of timelineShifts) {
       const assignedName = (s as { assigned_staff?: { name: string } }).assigned_staff?.name;
       const birthday = (s as { assigned_staff?: { birthday?: string | null } }).assigned_staff?.birthday;
       if (s.assigned_staff_id && assignedName) {
-        if (!byStaff.has(s.assigned_staff_id)) byStaff.set(s.assigned_staff_id, { name: assignedName, birthday, shifts: [] });
+        if (!byStaff.has(s.assigned_staff_id)) byStaff.set(s.assigned_staff_id, { staffId: s.assigned_staff_id, name: assignedName, birthday, shifts: [] });
         byStaff.get(s.assigned_staff_id)!.shifts.push(s);
       } else {
         open.push(s);
@@ -845,10 +849,10 @@ export default function ShiftsPage() {
                     </div>
                   )}
 
-                  {staffRows.map(({ name, birthday, shifts: rowShifts }) => (
-                    <div key={name} className="flex items-center py-2">
+                  {staffRows.map(({ staffId, name, birthday, shifts: rowShifts }) => (
+                    <div key={staffId} className="flex items-center py-2">
                       <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                        {name}{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
+                        <StaffName staffId={staffId} name={name} />{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
                       </div>
                       <div className="relative flex-1 h-7 rounded bg-slate-50">
                         <div className="absolute inset-0 flex pointer-events-none">

@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { RaceDetail, ClaimRecipient, SmsConfig } from '@/lib/types';
 import { formatAUMobile } from '@/lib/phone';
+import StaffName from './StaffName';
 
 const POLL_MS = 4000;
 
@@ -113,7 +114,9 @@ export default function RaceStatusPanel({
             {winner && (
               <p className="text-sm text-green-800 mt-2 flex items-center gap-1.5 font-medium">
                 <Trophy size={14} className="text-amber-500" />
-                {winner.staff?.name} claimed the shift
+                {winner.staff?.name && (
+                  <StaffName staffId={winner.staff_id} name={winner.staff.name} className="text-green-800" />
+                )}{' '}claimed the shift
                 {winner.responded_at && ` at ${new Date(winner.responded_at).toLocaleTimeString()}`}
               </p>
             )}
@@ -136,7 +139,11 @@ export default function RaceStatusPanel({
             <OutcomeIcon recipient={r} />
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="font-medium text-slate-800">{r.staff?.name ?? 'Unknown'}</span>
+                {r.staff?.name ? (
+                  <StaffName staffId={r.staff_id} name={r.staff.name} className="font-medium text-slate-800" />
+                ) : (
+                  <span className="font-medium text-slate-800">Unknown</span>
+                )}
                 {r.send_status === 'sent' && (
                   <code className="text-[11px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-mono">
                     {r.claim_code}

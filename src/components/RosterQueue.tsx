@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Check, AlertTriangle, X } from 'lucide-react';
 import { useState } from 'react';
 import Modal from '@/components/Modal';
+import StaffName from '@/components/StaffName';
 import { Department } from '@/lib/types';
 import { RosterJob } from '@/lib/roster';
 import type { RosterPlan } from '@/app/api/import-roster/route';
@@ -122,7 +123,7 @@ export default function RosterQueue({
                     <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
                       {plan.creates.map(shift => (
                         <li key={shift.staff_id} className="px-3 py-2 flex items-center justify-between gap-2">
-                          <span className="font-medium text-slate-700 truncate">{shift.name}</span>
+                          <StaffName staffId={shift.staff_id} name={shift.name} className="font-medium text-slate-700 truncate" />
                           <span className="text-xs text-slate-500 shrink-0">
                             {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
                             {shift.has_break && <span className="text-slate-400"> · break</span>}

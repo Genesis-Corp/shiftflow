@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { Plus, Pencil, Trash2, ShieldCheck, ChevronRight, Users, Star, Ban } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
+import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { Department, Staff, AvailabilityTemplate } from '@/lib/types';
 import { DAY_SHORT } from '@/lib/shiftUtils';
@@ -273,12 +273,7 @@ export default function DepartmentsPage() {
                 return (
                   <div key={s.id} className={`px-4 py-2.5 space-y-1.5 ${!s.active ? 'opacity-50' : ''}`}>
                     <div className="flex items-center justify-between gap-2">
-                      <Link
-                        href={`/staff?edit=${s.id}`}
-                        className="text-sm text-slate-700 truncate hover:text-blue-600 hover:underline"
-                      >
-                        {s.name}
-                      </Link>
+                      <StaffName staffId={s.id} name={s.name} className="text-sm text-slate-700 truncate" />
                       <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
                     </div>
                     <div className="flex items-center justify-between w-52">

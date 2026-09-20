@@ -3,6 +3,28 @@ import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { toE164AU } from '@/lib/phone';
 import { requireUser, unauthorized } from '@/lib/auth';
 
+/** One staff member, with their trained departments (name + color, for the
+ *  staff summary modal shown wherever their name is clicked). */
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
+  const { data, error } = await supabase
+    .from('staff')
+    .select(`
+      *,
+      staff_departments (
+        id, department_id, training_level, is_default,
+        departments ( id, name, color, requires_supervisor )
+      )
+    `)
+    .eq('id', params.id)
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: error.code === 'PGRST116' ? 404 : 500 });
+  return NextResponse.json(data);
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   const user = await requireUser();
   if (!user) return unauthorized();

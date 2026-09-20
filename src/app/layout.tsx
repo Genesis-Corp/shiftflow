@@ -3,6 +3,7 @@ import './globals.css';
 import Navbar from '@/components/Navbar';
 import AutomationFlagsBanner from '@/components/AutomationFlagsBanner';
 import CompleteProfileGate from '@/components/CompleteProfileGate';
+import StaffModalProvider from '@/components/StaffModalProvider';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 
@@ -32,10 +33,12 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
       <body className="min-h-screen bg-slate-50">
-        <Navbar userEmail={user?.email ?? null} userName={managerName} />
-        <AutomationFlagsBanner />
-        <CompleteProfileGate />
-        <main className="px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+        <StaffModalProvider>
+          <Navbar userEmail={user?.email ?? null} userName={managerName} />
+          <AutomationFlagsBanner />
+          <CompleteProfileGate />
+          <main className="px-4 sm:px-6 lg:px-8 py-6">{children}</main>
+        </StaffModalProvider>
       </body>
     </html>
   );

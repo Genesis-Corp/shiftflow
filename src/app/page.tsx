@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriangle, Award, Phone } from 'lucide-react';
 import { formatDate, weekBounds, shiftDurationMinutes, todayStr } from '@/lib/shiftUtils';
 import ReliabilityBar from '@/components/ReliabilityBar';
+import StaffName from '@/components/StaffName';
 
 interface Stats {
   totalStaff: number;
@@ -173,8 +174,8 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {needsAttention.map(s => (
-                <Link key={s.id} href="/staff" className="flex items-start justify-between gap-2 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded px-1 -mx-1">
-                  <p className="text-sm font-medium text-slate-700">{s.name}</p>
+                <div key={s.id} className="flex items-start justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+                  <StaffName staffId={s.id} name={s.name} className="text-sm font-medium text-slate-700" />
                   <div className="flex flex-wrap gap-1 justify-end">
                     {s.reasons.map(r => (
                       <span key={r} className="badge-amber text-[11px]">
@@ -183,7 +184,7 @@ export default function Dashboard() {
                       </span>
                     ))}
                   </div>
-                </Link>
+                </div>
               ))}
             </div>
           )}
@@ -199,10 +200,10 @@ export default function Dashboard() {
           ) : (
             <div className="space-y-2">
               {highAchievers.map(s => (
-                <Link key={s.id} href="/staff" className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 rounded px-1 -mx-1">
-                  <p className="text-sm font-medium text-slate-700 flex-shrink-0">{s.name}</p>
+                <div key={s.id} className="flex items-center justify-between gap-3 py-2 border-b border-slate-100 last:border-0">
+                  <StaffName staffId={s.id} name={s.name} className="text-sm font-medium text-slate-700 flex-shrink-0" />
                   <div className="w-28"><ReliabilityBar score={s.score} showLabel={false} /></div>
-                </Link>
+                </div>
               ))}
             </div>
           )}

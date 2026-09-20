@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
+import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
 import { downscalePhoto } from '@/lib/image';
@@ -386,7 +387,7 @@ export default function AvailabilityPage() {
                 <tbody className="divide-y divide-slate-100">
                   {staffWithAvail.map(({ staff: s, days }) => (
                     <tr key={s.id} className="hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-700">{s.name}</td>
+                      <td className="px-3 py-2 font-medium text-slate-700"><StaffName staffId={s.id} name={s.name} /></td>
                       {([0,1,2,3,4,5,6] as DayOfWeek[]).map(d => {
                         const t = days.find(x => x.day_of_week === d);
                         return (
@@ -454,7 +455,7 @@ export default function AvailabilityPage() {
                     return (
                       <div key={s.id} className="flex items-center py-2">
                         <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                          {s.name}
+                          <StaffName staffId={s.id} name={s.name} />
                         </div>
                         <div className="relative flex-1 h-7 rounded bg-slate-50">
                           {/* Hourly gridlines, purely visual */}
@@ -612,7 +613,11 @@ export default function AvailabilityPage() {
                     {l.leave_type === 'leave' ? <Umbrella size={11} className="mr-1" /> : <CalendarX size={11} className="mr-1" />}
                     {l.leave_type === 'leave' ? 'Leave' : 'Day Off'}
                   </span>
-                  <span className="font-medium text-slate-700">{l.staff?.name ?? '—'}</span>
+                  {l.staff?.name && l.staff_id ? (
+                    <StaffName staffId={l.staff_id} name={l.staff.name} className="font-medium text-slate-700" />
+                  ) : (
+                    <span className="font-medium text-slate-700">—</span>
+                  )}
                   <span className="text-sm text-slate-500">
                     {formatDate(l.start_date)}{l.end_date !== l.start_date && ` – ${formatDate(l.end_date)}`}
                   </span>

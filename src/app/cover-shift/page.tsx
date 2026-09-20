@@ -9,6 +9,7 @@ import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
 import SmsModeBanner from '@/components/SmsModeBanner';
 import RaceStatusPanel from '@/components/RaceStatusPanel';
+import StaffName from '@/components/StaffName';
 import {
   Department, CoverCandidate, Shift, SmsConfig, RacePreview, ExtendableCandidate, OverlapConflict,
 } from '@/lib/types';
@@ -490,7 +491,7 @@ export default function CoverShiftPage() {
               {result.extendable.map(c => (
                 <div key={c.id} className="card p-4 flex items-center gap-4 border-blue-200 bg-blue-50/40">
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-800">{c.name}</p>
+                    <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
                     <p className="text-xs text-slate-500 mt-0.5 font-mono">
                       {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}
                       <span className="mx-1.5 text-slate-400">→</span>
@@ -525,7 +526,7 @@ export default function CoverShiftPage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-slate-800">{c.name}</span>
+                      <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
                       <span className={c.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
                         {c.age_group === 'senior' ? 'Senior' : 'Junior'}
                       </span>
@@ -583,7 +584,7 @@ export default function CoverShiftPage() {
               </p>
               <ul className="text-slate-500 text-xs space-y-0.5">
                 {result.overlapExcluded.map(c => (
-                  <li key={c.id}>{c.name} — {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}</li>
+                  <li key={c.id}><StaffName staffId={c.id} name={c.name} /> — {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}</li>
                 ))}
               </ul>
             </div>
@@ -605,7 +606,7 @@ export default function CoverShiftPage() {
                 <div key={c.id} className="card p-4 flex items-center gap-4 border-amber-200 bg-amber-50/40">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-slate-800">{c.name}</span>
+                      <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
                       <span className={c.age_group === 'senior' ? 'badge-blue' : 'badge-amber'}>
                         {c.age_group === 'senior' ? 'Senior' : 'Junior'}
                       </span>
@@ -657,7 +658,7 @@ export default function CoverShiftPage() {
             <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-y-auto">
               {preview.contactable.map(c => (
                 <div key={c.id} className="px-3 py-2 flex items-center justify-between text-sm">
-                  <span className="text-slate-800">{c.name}</span>
+                  <StaffName staffId={c.id} name={c.name} className="text-slate-800" />
                   <span className="text-slate-400 font-mono text-xs">
                     {smsConfig?.mode === 'redirect'
                       ? `→ ${smsConfig.test_number}`
