@@ -3,6 +3,7 @@ import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES, clashesWithOtherShift,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday, addDays, daysBetween,
+  seniorCoversWholeShift,
 } from '@/lib/shiftUtils';
 import {
   calculateShiftCost, ageBracketFor, seniorityFromBirthday,
@@ -163,11 +164,28 @@ export async function findEligibleCandidates(
     else if (diff >= 1 && diff <= 3) recentlyAbsentIds.add(r.staff_id);
   }
 
-  // NOTE: preserved verbatim from the original /api/cover-shift route — this
-  // asks whether any senior exists on the roster at all, not whether one is
-  // rostered on this shift. Changing it would change who gets texted, so it is
-  // left alone here and flagged separately.
-  const seniorAvailable = (allStaff ?? []).some(s => ageGroupOf(s) === 'senior');
+  // A junior can be offered a shift in a "Requires Supervisor" department
+  // only when another senior is already rostered covering that department,
+  // that day, for the shift's *entire* window — someone else's presence
+  // whose supervision the junior can rely on, not the department merely
+  // having some senior on staff somewhere. Only worth the extra query when
+  // the department actually requires it.
+  const staffById = new Map((allStaff ?? []).map(s => [s.id, s]));
+  let hasSeniorCoverage = false;
+  if (dept.requires_supervisor) {
+    const { data: sameDeptDayShifts } = await supabaseAdmin
+      .from('shifts')
+      .select('id, date, department_id, start_time, end_time, status, assigned_staff_id')
+      .eq('date', date).eq('department_id', department_id).eq('status', 'covered');
+    hasSeniorCoverage = seniorCoversWholeShift(
+      sameDeptDayShifts ?? [],
+      staffId => {
+        const st = staffById.get(staffId);
+        return !!st && ageGroupOf(st) === 'senior';
+      },
+      { date, start_time, end_time, department_id }
+    );
+  }
 
   /** Everyone trained in `poolDeptId`, available, and otherwise eligible —
    *  `ageFilter` narrows further for the Checkout fallback pool below;
@@ -195,7 +213,7 @@ export async function findEligibleCandidates(
         if (!deptIds.includes(poolDeptId)) return false;
       }
 
-      if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !seniorAvailable) return false;
+      if (dept.requires_supervisor && ageGroupOf(s) === 'junior' && !hasSeniorCoverage) return false;
 
       if (required_role && required_role !== 'any' && ageGroupOf(s) !== required_role) return false;
       if (ageFilter && ageGroupOf(s) !== ageFilter) return false;

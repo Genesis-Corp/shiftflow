@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Coffee, Download, List, GanttChartSquare,
-  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer,
+  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer, Filter, X,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
@@ -16,8 +16,9 @@ import { Shift, Department, Staff } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
-  shiftDurationMinutes, MIN_SHIFT_MINUTES,
+  shiftDurationMinutes, MIN_SHIFT_MINUTES, DAYS, dayOfWeekFromDate, seniorCoversWholeShift,
 } from '@/lib/shiftUtils';
+import { seniorityFromBirthday } from '@/lib/wages';
 import { normalizeDeptColor, deptTextColor } from '@/lib/deptColors';
 import { downscalePhoto } from '@/lib/image';
 import { readPdfAsBase64 } from '@/lib/pdf';
@@ -223,6 +224,18 @@ export default function ShiftsPage() {
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
   const [view, setView] = useState<'list' | 'timeline' | 'past'>('list');
+
+  // Filter By — applies to the List and Past views, which span many shifts
+  // across many days; Timeline already looks at one day/department at a
+  // time via its own controls, so it isn't filtered a second way here.
+  const [filterStaffId, setFilterStaffId] = useState('');
+  const [filterDeptId, setFilterDeptId] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDay, setFilterDay] = useState('');
+  const filtersActive = !!(filterStaffId || filterDeptId || filterStatus || filterDay);
+  function clearFilters() {
+    setFilterStaffId(''); setFilterDeptId(''); setFilterStatus(''); setFilterDay('');
+  }
 
   // Timeline is the one view that looks at a single day, so it gets its own
   // date + department, steppable without touching the network — everything
@@ -487,8 +500,19 @@ export default function ShiftsPage() {
     }
   }
 
+  // Departments excluded from the claim race never get covered that way, so
+  // they're kept out of shift creation too — a shift with no route to
+  // getting covered just sits open. The shift's own current department stays
+  // selectable while editing, even if it's since been excluded, so an
+  // existing shift never ends up with an invalid/blank department.
+  const creatableDepartments = useMemo(
+    () => departments.filter(d => !d.excluded_from_claim_race || d.id === form.department_id),
+    [departments, form.department_id]
+  );
+
   function openAdd() {
-    setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: departments[0]?.id ?? '', required_role: 'any', notes: '' });
+    const firstCreatable = departments.find(d => !d.excluded_from_claim_race) ?? departments[0];
+    setForm({ date: todayStr(), start_time: '09:00', end_time: '17:00', department_id: firstCreatable?.id ?? '', required_role: 'any', notes: '' });
     setEditAssignedStaffId('');
     setSaveError('');
     setModal('add');
@@ -513,8 +537,40 @@ export default function ShiftsPage() {
   const underMinimum = shiftDurationMinutes(form.start_time, form.end_time) < MIN_SHIFT_MINUTES;
   const adjustUnderMinimum = shiftDurationMinutes(adjustForm.start_time, adjustForm.end_time) < MIN_SHIFT_MINUTES;
 
+  // Requires Supervisor departments only offer/allow a junior when another
+  // senior is already rostered covering the department for this shift's
+  // whole window — same rule the automated Cover Shift race uses, applied
+  // here too so manual assignment can't bypass it.
+  const requiresSupervisorDept = departments.find(d => d.id === form.department_id)?.requires_supervisor ?? false;
+  const hasSeniorCoverage = useMemo(() => {
+    if (!requiresSupervisorDept || !form.department_id || !form.date) return true;
+    const staffById = new Map(staff.map(s => [s.id, s]));
+    const isSenior = (staffId: string) => {
+      const st = staffById.get(staffId);
+      return !!st && (seniorityFromBirthday(st.birthday, form.date) ?? st.age_group) === 'senior';
+    };
+    return seniorCoversWholeShift(shifts, isSenior, {
+      date: form.date, start_time: form.start_time, end_time: form.end_time,
+      department_id: form.department_id, excludeShiftId: editing?.id ?? null,
+    });
+  }, [requiresSupervisorDept, form.department_id, form.date, form.start_time, form.end_time, shifts, staff, editing]);
+
+  // Guards against a stale selection left over from before the department
+  // or times changed underneath it — the <select> only stops a *new* pick
+  // of a blocked junior, not one already sitting in state.
+  const assignedStaffBlocked = (() => {
+    if (modal !== 'edit' || !requiresSupervisorDept || hasSeniorCoverage || !editAssignedStaffId) return false;
+    const assignee = staff.find(s => s.id === editAssignedStaffId);
+    if (!assignee) return false;
+    return (seniorityFromBirthday(assignee.birthday, form.date) ?? assignee.age_group) !== 'senior';
+  })();
+
   async function save() {
     if (!form.date || !form.department_id || underMinimum) return;
+    if (assignedStaffBlocked) {
+      setSaveError('This department requires a supervisor and no other senior is covering the whole shift — only a senior can be assigned.');
+      return;
+    }
     setSaveError('');
     const res = modal === 'add'
       ? await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
@@ -612,13 +668,20 @@ export default function ShiftsPage() {
   // List: today onward. Past: everything before today, most recent day
   // first (reverse the day GROUPS, not the shifts inside each — morning
   // still comes before afternoon when you look at a past day).
+  const filteredShifts = useMemo(() => shifts.filter(s =>
+    (!filterStaffId || s.assigned_staff_id === filterStaffId) &&
+    (!filterDeptId || s.department_id === filterDeptId) &&
+    (!filterStatus || s.status === filterStatus) &&
+    (!filterDay || String(dayOfWeekFromDate(s.date)) === filterDay)
+  ), [shifts, filterStaffId, filterDeptId, filterStatus, filterDay]);
+
   const futureGroups = useMemo(
-    () => groupByDate(shifts.filter(s => s.date >= today)),
-    [shifts, today]
+    () => groupByDate(filteredShifts.filter(s => s.date >= today)),
+    [filteredShifts, today]
   );
   const pastGroups = useMemo(
-    () => [...groupByDate(shifts.filter(s => s.date < today))].reverse(),
-    [shifts, today]
+    () => [...groupByDate(filteredShifts.filter(s => s.date < today))].reverse(),
+    [filteredShifts, today]
   );
 
   const timelineHours = useMemo(
@@ -794,6 +857,37 @@ export default function ShiftsPage() {
         </div>
       </div>
 
+      {view !== 'timeline' && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wide">
+            <Filter size={12} /> Filter
+          </span>
+          <select className="input w-auto" value={filterStaffId} onChange={e => setFilterStaffId(e.target.value)}>
+            <option value="">All Staff</option>
+            {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select className="input w-auto" value={filterDeptId} onChange={e => setFilterDeptId(e.target.value)}>
+            <option value="">All Departments</option>
+            {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+          <select className="input w-auto" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            <option value="open">Open</option>
+            <option value="covered">Covered</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <select className="input w-auto" value={filterDay} onChange={e => setFilterDay(e.target.value)}>
+            <option value="">All Days</option>
+            {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </select>
+          {filtersActive && (
+            <button onClick={clearFilters} className="btn-ghost text-xs px-2 py-1.5 text-slate-400 flex items-center gap-1">
+              <X size={12} /> Clear
+            </button>
+          )}
+        </div>
+      )}
+
       {loadError && <ErrorBanner message={loadError} onRetry={load} />}
 
       {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : view === 'list' ? (
@@ -915,7 +1009,7 @@ export default function ShiftsPage() {
               <label className="label">Department</label>
               <select className="input" value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}>
                 <option value="">Select department...</option>
-                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                {creatableDepartments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             </div>
             <div>
@@ -938,11 +1032,24 @@ export default function ShiftsPage() {
                       if (aTrained !== bTrained) return aTrained ? -1 : 1;
                       return a.name.localeCompare(b.name);
                     })
-                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    .map(s => {
+                      const isSenior = (seniorityFromBirthday(s.birthday, form.date) ?? s.age_group) === 'senior';
+                      const blocked = requiresSupervisorDept && !isSenior && !hasSeniorCoverage;
+                      return (
+                        <option key={s.id} value={s.id} disabled={blocked}>
+                          {s.name}{blocked ? ' (senior supervision required)' : ''}
+                        </option>
+                      );
+                    })}
                 </select>
                 <p className="text-xs text-slate-400 mt-1">
                   Picking someone marks this shift covered; clearing it reopens it — same as it already would elsewhere.
                 </p>
+                {requiresSupervisorDept && !hasSeniorCoverage && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    This department requires a supervisor. No other senior is rostered here covering the whole shift, so only seniors can be assigned right now.
+                  </p>
+                )}
               </div>
             )}
             <div>
@@ -952,7 +1059,7 @@ export default function ShiftsPage() {
             {saveError && <p className="text-sm text-red-600">{saveError}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
-              <button onClick={save} disabled={underMinimum} className="btn-primary">Save Shift</button>
+              <button onClick={save} disabled={underMinimum || assignedStaffBlocked} className="btn-primary">Save Shift</button>
             </div>
           </div>
         </Modal>

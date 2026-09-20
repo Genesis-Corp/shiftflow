@@ -186,6 +186,40 @@ export function clashesWithOtherShift(
 }
 
 /**
+ * For a "Requires Supervisor" department: whether a senior is already
+ * rostered on covering the target shift's own department, that same day,
+ * for its *entire* time window (not just overlapping it) — someone else
+ * whose presence would still mean a supervisor is on the floor, so a junior
+ * can safely be offered or assigned the target shift without one of them
+ * needing to double as the supervisor themselves.
+ *
+ * `isSenior` is a resolver rather than a plain id set so callers can apply
+ * whatever "effective age group" rule they already have on hand (birthday-
+ * derived, usually) without this function needing to know about staff shape.
+ */
+export function seniorCoversWholeShift(
+  otherShifts: {
+    id: string; date: string; department_id: string;
+    start_time: string; end_time: string; status: string; assigned_staff_id?: string | null;
+  }[],
+  isSenior: (staffId: string) => boolean,
+  target: { date: string; start_time: string; end_time: string; department_id: string; excludeShiftId?: string | null }
+): boolean {
+  const neededStart = timeToMinutes(target.start_time);
+  const neededEnd = timeToMinutes(target.end_time);
+  return otherShifts.some(w =>
+    w.id !== target.excludeShiftId &&
+    w.date === target.date &&
+    w.department_id === target.department_id &&
+    w.status === 'covered' &&
+    !!w.assigned_staff_id &&
+    isSenior(w.assigned_staff_id) &&
+    timeToMinutes(w.start_time) <= neededStart &&
+    timeToMinutes(w.end_time) >= neededEnd
+  );
+}
+
+/**
  * Adjust a shift's start/end time.
  * Returns new start, end, and whether a break is now required.
  */

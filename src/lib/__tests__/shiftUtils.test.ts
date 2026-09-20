@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   shiftsOverlap, mergeShiftRanges, clashesWithOtherShift, weekBounds, isBirthday,
-  addDays, todayStr, minutesUntil, formatTimeOfDay, applyReliabilityDelta,
+  addDays, todayStr, minutesUntil, formatTimeOfDay, applyReliabilityDelta, seniorCoversWholeShift,
 } from '../shiftUtils';
 
 describe('applyReliabilityDelta', () => {
@@ -124,6 +124,55 @@ describe('clashesWithOtherShift', () => {
   it('touching endpoints do not count as a clash', () => {
     const otherShifts = [{ start_time: '09:00', end_time: '12:00' }];
     expect(clashesWithOtherShift('12:00', '18:00', otherShifts)).toBe(false);
+  });
+});
+
+describe('seniorCoversWholeShift', () => {
+  const seniors = new Set(['sen-1', 'sen-2']);
+  const isSenior = (id: string) => seniors.has(id);
+  const target = { date: '2026-01-05', start_time: '09:00', end_time: '17:00', department_id: 'checkout' };
+
+  function shift(overrides: Partial<{
+    id: string; date: string; department_id: string; start_time: string; end_time: string;
+    status: string; assigned_staff_id: string | null;
+  }> = {}) {
+    return {
+      id: 's1', date: '2026-01-05', department_id: 'checkout',
+      start_time: '08:00', end_time: '18:00', status: 'covered', assigned_staff_id: 'sen-1',
+      ...overrides,
+    };
+  }
+
+  it('is true when another senior covers the whole target window', () => {
+    expect(seniorCoversWholeShift([shift()], isSenior, target)).toBe(true);
+  });
+
+  it('is false when the covering shift only partially overlaps the target window', () => {
+    expect(seniorCoversWholeShift([shift({ start_time: '12:00', end_time: '18:00' })], isSenior, target)).toBe(false);
+  });
+
+  it('is false when the assigned staff member is a junior, not a senior', () => {
+    expect(seniorCoversWholeShift([shift({ assigned_staff_id: 'jun-1' })], isSenior, target)).toBe(false);
+  });
+
+  it('is false for a different department', () => {
+    expect(seniorCoversWholeShift([shift({ department_id: 'deli' })], isSenior, target)).toBe(false);
+  });
+
+  it('is false for a different date', () => {
+    expect(seniorCoversWholeShift([shift({ date: '2026-01-06' })], isSenior, target)).toBe(false);
+  });
+
+  it('is false for a shift that is open, not covered', () => {
+    expect(seniorCoversWholeShift([shift({ status: 'open', assigned_staff_id: null })], isSenior, target)).toBe(false);
+  });
+
+  it('excludes the shift being evaluated itself, so it can never cover for its own reassignment', () => {
+    expect(seniorCoversWholeShift([shift({ id: 's1' })], isSenior, { ...target, excludeShiftId: 's1' })).toBe(false);
+  });
+
+  it('is false with no other shifts at all', () => {
+    expect(seniorCoversWholeShift([], isSenior, target)).toBe(false);
   });
 });
 
