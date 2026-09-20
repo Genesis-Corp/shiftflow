@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
-import { replaceSchoolHolidays } from '@/lib/schoolHolidayStore';
+import { replaceSchoolHolidays, describeDbError } from '@/lib/schoolHolidayStore';
 
 /** The school-term holiday calendar — date ranges, entered manually (there's
  *  no maintained public data source for individual school terms the way
@@ -14,11 +14,12 @@ export async function GET() {
   if (!user) return unauthorized();
 
   const { data, error } = await supabase.from('school_holidays').select('*').order('start_date');
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: describeDbError(error) }, { status: 500 });
   return NextResponse.json(data ?? []);
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 
 export async function POST(req: NextRequest) {
   const user = await requireUser();
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
   if (!name) return NextResponse.json({ error: 'Give the holiday a name.' }, { status: 400 });
 
   const { data, error } = await supabase.from('school_holidays').insert([{ start_date, end_date, name }]).select().single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: describeDbError(error) }, { status: 500 });
   return NextResponse.json(data, { status: 201 });
 }
 
@@ -69,6 +70,6 @@ export async function DELETE(req: NextRequest) {
   if (!id) return NextResponse.json({ error: 'id is required.' }, { status: 400 });
 
   const { error } = await supabase.from('school_holidays').delete().eq('id', id);
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error) return NextResponse.json({ error: describeDbError(error) }, { status: 500 });
   return NextResponse.json({ ok: true });
 }

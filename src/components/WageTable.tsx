@@ -54,7 +54,7 @@ interface ScanResult {
 interface ScannedTerms {
   region: string;
   terms_read: number;
-  holidays: { start_date: string; end_date: string; name: string }[];
+  holidays: { start_date: string; end_date: string; name: string; estimated?: boolean }[];
 }
 
 const EMPTY_HOLIDAY = { date: '', name: '' };
@@ -101,6 +101,7 @@ export default function WageTable() {
   const [newSchoolHoliday, setNewSchoolHoliday] = useState(EMPTY_SCHOOL_HOLIDAY);
   const [addingSchoolHoliday, setAddingSchoolHoliday] = useState(false);
   const [generatingSchool, setGeneratingSchool] = useState(false);
+  const [schoolError, setSchoolError] = useState('');
   const [scannedTerms, setScannedTerms] = useState<ScannedTerms | null>(null);
   const [applyingTerms, setApplyingTerms] = useState(false);
 
@@ -150,8 +151,12 @@ export default function WageTable() {
   const loadSchoolHolidays = useCallback(async () => {
     try {
       setSchoolHolidays(await fetchJson<SchoolHoliday[]>('/api/school-holidays'));
-    } catch {
-      // Not essential to the rest of the page — leave the list empty rather than blocking.
+      setSchoolError('');
+    } catch (err) {
+      // Worth saying out loud: an empty list here looks identical to a
+      // missing table, which is exactly what a not-yet-run migration gives.
+      setSchoolHolidays([]);
+      setSchoolError(err instanceof Error ? err.message : 'Failed to load school holidays');
     }
   }, []);
 
@@ -312,9 +317,21 @@ export default function WageTable() {
     setApplyingTerms(true);
     const res = await postJson('/api/school-holidays', { holidays: scannedTerms.holidays });
     setApplyingTerms(false);
+    // Left open on failure — closing it would throw away a read that took a
+    // photo, an upload and 20 seconds to get, for a problem that's usually
+    // one fixable thing away (a migration that hasn't been run yet).
+    if (!res.ok) { setSchoolError(res.error ?? 'Could not save those school holidays.'); return; }
     setScannedTerms(null);
-    if (!res.ok) { setError(res.error ?? 'Could not save those school holidays.'); return; }
+    setSchoolError('');
     loadSchoolHolidays();
+  }
+
+  /** Correct the end of the estimated trailing break before applying it. */
+  function setScannedEnd(start_date: string, end_date: string) {
+    setScannedTerms(current => current && ({
+      ...current,
+      holidays: current.holidays.map(h => h.start_date === start_date ? { ...h, end_date } : h),
+    }));
   }
 
   async function saveSettings(e: React.FormEvent) {
@@ -826,6 +843,12 @@ export default function WageTable() {
               </p>
             </div>
 
+            {schoolError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 mb-3 text-sm text-red-800 flex items-start gap-2">
+                <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" /> {schoolError}
+              </div>
+            )}
+
             <div className="divide-y divide-slate-100">
               {schoolHolidays.map(h => (
                 <div key={h.id} className="py-2 flex items-center gap-3">
@@ -909,12 +932,34 @@ export default function WageTable() {
 
             <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-80 overflow-y-auto">
               {scannedTerms.holidays.map(h => (
-                <div key={h.start_date} className="px-3 py-2 flex items-center justify-between gap-3">
-                  <span className="font-medium text-slate-800">{h.name}</span>
-                  <span className="text-xs text-slate-500 shrink-0">{formatDate(h.start_date)} – {formatDate(h.end_date)}</span>
+                <div key={h.start_date} className={`px-3 py-2 flex items-center justify-between gap-3 flex-wrap ${h.estimated ? 'bg-amber-50/60' : ''}`}>
+                  <span className="font-medium text-slate-800">
+                    {h.name}
+                    {h.estimated && <span className="badge-amber ml-2 text-[11px]">Estimated</span>}
+                  </span>
+                  {h.estimated ? (
+                    <span className="flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
+                      {formatDate(h.start_date)} – last day
+                      <input
+                        type="date" className="input text-xs py-1 w-auto"
+                        value={h.end_date}
+                        onChange={e => e.target.value && setScannedEnd(h.start_date, e.target.value)}
+                      />
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500 shrink-0">{formatDate(h.start_date)} – {formatDate(h.end_date)}</span>
+                  )}
                 </div>
               ))}
             </div>
+
+            {scannedTerms.holidays.some(h => h.estimated) && (
+              <p className="text-xs text-amber-700">
+                The break after the last term is estimated — this page only says when its terms run, not when school goes
+                back afterwards, so it&apos;s worked out from when this year&apos;s first term started. Correct the date above if
+                the next year&apos;s page says otherwise.
+              </p>
+            )}
 
             <div className="flex justify-end gap-2 pt-1">
               <button onClick={() => setScannedTerms(null)} className="btn-secondary">Cancel</button>
