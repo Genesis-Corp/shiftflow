@@ -27,15 +27,18 @@ export async function POST(req: NextRequest) {
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, age_group, role_type, phone, birthday, employment_type, commencement_date } = body;
+  const { name, age_group, phone, birthday, employment_type, commencement_date } = body;
 
-  if (!name || !age_group || !role_type)
-    return NextResponse.json({ error: 'name, age_group and role_type are required' }, { status: 400 });
+  if (!name || !age_group)
+    return NextResponse.json({ error: 'name and age_group are required' }, { status: 400 });
 
+  // role_type is never set by hand — it starts as department_only and is
+  // recomputed from actual training levels as soon as departments are
+  // assigned (PUT /api/staff/[id]/departments).
   const { data, error } = await supabase
     .from('staff')
     .insert([{
-      name, age_group, role_type,
+      name, age_group, role_type: 'department_only',
       phone: phone ?? null,
       phone_e164: toE164AU(phone),
       birthday: birthday || null,

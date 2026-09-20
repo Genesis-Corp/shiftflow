@@ -5,6 +5,7 @@ import { requireUser, unauthorized } from '@/lib/auth';
 import { nameKey, fullName } from '@/lib/availabilitySheet';
 import { withNameParts } from '@/lib/staffNames';
 import { seniorityFromBirthday } from '@/lib/wages';
+import { computeRoleType } from '@/lib/roleType';
 
 // ── Full staff sheet (First Name / Last Name / Employment Type / Default
 //    Department / Default Role / Birth Date / Pay Rate / Mobile) ──────────────
@@ -58,7 +59,6 @@ function staffAgeGroupFor(payRate: string | undefined, birthday: string | null):
 interface StandardRow {
   name?: string;
   age_group?: string;
-  role_type?: string;
   phone?: string;
   departments?: string;
   birthday?: string;
@@ -322,8 +322,10 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Standard format ────────────────────────────────────────────────────────
+  // role_type is never read from the sheet — it's computed from department
+  // training levels, same as the manual Add/Edit Staff form.
   for (const row of rows as unknown as StandardRow[]) {
-    if (!row.name || !row.age_group || !row.role_type) {
+    if (!row.name || !row.age_group) {
       results.errors.push(`Skipped row (missing fields): ${JSON.stringify(row)}`);
       continue;
     }
@@ -333,12 +335,27 @@ export async function POST(req: NextRequest) {
       results.errors.push(`"${row.name}": unrecognized employment_type "${row.employment_type}", left blank.`);
     }
 
+    // Whichever department(s) this person is rostered for on the sheet
+    // become their assigned departments — all at "trained" (a CSV has no
+    // way to express "supervised"), with the first named one as default
+    // (home) department. No department named, or none of the named ones
+    // matched — fall back to whichever department is flagged store default,
+    // so this person doesn't end up with zero departments just because the
+    // CSV column was empty.
+    const deptNames = row.departments ? row.departments.split(',').map(n => n.trim().toLowerCase()) : [];
+    const deptIds = deptNames.map(n => deptMap.get(n)).filter(Boolean) as string[];
+    const deptAssignments = deptIds.length
+      ? deptIds.map((department_id, i) => ({ department_id, training_level: 'trained' as const, is_default: i === 0 }))
+      : defaultDeptId
+        ? [{ department_id: defaultDeptId, training_level: 'trained' as const, is_default: true }]
+        : [];
+
     const { data: staff, error } = await supabase
       .from('staff')
       .insert([{
         name: row.name.trim(),
         age_group: row.age_group.toLowerCase().trim(),
-        role_type: row.role_type.toLowerCase().replace(/\s+/g, '_').trim(),
+        role_type: computeRoleType(deptAssignments),
         phone: row.phone?.trim() ?? null,
         phone_e164: toE164AU(row.phone),
         birthday: row.birthday?.trim() || null,
@@ -355,27 +372,10 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    if (staff) {
-      const deptNames = row.departments ? row.departments.split(',').map(n => n.trim().toLowerCase()) : [];
-      const deptIds = deptNames.map(n => deptMap.get(n)).filter(Boolean) as string[];
-
-      // Whichever department this person is rostered for on the sheet
-      // becomes their default (home) department — the first one named if
-      // more than one is listed. No department named, or none of the named
-      // ones matched — fall back to whichever department is flagged store
-      // default, so this person doesn't end up with zero departments just
-      // because the CSV column was empty.
-      const assignments = deptIds.length
-        ? deptIds.map((dept_id, i) => ({
-            staff_id: staff.id, department_id: dept_id, training_level: 'trained', is_default: i === 0,
-          }))
-        : defaultDeptId
-          ? [{ staff_id: staff.id, department_id: defaultDeptId, training_level: 'trained', is_default: true }]
-          : [];
-
-      if (assignments.length) {
-        await supabase.from('staff_departments').insert(assignments);
-      }
+    if (staff && deptAssignments.length) {
+      await supabase.from('staff_departments').insert(
+        deptAssignments.map(a => ({ staff_id: staff.id, ...a }))
+      );
     }
 
     results.created++;

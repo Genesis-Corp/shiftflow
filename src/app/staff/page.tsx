@@ -24,6 +24,7 @@ import { todayStr, formatDate } from '@/lib/shiftUtils';
 import type { SyncPlan } from '@/lib/staffSync';
 import { Staff, Department, RoleType, AgeGroup, TrainingLevel, EmploymentType } from '@/lib/types';
 import { ageBracketFor, seniorityFromBirthday, AgeBracket, TimeLoading } from '@/lib/wages';
+import { computeRoleType } from '@/lib/roleType';
 import Papa from 'papaparse';
 
 interface WagesData {
@@ -120,7 +121,7 @@ function StaffPageInner() {
   }
 
   const [form, setForm] = useState({
-    name: '', age_group: 'senior' as AgeGroup, role_type: 'department_only' as RoleType, phone: '',
+    name: '', age_group: 'senior' as AgeGroup, phone: '',
     birthday: '', employment_type: '' as EmploymentType | '', commencement_date: '',
     selectedDepts: [] as { department_id: string; training_level: TrainingLevel; is_default: boolean }[],
   });
@@ -205,7 +206,7 @@ function StaffPageInner() {
   function openAdd() {
     setEditing(null);
     setForm({
-      name: '', age_group: 'senior', role_type: 'department_only', phone: '',
+      name: '', age_group: 'senior', phone: '',
       birthday: '', employment_type: '', commencement_date: '', selectedDepts: [],
     });
     setModal('add');
@@ -219,7 +220,7 @@ function StaffPageInner() {
       is_default: !!d.is_default,
     }));
     setForm({
-      name: s.name, age_group: effectiveAgeGroup(s), role_type: s.role_type, phone: s.phone ?? '',
+      name: s.name, age_group: effectiveAgeGroup(s), phone: s.phone ?? '',
       birthday: s.birthday ?? '', employment_type: s.employment_type ?? '',
       commencement_date: s.commencement_date ?? '',
       selectedDepts: depts,
@@ -259,7 +260,7 @@ function StaffPageInner() {
   async function save() {
     if (!form.name.trim()) return;
     const payload = {
-      name: form.name, age_group: form.age_group, role_type: form.role_type, phone: form.phone,
+      name: form.name, age_group: form.age_group, phone: form.phone,
       birthday: form.birthday || null,
       employment_type: form.employment_type || null,
       commencement_date: form.commencement_date || null,
@@ -729,11 +730,12 @@ function StaffPageInner() {
               </div>
               <div>
                 <label className="label">Role Type</label>
-                <select className="input" value={form.role_type} onChange={e => setForm(f => ({ ...f, role_type: e.target.value as RoleType }))}>
-                  <option value="department_only">Department Only</option>
-                  <option value="potential_all_rounder">Potential All Rounder</option>
-                  <option value="all_rounder">All Rounder</option>
-                </select>
+                <div className="flex items-center h-[38px]">
+                  <span className={ROLE_BADGE[computeRoleType(form.selectedDepts)]}>
+                    {ROLE_LABELS[computeRoleType(form.selectedDepts)]}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">Computed from trained departments below</p>
               </div>
               <div className="col-span-2">
                 <label className="label">Phone (optional)</label>

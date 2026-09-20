@@ -30,17 +30,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, age_group, role_type, phone, active, birthday, employment_type, commencement_date, archived } = body;
+  const { name, age_group, phone, active, birthday, employment_type, commencement_date, archived } = body;
 
   // Every field is applied only when the caller actually sent it — a partial
   // body (the Active/Inactive toggle and the archive actions send just one
   // field) must never blank out the rest. phone_e164 in particular used to
   // get computed unconditionally from `phone`, so any partial PATCH quietly
   // wiped it back to null even though `phone` itself was left untouched.
+  //
+  // role_type is deliberately not accepted here — it's never set by hand,
+  // only recomputed from department training levels by
+  // PUT /api/staff/[id]/departments.
   const updates: Record<string, unknown> = {};
   if (name !== undefined) updates.name = name;
   if (age_group !== undefined) updates.age_group = age_group;
-  if (role_type !== undefined) updates.role_type = role_type;
   if (phone !== undefined) { updates.phone = phone; updates.phone_e164 = toE164AU(phone); }
   if (active !== undefined) updates.active = active;
   if (birthday !== undefined) updates.birthday = birthday || null;
