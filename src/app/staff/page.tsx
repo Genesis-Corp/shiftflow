@@ -237,9 +237,25 @@ function StaffPageInner() {
         if (exists.is_default && left.length) left[0] = { ...left[0], is_default: true };
         return { ...f, selectedDepts: left };
       }
+      // Supervisor-required (senior-only) departments aren't offered to juniors.
+      const dept = departments.find(d => d.id === dept_id);
+      if (dept?.requires_supervisor && f.age_group === 'junior') return f;
       // First department picked becomes the default automatically.
       const is_default = f.selectedDepts.length === 0;
       return { ...f, selectedDepts: [...f.selectedDepts, { department_id: dept_id, training_level: 'trained', is_default }] };
+    });
+  }
+
+  /** Switching to junior drops any supervisor-required departments already
+   *  selected — those are senior-only, so a junior can't stay assigned to
+   *  one just because it was picked before the age group changed. */
+  function setAgeGroup(age_group: AgeGroup) {
+    setForm(f => {
+      if (age_group !== 'junior') return { ...f, age_group };
+      const seniorOnlyIds = new Set(departments.filter(d => d.requires_supervisor).map(d => d.id));
+      const left = f.selectedDepts.filter(d => !seniorOnlyIds.has(d.department_id));
+      if (left.length && !left.some(d => d.is_default)) left[0] = { ...left[0], is_default: true };
+      return { ...f, age_group, selectedDepts: left };
     });
   }
 
@@ -723,7 +739,7 @@ function StaffPageInner() {
               </div>
               <div>
                 <label className="label">Age Group</label>
-                <select className="input" value={form.age_group} onChange={e => setForm(f => ({ ...f, age_group: e.target.value as AgeGroup }))}>
+                <select className="input" value={form.age_group} onChange={e => setAgeGroup(e.target.value as AgeGroup)}>
                   <option value="senior">Senior (18+)</option>
                   <option value="junior">Junior (Under 18)</option>
                 </select>
@@ -774,11 +790,24 @@ function StaffPageInner() {
               <div className="grid grid-cols-2 gap-2">
                 {departments.map(d => {
                   const assigned = form.selectedDepts.find(sd => sd.department_id === d.id);
+                  const seniorOnlyLocked = d.requires_supervisor && form.age_group === 'junior' && !assigned;
                   return (
-                    <div key={d.id} className={`rounded-lg border p-2.5 cursor-pointer transition-colors ${assigned ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`} onClick={() => toggleDept(d.id)}>
+                    <div
+                      key={d.id}
+                      className={`rounded-lg border p-2.5 transition-colors ${
+                        seniorOnlyLocked
+                          ? 'cursor-not-allowed opacity-50 border-slate-200'
+                          : `cursor-pointer ${assigned ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`
+                      }`}
+                      onClick={() => !seniorOnlyLocked && toggleDept(d.id)}
+                      title={seniorOnlyLocked ? 'Senior only — requires a supervisor' : undefined}
+                    >
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-slate-700">{d.name}</span>
-                        <input type="checkbox" checked={!!assigned} readOnly className="accent-blue-600" />
+                        <span className="text-sm font-medium text-slate-700">
+                          {d.name}
+                          {seniorOnlyLocked && <span className="ml-1.5 text-xs font-normal text-slate-400">(Senior only)</span>}
+                        </span>
+                        <input type="checkbox" checked={!!assigned} disabled={seniorOnlyLocked} readOnly className="accent-blue-600" />
                       </div>
                       {assigned && (
                         <div className="flex items-center gap-2 mt-2">
