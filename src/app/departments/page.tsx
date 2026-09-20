@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Plus, Pencil, Trash2, ShieldCheck, ChevronDown, Users, Star, Ban } from 'lucide-react';
+import { Plus, Pencil, Trash2, ShieldCheck, ChevronRight, Users, Star, Ban } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import ReliabilityBar from '@/components/ReliabilityBar';
@@ -22,7 +22,11 @@ export default function DepartmentsPage() {
   const [form, setForm] = useState<{ name: string; requires_supervisor: boolean; excluded_from_claim_race: boolean; color: string }>({
     name: '', requires_supervisor: false, excluded_from_claim_race: false, color: PRESET_DEPARTMENT_COLORS[0],
   });
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // Which department's staff list is open, shown as a modal rather than
+  // expanding inline — a department with a lot of staff (e.g. Checkout)
+  // used to push its card taller than its neighbours in the same grid row,
+  // which read as the whole row having silently shifted.
+  const [viewingDeptId, setViewingDeptId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -103,6 +107,9 @@ export default function DepartmentsPage() {
     load();
   }
 
+  const viewingDept = departments.find(d => d.id === viewingDeptId) ?? null;
+  const viewingAssigned = viewingDeptId ? staffByDept.get(viewingDeptId) ?? [] : [];
+
   async function setDefault(d: Department) {
     await fetch(`/api/departments/${d.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -135,19 +142,17 @@ export default function DepartmentsPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {departments.map(d => {
             const assigned = staffByDept.get(d.id) ?? [];
-            const isOpen = expanded === d.id;
             return (
               <div key={d.id} className="card overflow-hidden">
                 <div className="p-4 flex items-start justify-between gap-2">
                   <button
-                    onClick={() => setExpanded(isOpen ? null : d.id)}
+                    onClick={() => setViewingDeptId(d.id)}
                     className="flex-1 min-w-0 text-left"
-                    aria-expanded={isOpen}
                   >
                     <div className="flex items-center gap-1.5">
                       <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: normalizeDeptColor(d.color) }} />
                       <p className="font-semibold text-slate-800 truncate">{d.name}</p>
-                      <ChevronDown size={14} className={`text-slate-400 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                      <ChevronRight size={14} className="text-slate-400 shrink-0" />
                     </div>
                     <div className="flex flex-wrap items-center gap-1.5 mt-1">
                       <span className="badge-slate">
@@ -182,49 +187,6 @@ export default function DepartmentsPage() {
                     <button onClick={() => remove(d)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
                   </div>
                 </div>
-
-                {isOpen && (
-                  <div className="border-t border-slate-100">
-                    {assigned.length === 0 ? (
-                      <p className="px-4 py-3 text-xs text-slate-400">No staff assigned to this department.</p>
-                    ) : (
-                      <ul className="divide-y divide-slate-100">
-                        {assigned.map(s => {
-                          const availableDays = availableDaysByStaff.get(s.id);
-                          return (
-                            <li key={s.id} className={`px-4 py-2 space-y-1.5 ${!s.active ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <Link
-                                  href={`/staff?edit=${s.id}`}
-                                  className="text-sm text-slate-700 truncate hover:text-blue-600 hover:underline"
-                                >
-                                  {s.name}
-                                </Link>
-                                <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
-                              </div>
-                              {/* Bounded to a fixed width rather than the
-                                  full (now much wider) row — otherwise
-                                  justify-between stretches 7 tiny columns
-                                  across the whole card instead of keeping
-                                  them together as one compact strip. */}
-                              <div className="flex items-center justify-between w-52">
-                                {DAY_SHORT.map((day, i) => {
-                                  const available = availableDays?.has(i) ?? false;
-                                  return (
-                                    <div key={day} className="flex flex-col items-center gap-0.5" title={`${day}: ${available ? 'Available' : 'Not available'}`}>
-                                      <span className={`w-1.5 h-1.5 rounded-full ${available ? 'bg-green-500' : 'bg-red-400'}`} />
-                                      <span className="text-[9px] leading-none text-slate-400">{day}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -297,6 +259,44 @@ export default function DepartmentsPage() {
               <button onClick={save} className="btn-primary">Save</button>
             </div>
           </div>
+        </Modal>
+      )}
+
+      {viewingDept && (
+        <Modal title={viewingDept.name} onClose={() => setViewingDeptId(null)} size="lg">
+          {viewingAssigned.length === 0 ? (
+            <p className="text-sm text-slate-400 text-center py-6">No staff assigned to this department.</p>
+          ) : (
+            <div className="-m-4 divide-y divide-slate-100">
+              {viewingAssigned.map(s => {
+                const availableDays = availableDaysByStaff.get(s.id);
+                return (
+                  <div key={s.id} className={`px-4 py-2.5 space-y-1.5 ${!s.active ? 'opacity-50' : ''}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <Link
+                        href={`/staff?edit=${s.id}`}
+                        className="text-sm text-slate-700 truncate hover:text-blue-600 hover:underline"
+                      >
+                        {s.name}
+                      </Link>
+                      <div className="w-16 shrink-0"><ReliabilityBar score={s.reliability_score} showLabel={false} /></div>
+                    </div>
+                    <div className="flex items-center justify-between w-52">
+                      {DAY_SHORT.map((day, i) => {
+                        const available = availableDays?.has(i) ?? false;
+                        return (
+                          <div key={day} className="flex flex-col items-center gap-0.5" title={`${day}: ${available ? 'Available' : 'Not available'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${available ? 'bg-green-500' : 'bg-red-400'}`} />
+                            <span className="text-[9px] leading-none text-slate-400">{day}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Modal>
       )}
     </div>
