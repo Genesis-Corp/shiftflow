@@ -50,6 +50,13 @@ interface ScanResult {
   current_rate: number | null;
 }
 
+/** School holiday ranges read off an uploaded term dates page, pending review. */
+interface ScannedTerms {
+  region: string;
+  terms_read: number;
+  holidays: { start_date: string; end_date: string; name: string }[];
+}
+
 const EMPTY_HOLIDAY = { date: '', name: '' };
 const EMPTY_SCHOOL_HOLIDAY = { start_date: '', end_date: '', name: '' };
 
@@ -93,6 +100,9 @@ export default function WageTable() {
   const [schoolHolidays, setSchoolHolidays] = useState<SchoolHoliday[]>([]);
   const [newSchoolHoliday, setNewSchoolHoliday] = useState(EMPTY_SCHOOL_HOLIDAY);
   const [addingSchoolHoliday, setAddingSchoolHoliday] = useState(false);
+  const [generatingSchool, setGeneratingSchool] = useState(false);
+  const [scannedTerms, setScannedTerms] = useState<ScannedTerms | null>(null);
+  const [applyingTerms, setApplyingTerms] = useState(false);
 
   const [settings, setSettings] = useState<StoreSettings | null>(null);
   const [countryInput, setCountryInput] = useState('');
@@ -247,6 +257,66 @@ export default function WageTable() {
     loadSchoolHolidays();
   }
 
+  /** Fill the school calendar from the store's country/state, where school
+   *  terms are published for it. Far fewer locations than public holidays. */
+  async function generateSchoolHolidays() {
+    setGeneratingSchool(true);
+    setError('');
+    const res = await fetch('/api/school-holidays/generate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year: new Date().getFullYear() }),
+    });
+    setGeneratingSchool(false);
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { setError(d.error ?? 'Could not read school holidays for this location.'); return; }
+    loadSchoolHolidays();
+  }
+
+  /** Read a screenshot or PDF of an education department's term dates page.
+   *  Nothing is saved until the manager checks the read against the page. */
+  async function pickSchoolFile(file: File) {
+    setError('');
+    const name = file.name.toLowerCase();
+    const isPdf = file.type === 'application/pdf' || name.endsWith('.pdf');
+    const isImage = file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/.test(name);
+
+    if (!isPdf && !isImage) {
+      setError(`"${file.name}" isn't a photo or PDF. Screenshot your education department's term dates page, or save it as a PDF.`);
+      return;
+    }
+
+    try {
+      let scan;
+      if (isPdf) {
+        setStage(STAGES.preparingPdf);
+        const pdf = await readPdfAsBase64(file);
+        setStage(STAGES.readingPdf);
+        scan = await postJson<ScannedTerms>('/api/scan-school-terms', { pdf }, { timeoutMs: 70_000 });
+      } else {
+        setStage(STAGES.preparing);
+        const { base64, mediaType } = await downscalePhoto(file);
+        setStage(STAGES.reading);
+        scan = await postJson<ScannedTerms>('/api/scan-school-terms', { image: base64, mediaType }, { timeoutMs: 70_000 });
+      }
+      if (!scan.ok || !scan.data) { setError(scan.error ?? 'Could not read those term dates.'); return; }
+      setScannedTerms(scan.data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read those term dates.');
+    } finally {
+      setStage(null);
+    }
+  }
+
+  async function applyScannedTerms() {
+    if (!scannedTerms) return;
+    setApplyingTerms(true);
+    const res = await postJson('/api/school-holidays', { holidays: scannedTerms.holidays });
+    setApplyingTerms(false);
+    setScannedTerms(null);
+    if (!res.ok) { setError(res.error ?? 'Could not save those school holidays.'); return; }
+    loadSchoolHolidays();
+  }
+
   async function saveSettings(e: React.FormEvent) {
     e.preventDefault();
     if (!countryInput.trim()) return;
@@ -342,8 +412,15 @@ export default function WageTable() {
     load();
   }
 
+  // One drop target for the page, pointed at whichever holiday tab is open —
+  // the overlay says which, so a dropped file never gets read as the wrong
+  // kind of document without warning.
+  const droppingSchoolTerms = holidayTab === 'school';
   const { dragging, dropHandlers } = useFileDrop(files => {
-    for (const file of files) pickFile(file);
+    for (const file of files) {
+      if (droppingSchoolTerms) void pickSchoolFile(file);
+      else pickFile(file);
+    }
   }, stage !== null);
 
   const ftPtLoadings = (data?.time_loadings ?? []).filter(l => l.employment_category === 'ft_pt');
@@ -366,7 +443,12 @@ export default function WageTable() {
 
   return (
     <div className="space-y-6" {...dropHandlers}>
-      <DropOverlay active={dragging} label="Drop the wage table photo, PDF or CSV to read its base rate" />
+      <DropOverlay
+        active={dragging}
+        label={droppingSchoolTerms
+          ? 'Drop a screenshot or PDF of your education department’s term dates'
+          : 'Drop the wage table photo, PDF or CSV to read its base rate'}
+      />
       {stage && <ProgressBar stage={stage} />}
 
       {error && (
@@ -704,14 +786,45 @@ export default function WageTable() {
           <>
             <p className="text-xs text-slate-500 mb-3">
               On a weekday that falls inside none of these ranges (and isn&apos;t a public holiday), juniors are treated as in
-              school and unavailable before 3pm — for Cover Shift and for manually assigning a shift. There&apos;s no public data
-              feed for individual school terms the way there is for public holidays, so these are entered by hand; the WA
-              Department of Education&apos;s{' '}
-              <a href="https://www.education.wa.edu.au/future-term-dates" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
-                confirmed term dates
-              </a>{' '}
-              are the source a few years of these were seeded from.
+              school and unavailable before 3pm — for Cover Shift and for manually assigning a shift.
             </p>
+
+            <div className="flex flex-wrap items-center gap-2 mb-4 pb-4 border-b border-slate-100">
+              <button
+                type="button" onClick={generateSchoolHolidays} disabled={generatingSchool || !settings?.country}
+                className="btn-secondary text-xs px-2 py-1.5 flex items-center gap-1"
+                title={!settings?.country ? 'Save a country on the Public Holidays tab first' : 'Read school terms for this store’s country/state'}
+              >
+                {generatingSchool ? <Loader2 size={12} className="animate-spin" /> : <Globe size={12} />}
+                Read from location
+              </button>
+              <UploadMenu
+                disabled={stage !== null}
+                options={[
+                  {
+                    key: 'school-capture', label: 'Capture', icon: <Camera size={14} />, accept: 'image/*', capture: 'environment',
+                    onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void pickSchoolFile(file); },
+                  },
+                  {
+                    key: 'school-image', label: 'Upload screenshot', icon: <FileText size={14} />, accept: 'image/*',
+                    onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void pickSchoolFile(file); },
+                  },
+                  {
+                    key: 'school-pdf', label: 'Upload PDF', icon: <FileSpreadsheet size={14} />, accept: 'application/pdf',
+                    onChange: e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void pickSchoolFile(file); },
+                  },
+                ]}
+              />
+              <p className="text-xs text-slate-400 basis-full">
+                Only some locations publish school terms in a form the app can read directly — Western Australia isn&apos;t one
+                of them. Everywhere else, screenshot or save your education department&apos;s term dates page and upload it
+                (or drag it anywhere onto this page) and the term dates will be turned into the holidays between them. WA&apos;s
+                are at{' '}
+                <a href="https://www.education.wa.edu.au/future-term-dates" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                  education.wa.edu.au/future-term-dates
+                </a>.
+              </p>
+            </div>
 
             <div className="divide-y divide-slate-100">
               {schoolHolidays.map(h => (
@@ -777,6 +890,36 @@ export default function WageTable() {
               <button onClick={() => setScanned(null)} className="btn-secondary">Cancel</button>
               <button onClick={applyScanned} disabled={applying} className="btn-primary">
                 {applying ? 'Applying…' : 'Apply'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Scanned term dates preview ───────────────────────────────────── */}
+      {scannedTerms && (
+        <Modal title="School holidays read from that page" onClose={() => setScannedTerms(null)} size="lg">
+          <div className="space-y-4 text-sm">
+            <p className="text-xs text-slate-500">
+              Check these against the page before applying — juniors are treated as unavailable before 3pm on every
+              weekday that <em>isn&apos;t</em> covered here, so a wrong date quietly changes who can be offered shifts for
+              months.
+              {scannedTerms.terms_read > 0 && ` Read ${scannedTerms.terms_read} term dates${scannedTerms.region ? ` for ${scannedTerms.region}` : ''}, and turned the gaps between them into the holidays below.`}
+            </p>
+
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 max-h-80 overflow-y-auto">
+              {scannedTerms.holidays.map(h => (
+                <div key={h.start_date} className="px-3 py-2 flex items-center justify-between gap-3">
+                  <span className="font-medium text-slate-800">{h.name}</span>
+                  <span className="text-xs text-slate-500 shrink-0">{formatDate(h.start_date)} – {formatDate(h.end_date)}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setScannedTerms(null)} className="btn-secondary">Cancel</button>
+              <button onClick={applyScannedTerms} disabled={applyingTerms} className="btn-primary">
+                {applyingTerms ? 'Applying…' : `Apply ${scannedTerms.holidays.length} holiday${scannedTerms.holidays.length === 1 ? '' : 's'}`}
               </button>
             </div>
           </div>

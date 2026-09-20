@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
+import { replaceSchoolHolidays } from '@/lib/schoolHolidayStore';
 
 /** The school-term holiday calendar — date ranges, entered manually (there's
  *  no maintained public data source for individual school terms the way
@@ -17,11 +18,33 @@ export async function GET() {
   return NextResponse.json(data ?? []);
 }
 
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
 export async function POST(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
 
   const body = await req.json().catch(() => null);
+
+  // A batch — applying what was read off an uploaded term dates page.
+  if (Array.isArray(body?.holidays)) {
+    const rows = (body.holidays as unknown[])
+      .map(h => h as { start_date?: unknown; end_date?: unknown; name?: unknown })
+      .filter(h =>
+        typeof h.start_date === 'string' && ISO_DATE.test(h.start_date) &&
+        typeof h.end_date === 'string' && ISO_DATE.test(h.end_date) &&
+        h.end_date >= h.start_date &&
+        typeof h.name === 'string' && h.name.trim()
+      )
+      .map(h => ({ start_date: h.start_date as string, end_date: h.end_date as string, name: (h.name as string).trim() }));
+
+    if (!rows.length) return NextResponse.json({ error: 'No usable school holiday dates were sent.' }, { status: 400 });
+
+    const failure = await replaceSchoolHolidays(rows);
+    if (failure) return NextResponse.json({ error: failure }, { status: 500 });
+    return NextResponse.json({ applied: rows.length }, { status: 201 });
+  }
+
   const start_date = typeof body?.start_date === 'string' ? body.start_date : '';
   const end_date = typeof body?.end_date === 'string' ? body.end_date : '';
   const name = typeof body?.name === 'string' ? body.name.trim() : '';
