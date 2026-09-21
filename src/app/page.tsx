@@ -65,12 +65,19 @@ export default function Dashboard() {
 
       const attention: AttentionStaff[] = [];
       const achievers: HighAchiever[] = [];
-      for (const s of (staff ?? []) as { id: string; name: string; active: boolean; phone?: string; phone_e164?: string; reliability_score: number }[]) {
+      for (const s of (staff ?? []) as { id: string; name: string; active: boolean; phone?: string; phone_e164?: string; reliability_score: number; sms_opt_out?: boolean }[]) {
         if (!s.active) continue;
         const minutes = weeklyMinutes.get(s.id) ?? 0;
         const score = s.reliability_score ?? 50;
         const reasons: string[] = [];
         if (!s.phone && !s.phone_e164) reasons.push('No phone number on file');
+        // Surfaced here rather than penalised on reliability — that score
+        // tracks shift attendance, not texting preferences, and STOP has to
+        // stay a free, no-consequence opt-out or the business risks the
+        // whole SMS number getting suspended for spam-law non-compliance.
+        // This is the honest lever: a manager sees it and follows up in
+        // person, rather than it sitting invisible in the database.
+        if (s.sms_opt_out) reasons.push('Opted out of SMS — won’t be offered shifts by text');
         if (score < LOW_RELIABILITY_THRESHOLD) reasons.push('Low reliability');
         if (minutes > NEEDS_ATTENTION_HOURS_CAP) reasons.push(`${(minutes / 60).toFixed(1)}h rostered this week`);
         if (minutes === 0) reasons.push('No shifts rostered this week');
