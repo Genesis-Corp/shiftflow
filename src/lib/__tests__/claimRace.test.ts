@@ -31,6 +31,12 @@ describe('parseInboundMessage', () => {
     expect(parseInboundMessage('no thanks, STOP').intent).toBe('stop');
   });
 
+  it('treats START as an opt back in', () => {
+    expect(parseInboundMessage('START').intent).toBe('start');
+    expect(parseInboundMessage('unstop').intent).toBe('start');
+    expect(parseInboundMessage('subscribe').intent).toBe('start');
+  });
+
   it('picks the code rather than an intent word that looks like one', () => {
     // Both YES and 4F7K are 4 chars from the code alphabet.
     expect(parseInboundMessage('YES 4F7K').code).toBe('4F7K');

@@ -62,6 +62,7 @@ export async function POST(req: NextRequest) {
         : outcome.result === 'manager_picked' ? 'manager_outcome'
         : outcome.result === 'manager_invalid_pick' ? 'manager_invalid_pick'
         : outcome.result === 'manager_stale_pick' ? 'manager_stale_pick'
+        : outcome.result === 'opted_in' ? 'opt_in_ack'
         : 'opt_out_ack',
       raceId: outcome.raceId ?? null,
       staffId: outcome.staffId ?? null,

@@ -77,6 +77,11 @@ export function optOutMessage(): string {
   return `${BUSINESS}: you will not receive any more shift messages from us.`;
 }
 
+/** Confirms an opt-back-in, e.g. after a reply of START. */
+export function optInMessage(): string {
+  return `${BUSINESS}: you're back on the list and will receive shift messages again.`;
+}
+
 // ── Availability flow (the "gather" cover tier) ─────────────────────────────
 // Enough notice to collect options: the manager who started the race picks
 // from who's free, rather than it going to whoever replies first. The

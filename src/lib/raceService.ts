@@ -12,7 +12,7 @@ import {
 import { sendSms, logInbound } from '@/lib/sms/send';
 import {
   winnerMessage, coveredMessage, tooLateMessage,
-  declinedMessage, optOutMessage, availabilityMessage, availabilityAckMessage,
+  declinedMessage, optOutMessage, optInMessage, availabilityMessage, availabilityAckMessage,
   urgentAvailabilityMessage, managerListMessage, managerOutcomeMessage,
   managerInvalidPickMessage, managerStaleSelectionMessage, ShiftSummary,
 } from '@/lib/sms/templates';
@@ -526,7 +526,7 @@ export interface ReplyOutcome {
   handled: boolean;
   reply: string | null;      // message to send back to the sender
   result:
-    | 'won' | 'too_late' | 'declined' | 'opted_out' | 'unmatched' | 'duplicate'
+    | 'won' | 'too_late' | 'declined' | 'opted_out' | 'opted_in' | 'unmatched' | 'duplicate'
     | 'available_ack' | 'manager_picked' | 'manager_invalid_pick' | 'manager_stale_pick';
   raceId?: string;
   staffId?: string;
@@ -589,6 +589,12 @@ export async function handleInboundReply(params: {
     const staffId = recipient?.staff_id ?? await staffIdForPhone(from);
     if (staffId) await supabaseAdmin.from('staff').update({ sms_opt_out: true }).eq('id', staffId);
     return { handled: true, reply: optOutMessage(), result: 'opted_out', staffId: staffId ?? undefined };
+  }
+
+  if (parsed.intent === 'start') {
+    const staffId = recipient?.staff_id ?? await staffIdForPhone(from);
+    if (staffId) await supabaseAdmin.from('staff').update({ sms_opt_out: false }).eq('id', staffId);
+    return { handled: true, reply: optInMessage(), result: 'opted_in', staffId: staffId ?? undefined };
   }
 
   if (!recipient) return { handled: true, reply: null, result: 'unmatched' };

@@ -45,7 +45,7 @@ export function generateDistinctCodes(
   return out;
 }
 
-export type ReplyIntent = 'yes' | 'no' | 'stop' | 'unknown';
+export type ReplyIntent = 'yes' | 'no' | 'stop' | 'start' | 'unknown';
 
 export interface ParsedReply {
   intent: ReplyIntent;
@@ -53,6 +53,10 @@ export interface ParsedReply {
 }
 
 const STOP_WORDS = ['STOP', 'STOPALL', 'UNSUBSCRIBE', 'OPTOUT', 'OPT OUT', 'QUIT'];
+// Carrier-standard opt-back-in keyword. A manager can also clear an opt-out
+// from the staff page, but honouring START directly means the person who
+// opted out doesn't have to wait on anyone to be reachable again.
+const START_WORDS = ['START', 'UNSTOP', 'SUBSCRIBE'];
 const YES_WORDS = ['YES', 'Y', 'YEP', 'YEAH', 'YUP', 'YE', 'OK', 'OKAY', 'SURE', 'CLAIM', 'ACCEPT'];
 const NO_WORDS  = ['NO', 'N', 'NOPE', 'NAH', 'CANT', 'CANNOT', 'BUSY', 'UNABLE', 'DECLINE', 'SORRY'];
 
@@ -75,6 +79,9 @@ export function parseInboundMessage(raw: string): ParsedReply {
   const words = text.split(/[^A-Z0-9]+/).filter(Boolean);
   if (STOP_WORDS.some(w => (w.includes(' ') ? text.includes(w) : words.includes(w)))) {
     return { intent: 'stop', code: null };
+  }
+  if (START_WORDS.some(w => words.includes(w))) {
+    return { intent: 'start', code: null };
   }
 
   const codes = text.match(CODE_TOKEN) ?? [];

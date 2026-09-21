@@ -30,7 +30,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return unauthorized();
 
   const body = await req.json();
-  const { name, age_group, phone, active, birthday, employment_type, commencement_date, archived } = body;
+  const { name, age_group, phone, active, birthday, employment_type, commencement_date, archived, sms_opt_out } = body;
 
   // Every field is applied only when the caller actually sent it — a partial
   // body (the Active/Inactive toggle and the archive actions send just one
@@ -49,6 +49,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (birthday !== undefined) updates.birthday = birthday || null;
   if (employment_type !== undefined) updates.employment_type = employment_type || null;
   if (commencement_date !== undefined) updates.commencement_date = commencement_date || null;
+  // A manager clearing this after a staff member texted STOP by mistake (or
+  // wants back in without waiting on a START reply of their own) — set, not
+  // computed, so it's a deliberate action rather than something a phone
+  // field edit could silently flip.
+  if (sms_opt_out !== undefined) updates.sms_opt_out = !!sms_opt_out;
   if (archived !== undefined) {
     updates.archived = archived;
     updates.archived_at = archived ? new Date().toISOString() : null;
