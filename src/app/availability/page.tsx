@@ -92,6 +92,27 @@ function leaveBarPosition(
   return { leftPct: (startIdx / n) * 100, widthPct: ((endIdx - startIdx + 1) / n) * 100 };
 }
 
+interface HolidayRow { staffId: string; name: string; entries: StaffLeave[] }
+
+/** One row per staff member with leave overlapping `monthDates` — shared by
+ *  the single-month view and every month panel in the yearly view, so both
+ *  scales agree on exactly who counts as "on leave this month". */
+function holidayRowsFor(monthDates: string[], leaveEntries: StaffLeave[]): HolidayRow[] {
+  const first = monthDates[0];
+  const last = monthDates[monthDates.length - 1];
+  const byStaff = new Map<string, HolidayRow>();
+  for (const l of leaveEntries) {
+    if (!l.staff_id || l.end_date < first || l.start_date > last) continue;
+    if (!byStaff.has(l.staff_id)) byStaff.set(l.staff_id, { staffId: l.staff_id, name: l.staff?.name ?? 'Unknown', entries: [] });
+    byStaff.get(l.staff_id)!.entries.push(l);
+  }
+  return Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function addYears(yearMonth: string, delta: number): string {
+  return addMonths(yearMonth, delta * 12);
+}
+
 /** One uploaded form (or a manually-started entry) staged for review before
  *  it becomes a real staff_leave row. `extraStaff` mirrors the same "more
  *  than one name on this form" case the old single-entry flow handled, just
@@ -286,9 +307,91 @@ function LeaveDraftRow({
   );
 }
 
+/** The Gantt itself — a date header plus one row per staff member on leave,
+ *  each with a bar per entry spanning the dates it covers. Used both for the
+ *  single-month view and, in miniature, for every month panel in the yearly
+ *  view, so the two scales are pixel-for-pixel the same drawing logic. */
+function MonthHolidayGantt({
+  monthDates, rows, compact,
+}: {
+  monthDates: string[];
+  rows: HolidayRow[];
+  /** Smaller row height and no bar label — legible stacked twelve at a time. */
+  compact?: boolean;
+}) {
+  const labelWidth = compact ? 'w-24' : 'w-36';
+  const rowHeight = compact ? 'h-4' : 'h-7';
+  const today = todayStr();
+
+  return (
+    <div style={{ minWidth: `${(compact ? 6 : 9) + monthDates.length * (compact ? 1.1 : 1.75)}rem` }}>
+      <div className={`flex ${compact ? 'pl-24' : 'pl-36'}`}>
+        {monthDates.map(date => {
+          const dow = new Date(date + 'T00:00:00').getDay();
+          const isToday = date === today;
+          return (
+            <div
+              key={date}
+              className={`flex-1 text-center font-medium py-1 border-l border-slate-100 first:border-l-0 ${compact ? 'text-[9px]' : 'text-[11px]'} ${
+                dow === 0 || dow === 6 ? 'bg-slate-50 text-slate-400' : 'text-slate-400'
+              } ${isToday ? 'text-blue-600 font-bold' : ''}`}
+            >
+              {Number(date.slice(8, 10))}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-1 divide-y divide-slate-100">
+        {rows.map(({ staffId, name, entries }) => (
+          <div key={staffId} className="flex items-center py-1">
+            <div className={`${labelWidth} flex-shrink-0 pr-2 ${compact ? 'text-xs' : 'text-sm'} font-medium text-slate-700 truncate`}>
+              <StaffName staffId={staffId} name={name} />
+            </div>
+            <div className={`relative flex-1 ${rowHeight} rounded bg-slate-50`}>
+              <div className="absolute inset-0 flex pointer-events-none">
+                {monthDates.map(date => {
+                  const dow = new Date(date + 'T00:00:00').getDay();
+                  return (
+                    <div
+                      key={date}
+                      className={`flex-1 border-l border-slate-100 first:border-l-0 ${dow === 0 || dow === 6 ? 'bg-slate-100/60' : ''}`}
+                    />
+                  );
+                })}
+              </div>
+              {entries.map(l => {
+                const pos = leaveBarPosition(monthDates, l.start_date, l.end_date);
+                if (!pos) return null;
+                return (
+                  <div
+                    key={l.id}
+                    title={`${l.leave_type === 'leave' ? 'Leave' : 'Day off'}: ${formatDate(l.start_date)}${l.end_date !== l.start_date ? ` – ${formatDate(l.end_date)}` : ''}${l.notes ? ` — ${l.notes}` : ''}`}
+                    className={`absolute inset-y-0.5 rounded flex items-center overflow-hidden ${compact ? '' : 'px-1.5'} ${
+                      l.leave_type === 'leave' ? 'bg-blue-500' : 'bg-amber-500'
+                    }`}
+                    style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
+                  >
+                    {!compact && (
+                      <span className="text-[11px] text-white font-medium whitespace-nowrap">
+                        {l.leave_type === 'leave' ? 'Leave' : 'Day off'}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function AvailabilityPage() {
   const [view, setView] = useState<'editor' | 'timeline' | 'holidays'>('editor');
   const [calendarMonth, setCalendarMonth] = useState(todayStr().slice(0, 7));
+  const [calendarScale, setCalendarScale] = useState<'month' | 'year'>('month');
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
   const [templates, setTemplates] = useState<Record<number, DayTemplate>>({});
@@ -538,17 +641,18 @@ export default function AvailabilityPage() {
   // Holidays: one row per staff member who's actually on leave somewhere in
   // the visible month — an empty row for everyone else would just be noise.
   const monthDates = useMemo(() => monthDateList(calendarMonth), [calendarMonth]);
-  const holidayRows = useMemo(() => {
-    const first = monthDates[0];
-    const last = monthDates[monthDates.length - 1];
-    const byStaff = new Map<string, { staffId: string; name: string; entries: StaffLeave[] }>();
-    for (const l of leaveEntries) {
-      if (!l.staff_id || l.end_date < first || l.start_date > last) continue;
-      if (!byStaff.has(l.staff_id)) byStaff.set(l.staff_id, { staffId: l.staff_id, name: l.staff?.name ?? 'Unknown', entries: [] });
-      byStaff.get(l.staff_id)!.entries.push(l);
-    }
-    return Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [leaveEntries, monthDates]);
+  const holidayRows = useMemo(() => holidayRowsFor(monthDates, leaveEntries), [monthDates, leaveEntries]);
+
+  // Year scale: the same per-month rows, computed once for all twelve months
+  // of the visible year rather than re-deriving them per panel on every render.
+  const yearMonths = useMemo(() => {
+    const year = calendarMonth.slice(0, 4);
+    return Array.from({ length: 12 }, (_, i) => {
+      const ym = `${year}-${String(i + 1).padStart(2, '0')}`;
+      const dates = monthDateList(ym);
+      return { yearMonth: ym, dates, rows: holidayRowsFor(dates, leaveEntries) };
+    });
+  }, [calendarMonth, leaveEntries]);
 
   return (
     <div className="space-y-6">
@@ -592,15 +696,41 @@ export default function AvailabilityPage() {
         <div className="card p-4">
           <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
             <h2 className="font-semibold text-slate-800">Staff on Holidays</h2>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5">
+                <button
+                  onClick={() => setCalendarScale('month')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    calendarScale === 'month' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Month
+                </button>
+                <button
+                  onClick={() => setCalendarScale('year')}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                    calendarScale === 'year' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  Year
+                </button>
+              </div>
               <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white">
-                <button onClick={() => setCalendarMonth(m => addMonths(m, -1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-l-lg" title="Previous month">
+                <button
+                  onClick={() => setCalendarMonth(m => (calendarScale === 'year' ? addYears(m, -1) : addMonths(m, -1)))}
+                  className="p-2 text-slate-500 hover:bg-slate-50 rounded-l-lg"
+                  title={calendarScale === 'year' ? 'Previous year' : 'Previous month'}
+                >
                   <ChevronLeft size={16} />
                 </button>
                 <span className="px-3 py-1.5 text-sm font-medium text-slate-700 min-w-[9rem] text-center">
-                  {monthLabel(calendarMonth)}
+                  {calendarScale === 'year' ? calendarMonth.slice(0, 4) : monthLabel(calendarMonth)}
                 </span>
-                <button onClick={() => setCalendarMonth(m => addMonths(m, 1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg" title="Next month">
+                <button
+                  onClick={() => setCalendarMonth(m => (calendarScale === 'year' ? addYears(m, 1) : addMonths(m, 1)))}
+                  className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg"
+                  title={calendarScale === 'year' ? 'Next year' : 'Next month'}
+                >
                   <ChevronRight size={16} />
                 </button>
               </div>
@@ -611,69 +741,29 @@ export default function AvailabilityPage() {
             </div>
           </div>
 
-          {holidayRows.length === 0 ? (
-            <p className="text-slate-400 text-center py-16">No one is on leave in {monthLabel(calendarMonth)}.</p>
+          {calendarScale === 'month' ? (
+            holidayRows.length === 0 ? (
+              <p className="text-slate-400 text-center py-16">No one is on leave in {monthLabel(calendarMonth)}.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <MonthHolidayGantt monthDates={monthDates} rows={holidayRows} />
+              </div>
+            )
           ) : (
             <div className="overflow-x-auto">
-              <div style={{ minWidth: `${9 + monthDates.length * 1.75}rem` }}>
-                {/* Date header — day-of-month numbers, weekends shaded, today outlined */}
-                <div className="flex pl-36">
-                  {monthDates.map(date => {
-                    const dow = new Date(date + 'T00:00:00').getDay();
-                    const isToday = date === todayStr();
-                    return (
-                      <div
-                        key={date}
-                        className={`flex-1 text-center text-[11px] font-medium py-1 border-l border-slate-100 first:border-l-0 ${
-                          dow === 0 || dow === 6 ? 'bg-slate-50 text-slate-400' : 'text-slate-400'
-                        } ${isToday ? 'text-blue-600 font-bold' : ''}`}
-                      >
-                        {Number(date.slice(8, 10))}
-                      </div>
-                    );
-                  })}
-                </div>
-
-                <div className="mt-1 divide-y divide-slate-100">
-                  {holidayRows.map(({ staffId, name, entries }) => (
-                    <div key={staffId} className="flex items-center py-2">
-                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
-                        <StaffName staffId={staffId} name={name} />
-                      </div>
-                      <div className="relative flex-1 h-7 rounded bg-slate-50">
-                        <div className="absolute inset-0 flex pointer-events-none">
-                          {monthDates.map(date => {
-                            const dow = new Date(date + 'T00:00:00').getDay();
-                            return (
-                              <div
-                                key={date}
-                                className={`flex-1 border-l border-slate-100 first:border-l-0 ${dow === 0 || dow === 6 ? 'bg-slate-100/60' : ''}`}
-                              />
-                            );
-                          })}
-                        </div>
-                        {entries.map(l => {
-                          const pos = leaveBarPosition(monthDates, l.start_date, l.end_date);
-                          if (!pos) return null;
-                          return (
-                            <div
-                              key={l.id}
-                              title={`${l.leave_type === 'leave' ? 'Leave' : 'Day off'}: ${formatDate(l.start_date)}${l.end_date !== l.start_date ? ` – ${formatDate(l.end_date)}` : ''}${l.notes ? ` — ${l.notes}` : ''}`}
-                              className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden ${
-                                l.leave_type === 'leave' ? 'bg-blue-500' : 'bg-amber-500'
-                              }`}
-                              style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
-                            >
-                              <span className="text-[11px] text-white font-medium whitespace-nowrap">
-                                {l.leave_type === 'leave' ? 'Leave' : 'Day off'}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              <div className="space-y-4">
+                {yearMonths.map(({ yearMonth, dates, rows }) => (
+                  <div key={yearMonth}>
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                      {monthLabel(yearMonth).replace(` ${calendarMonth.slice(0, 4)}`, '')}
+                    </p>
+                    {rows.length === 0 ? (
+                      <p className="text-xs text-slate-300 pl-1">No leave</p>
+                    ) : (
+                      <MonthHolidayGantt monthDates={dates} rows={rows} compact />
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
