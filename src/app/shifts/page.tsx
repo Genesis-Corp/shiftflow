@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Coffee, Download, List, GanttChartSquare,
   History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer, Filter, X,
-  CalendarDays, Umbrella, CalendarX,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
@@ -13,11 +12,11 @@ import DropOverlay from '@/components/DropOverlay';
 import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
-import { Shift, Department, Staff, SchoolHoliday, StaffLeave } from '@/lib/types';
+import { Shift, Department, Staff, SchoolHoliday } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
-  shiftDurationMinutes, MIN_SHIFT_MINUTES, DAYS, DAY_SHORT, dayOfWeekFromDate, seniorCoversWholeShift,
+  shiftDurationMinutes, MIN_SHIFT_MINUTES, DAYS, dayOfWeekFromDate, seniorCoversWholeShift,
   isSchoolTermWeekday, timeToMinutes, JUNIOR_SCHOOL_CUTOFF,
 } from '@/lib/shiftUtils';
 import { seniorityFromBirthday } from '@/lib/wages';
@@ -107,34 +106,6 @@ function groupByStaff(shifts: Shift[]): StaffDayShifts[] {
     map.get(s.assigned_staff_id)!.shifts.push(s);
   }
   return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** Every date cell for a calendar month grid ('YYYY-MM'), Sunday-first,
- *  padded with '' on both ends so every row is a full week — those blanks
- *  render as empty cells rather than days from the neighbouring month. */
-function monthGrid(yearMonth: string): string[][] {
-  const [y, m] = yearMonth.split('-').map(Number);
-  const startDow = new Date(y, m - 1, 1).getDay();
-  const daysInMonth = new Date(y, m, 0).getDate();
-  const cells: string[] = Array(startDow).fill('');
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push(`${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  }
-  while (cells.length % 7 !== 0) cells.push('');
-  const weeks: string[][] = [];
-  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7));
-  return weeks;
-}
-
-function addMonths(yearMonth: string, delta: number): string {
-  const [y, m] = yearMonth.split('-').map(Number);
-  const d = new Date(y, m - 1 + delta, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-function monthLabel(yearMonth: string): string {
-  const [y, m] = yearMonth.split('-').map(Number);
-  return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
 }
 
 function ShiftDayGroup({
@@ -253,7 +224,7 @@ export default function ShiftsPage() {
   const [loadError, setLoadError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
-  const [view, setView] = useState<'list' | 'timeline' | 'past' | 'holidays'>('list');
+  const [view, setView] = useState<'list' | 'timeline' | 'past'>('list');
 
   // Filter By — applies to the List and Past views, which span many shifts
   // across many days; Timeline already looks at one day/department at a
@@ -272,11 +243,6 @@ export default function ShiftsPage() {
   // it needs is already in `shifts` once loaded.
   const [timelineDate, setTimelineDate] = useState(todayStr());
   const [timelineDept, setTimelineDept] = useState('');
-
-  // Holidays view: a month calendar of who's on requested time off or leave,
-  // stepped independently of the timeline's own day stepper.
-  const [calendarMonth, setCalendarMonth] = useState(todayStr().slice(0, 7));
-  const [staffLeave, setStaffLeave] = useState<StaffLeave[]>([]);
 
   const [form, setForm] = useState({
     date: '', start_time: '09:00', end_time: '17:00',
@@ -311,20 +277,18 @@ export default function ShiftsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [shiftsData, deptData, staffData, schoolHolidaysData, wagesData, staffLeaveData] = await Promise.all([
+      const [shiftsData, deptData, staffData, schoolHolidaysData, wagesData] = await Promise.all([
         fetchJson<Shift[]>('/api/shifts'),
         fetchJson<Department[]>('/api/departments'),
         fetchJson<Staff[]>('/api/staff'),
         fetchJson<SchoolHoliday[]>('/api/school-holidays').catch(() => []),
         fetchJson<{ public_holidays: { date: string }[] }>('/api/wages').catch(() => null),
-        fetchJson<StaffLeave[]>('/api/staff-leave').catch(() => []),
       ]);
       setShifts(shiftsData);
       setDepartments(deptData);
       setStaff(staffData.filter(s => s.active && !s.archived).sort((a, b) => a.name.localeCompare(b.name)));
       setSchoolHolidays(schoolHolidaysData);
       setPublicHolidayDates(new Set((wagesData?.public_holidays ?? []).map(h => h.date)));
-      setStaffLeave(staffLeaveData);
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load shifts');
@@ -782,24 +746,6 @@ export default function ShiftsPage() {
     };
   }, [timelineShifts]);
 
-  const calendarWeeks = useMemo(() => monthGrid(calendarMonth), [calendarMonth]);
-
-  /** Everyone on leave for a given date, from Availability's Time Off
-   *  records — a date range is "covering" a day whenever it falls within
-   *  [start_date, end_date] inclusive, same rule eligibility.ts uses to keep
-   *  them out of the claim race for those dates. */
-  const leaveByDate = useMemo(() => {
-    const map = new Map<string, StaffLeave[]>();
-    for (const week of calendarWeeks) {
-      for (const date of week) {
-        if (!date) continue;
-        const onLeave = staffLeave.filter(l => date >= l.start_date && date <= l.end_date);
-        if (onLeave.length) map.set(date, onLeave);
-      }
-    }
-    return map;
-  }, [calendarWeeks, staffLeave]);
-
   /** Each bar fills with its own department's color, so someone working two
    *  departments the same day shows both colors on their one row. Open
    *  shifts still stand out with a red ring, cancelled ones are faded. */
@@ -875,29 +821,7 @@ export default function ShiftsPage() {
             >
               <History size={14} /> Past
             </button>
-            <button
-              onClick={() => setView('holidays')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                view === 'holidays' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              <CalendarDays size={14} /> Holidays
-            </button>
           </div>
-
-          {view === 'holidays' && (
-            <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white">
-              <button onClick={() => setCalendarMonth(m => addMonths(m, -1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-l-lg" title="Previous month">
-                <ChevronLeft size={16} />
-              </button>
-              <span className="px-3 py-1.5 text-sm font-medium text-slate-700 min-w-[9rem] text-center">
-                {monthLabel(calendarMonth)}
-              </span>
-              <button onClick={() => setCalendarMonth(m => addMonths(m, 1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg" title="Next month">
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          )}
 
           {view === 'timeline' && (
             <>
@@ -961,7 +885,7 @@ export default function ShiftsPage() {
         </div>
       </div>
 
-      {(view === 'list' || view === 'past') && (
+      {view !== 'timeline' && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 uppercase tracking-wide">
             <Filter size={12} /> Filter
@@ -1011,65 +935,6 @@ export default function ShiftsPage() {
           {pastGroups.map(g => (
             <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} />
           ))}
-        </div>
-      ) : view === 'holidays' ? (
-        <div className="card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold text-slate-800">Staff on Leave — {monthLabel(calendarMonth)}</h2>
-            <div className="flex items-center gap-3 text-xs text-slate-500">
-              <span className="flex items-center gap-1"><CalendarX size={12} className="text-amber-500" /> Day off</span>
-              <span className="flex items-center gap-1"><Umbrella size={12} className="text-blue-500" /> Leave</span>
-            </div>
-          </div>
-          {staffLeave.length === 0 ? (
-            <p className="text-slate-400 text-center py-8">
-              No requested time off or leave on file. Upload a leave form from the Availability page to see it here.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <div className="min-w-[700px]">
-                <div className="grid grid-cols-7 text-xs font-semibold text-slate-400 uppercase tracking-wide pb-1">
-                  {DAY_SHORT.map(d => <div key={d} className="px-1.5">{d}</div>)}
-                </div>
-                <div className="grid grid-cols-7 gap-px bg-slate-100 border border-slate-100 rounded-lg overflow-hidden">
-                  {calendarWeeks.flat().map((date, i) => {
-                    const onLeave = date ? leaveByDate.get(date) ?? [] : [];
-                    const isToday = date === today;
-                    return (
-                      <div
-                        key={i}
-                        className={`bg-white min-h-[92px] p-1.5 ${!date ? 'bg-slate-50/60' : ''}`}
-                      >
-                        {date && (
-                          <>
-                            <span className={`text-xs font-medium ${isToday ? 'text-blue-600' : 'text-slate-400'}`}>
-                              {Number(date.slice(8, 10))}
-                            </span>
-                            <div className="mt-1 space-y-1">
-                              {onLeave.map(l => (
-                                <div
-                                  key={l.id}
-                                  title={l.notes ?? (l.leave_type === 'day_off' ? 'Day off' : 'Leave')}
-                                  className={`flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded truncate ${
-                                    l.leave_type === 'day_off'
-                                      ? 'bg-amber-50 text-amber-800'
-                                      : 'bg-blue-50 text-blue-800'
-                                  }`}
-                                >
-                                  {l.leave_type === 'day_off' ? <CalendarX size={10} className="flex-shrink-0" /> : <Umbrella size={10} className="flex-shrink-0" />}
-                                  <span className="truncate">{l.staff?.name ?? 'Unknown'}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       ) : (
         <div className="card p-4">

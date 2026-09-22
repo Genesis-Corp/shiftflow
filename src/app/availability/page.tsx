@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus } from 'lucide-react';
+import {
+  Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus,
+  CalendarDays, ChevronLeft, ChevronRight,
+} from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import StaffName from '@/components/StaffName';
 import { fetchJson } from '@/lib/apiClient';
@@ -46,8 +49,52 @@ function shortenName(fullName: string): string {
   return `${parts[0]} ${lastInitial}.`;
 }
 
+/** Every date in a calendar month ('YYYY-MM'), in order. Unlike a week-grid
+ *  calendar, the Holidays Gantt runs its bars against a plain date axis, so
+ *  there's no need to pad the ends to a whole week the way monthGrid-style
+ *  helpers elsewhere do. */
+function monthDateList(yearMonth: string): string[] {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const daysInMonth = new Date(y, m, 0).getDate();
+  return Array.from(
+    { length: daysInMonth },
+    (_, i) => `${y}-${String(m).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`
+  );
+}
+
+function addMonths(yearMonth: string, delta: number): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthLabel(yearMonth: string): string {
+  const [y, m] = yearMonth.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+}
+
+/** Where a leave entry's bar sits against the visible month's date axis,
+ *  clipped to the month at either end — a leave period that starts in
+ *  August and ends in September still shows a bar running off the left
+ *  edge of September's grid, not nothing. Returns null when the entry
+ *  doesn't touch this month at all. */
+function leaveBarPosition(
+  monthDates: string[], startDate: string, endDate: string
+): { leftPct: number; widthPct: number } | null {
+  const first = monthDates[0];
+  const last = monthDates[monthDates.length - 1];
+  if (endDate < first || startDate > last) return null;
+  const clippedStart = startDate < first ? first : startDate;
+  const clippedEnd = endDate > last ? last : endDate;
+  const startIdx = monthDates.indexOf(clippedStart);
+  const endIdx = monthDates.indexOf(clippedEnd);
+  const n = monthDates.length;
+  return { leftPct: (startIdx / n) * 100, widthPct: ((endIdx - startIdx + 1) / n) * 100 };
+}
+
 export default function AvailabilityPage() {
-  const [view, setView] = useState<'editor' | 'timeline'>('editor');
+  const [view, setView] = useState<'editor' | 'timeline' | 'holidays'>('editor');
+  const [calendarMonth, setCalendarMonth] = useState(todayStr().slice(0, 7));
   const [staff, setStaff] = useState<Staff[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
   const [templates, setTemplates] = useState<Record<number, DayTemplate>>({});
@@ -253,6 +300,21 @@ export default function AvailabilityPage() {
     template: allTemplates.find(t => t.staff_id === s.id && t.day_of_week === timelineDay && t.available) ?? null,
   }));
 
+  // Holidays: one row per staff member who's actually on leave somewhere in
+  // the visible month — an empty row for everyone else would just be noise.
+  const monthDates = useMemo(() => monthDateList(calendarMonth), [calendarMonth]);
+  const holidayRows = useMemo(() => {
+    const first = monthDates[0];
+    const last = monthDates[monthDates.length - 1];
+    const byStaff = new Map<string, { staffId: string; name: string; entries: StaffLeave[] }>();
+    for (const l of leaveEntries) {
+      if (!l.staff_id || l.end_date < first || l.start_date > last) continue;
+      if (!byStaff.has(l.staff_id)) byStaff.set(l.staff_id, { staffId: l.staff_id, name: l.staff?.name ?? 'Unknown', entries: [] });
+      byStaff.get(l.staff_id)!.entries.push(l);
+    }
+    return Array.from(byStaff.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [leaveEntries, monthDates]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -278,12 +340,110 @@ export default function AvailabilityPage() {
           >
             <GanttChartSquare size={14} /> Daily Timeline
           </button>
+          <button
+            onClick={() => setView('holidays')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              view === 'holidays' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <CalendarDays size={14} /> Holidays
+          </button>
         </div>
       </div>
 
       {loadError && <ErrorBanner message={loadError} onRetry={load} />}
 
-      {view === 'editor' ? (
+      {view === 'holidays' ? (
+        <div className="card p-4">
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
+            <h2 className="font-semibold text-slate-800">Staff on Holidays</h2>
+            <div className="flex items-center gap-3">
+              <div className="inline-flex items-center rounded-lg border border-slate-200 bg-white">
+                <button onClick={() => setCalendarMonth(m => addMonths(m, -1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-l-lg" title="Previous month">
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="px-3 py-1.5 text-sm font-medium text-slate-700 min-w-[9rem] text-center">
+                  {monthLabel(calendarMonth)}
+                </span>
+                <button onClick={() => setCalendarMonth(m => addMonths(m, 1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg" title="Next month">
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-500">
+                <span className="flex items-center gap-1"><CalendarX size={12} className="text-amber-500" /> Day off</span>
+                <span className="flex items-center gap-1"><Umbrella size={12} className="text-blue-500" /> Leave</span>
+              </div>
+            </div>
+          </div>
+
+          {holidayRows.length === 0 ? (
+            <p className="text-slate-400 text-center py-16">No one is on leave in {monthLabel(calendarMonth)}.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <div style={{ minWidth: `${9 + monthDates.length * 1.75}rem` }}>
+                {/* Date header — day-of-month numbers, weekends shaded, today outlined */}
+                <div className="flex pl-36">
+                  {monthDates.map(date => {
+                    const dow = new Date(date + 'T00:00:00').getDay();
+                    const isToday = date === todayStr();
+                    return (
+                      <div
+                        key={date}
+                        className={`flex-1 text-center text-[11px] font-medium py-1 border-l border-slate-100 first:border-l-0 ${
+                          dow === 0 || dow === 6 ? 'bg-slate-50 text-slate-400' : 'text-slate-400'
+                        } ${isToday ? 'text-blue-600 font-bold' : ''}`}
+                      >
+                        {Number(date.slice(8, 10))}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-1 divide-y divide-slate-100">
+                  {holidayRows.map(({ staffId, name, entries }) => (
+                    <div key={staffId} className="flex items-center py-2">
+                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                        <StaffName staffId={staffId} name={name} />
+                      </div>
+                      <div className="relative flex-1 h-7 rounded bg-slate-50">
+                        <div className="absolute inset-0 flex pointer-events-none">
+                          {monthDates.map(date => {
+                            const dow = new Date(date + 'T00:00:00').getDay();
+                            return (
+                              <div
+                                key={date}
+                                className={`flex-1 border-l border-slate-100 first:border-l-0 ${dow === 0 || dow === 6 ? 'bg-slate-100/60' : ''}`}
+                              />
+                            );
+                          })}
+                        </div>
+                        {entries.map(l => {
+                          const pos = leaveBarPosition(monthDates, l.start_date, l.end_date);
+                          if (!pos) return null;
+                          return (
+                            <div
+                              key={l.id}
+                              title={`${l.leave_type === 'leave' ? 'Leave' : 'Day off'}: ${formatDate(l.start_date)}${l.end_date !== l.start_date ? ` – ${formatDate(l.end_date)}` : ''}${l.notes ? ` — ${l.notes}` : ''}`}
+                              className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden ${
+                                l.leave_type === 'leave' ? 'bg-blue-500' : 'bg-amber-500'
+                              }`}
+                              style={{ left: `${pos.leftPct}%`, width: `${pos.widthPct}%` }}
+                            >
+                              <span className="text-[11px] text-white font-medium whitespace-nowrap">
+                                {l.leave_type === 'leave' ? 'Leave' : 'Day off'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : view === 'editor' ? (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Staff selector — compact grid, name + a set/not-set dot only.
@@ -491,7 +651,10 @@ export default function AvailabilityPage() {
           fills the fields below — still editable, and any other file type
           still just gets kept on file. Either way, the date range on file
           is what excludes that person from claim races, same as a birthday
-          already does. */}
+          already does. Hidden on the Holidays tab so its calendar isn't
+          pushed down the page by a form nobody asked to see there — the
+          same records are still one tab away on Editor or Daily Timeline. */}
+      {view !== 'holidays' && (
       <div className="card p-4">
         <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
           <CalendarX size={16} className="text-slate-400" /> Time Off
@@ -642,6 +805,7 @@ export default function AvailabilityPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
