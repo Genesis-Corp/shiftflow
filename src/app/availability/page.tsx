@@ -307,6 +307,7 @@ export default function AvailabilityPage() {
   // least one misread in it, so nothing saves until it's been eyeballed.
   const [drafts, setDrafts] = useState<LeaveDraft[]>([]);
   const [savingDrafts, setSavingDrafts] = useState(false);
+  const [savingProgress, setSavingProgress] = useState<{ done: number; total: number } | null>(null);
   const [draftsError, setDraftsError] = useState('');
 
   async function load() {
@@ -417,7 +418,10 @@ export default function AvailabilityPage() {
 
   /** Saves every valid, non-reading draft — one POST per staff member named
    *  on a form, same as before. A draft that fails to save stays in the
-   *  list with the error attached, rather than losing the whole batch. */
+   *  list with the error attached, rather than losing the whole batch.
+   *  Wrapped in try/finally so a thrown network error (not just a non-ok
+   *  response) can never leave the button stuck on "Saving…" forever —
+   *  that was the actual bug, not the batch logic itself. */
   async function saveDrafts() {
     setDraftsError('');
     const toSave = drafts.filter(d => d.status !== 'reading' && draftIsValid(d));
@@ -425,10 +429,13 @@ export default function AvailabilityPage() {
       setDraftsError('Nothing ready to save yet — each entry needs at least a staff member and both dates.');
       return;
     }
+    const posts = toSave.flatMap(d => draftStaffIds(d).map(staff_id => ({ d, staff_id })));
     setSavingDrafts(true);
+    setSavingProgress({ done: 0, total: posts.length });
     const failedKeys = new Set<string>();
-    for (const d of toSave) {
-      for (const staff_id of draftStaffIds(d)) {
+    try {
+      let done = 0;
+      for (const { d, staff_id } of posts) {
         const fd = new FormData();
         fd.append('staff_id', staff_id);
         fd.append('leave_type', d.leave_type);
@@ -436,20 +443,29 @@ export default function AvailabilityPage() {
         fd.append('end_date', d.end_date);
         if (d.notes.trim()) fd.append('notes', d.notes.trim());
         if (d.file) fd.append('file', d.file);
-        const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
-        if (!res.ok) {
+        try {
+          const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
+          if (!res.ok) {
+            failedKeys.add(d.key);
+            const error = (await res.json().catch(() => ({}))).error ?? 'Could not save this one — try again.';
+            updateDraft(d.key, { note: error, editing: true });
+          }
+        } catch (err) {
           failedKeys.add(d.key);
-          const error = (await res.json().catch(() => ({}))).error ?? 'Could not save this one — try again.';
-          updateDraft(d.key, { note: error, editing: true });
+          updateDraft(d.key, { note: err instanceof Error ? err.message : 'Could not reach the server — try again.', editing: true });
         }
+        done += 1;
+        setSavingProgress({ done, total: posts.length });
       }
+      setDrafts(ds => ds.filter(d => failedKeys.has(d.key) || !toSave.some(t => t.key === d.key)));
+      if (failedKeys.size) {
+        setDraftsError(`${failedKeys.size} ${failedKeys.size === 1 ? 'entry' : 'entries'} couldn't be saved — see below.`);
+      }
+      await loadLeave();
+    } finally {
+      setSavingDrafts(false);
+      setSavingProgress(null);
     }
-    setDrafts(ds => ds.filter(d => failedKeys.has(d.key) || !toSave.some(t => t.key === d.key)));
-    setSavingDrafts(false);
-    if (failedKeys.size) {
-      setDraftsError(`${failedKeys.size} ${failedKeys.size === 1 ? 'entry' : 'entries'} couldn't be saved — see below.`);
-    }
-    await loadLeave();
   }
 
   async function deleteLeave(id: string) {
@@ -870,10 +886,8 @@ export default function AvailabilityPage() {
           fills the fields below — still editable, and any other file type
           still just gets kept on file. Either way, the date range on file
           is what excludes that person from claim races, same as a birthday
-          already does. Hidden on the Holidays tab so its calendar isn't
-          pushed down the page by a form nobody asked to see there — the
-          same records are still one tab away on Editor or Daily Timeline. */}
-      {view !== 'holidays' && (
+          already does. Shown on every tab, including Holidays, so saving one
+          here updates the calendar right above it without switching tabs. */}
       <div className="card p-4">
         <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
           <CalendarX size={16} className="text-slate-400" /> Time Off
@@ -908,6 +922,22 @@ export default function AvailabilityPage() {
               <LeaveDraftRow key={d.key} draft={d} staffList={staff} onUpdate={updateDraft} onRemove={removeDraft} />
             ))}
             {draftsError && <p className="text-sm text-red-600">{draftsError}</p>}
+
+            {savingProgress && (
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between text-xs text-slate-500">
+                  <span>Saving {savingProgress.done} of {savingProgress.total}…</span>
+                  <span className="tabular-nums">{Math.round((savingProgress.done / savingProgress.total) * 100)}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-[width] duration-200 ease-linear"
+                    style={{ width: `${(savingProgress.done / savingProgress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="flex justify-end pt-1">
               <button
                 type="button"
@@ -963,7 +993,6 @@ export default function AvailabilityPage() {
           </div>
         )}
       </div>
-      )}
     </div>
   );
 }
