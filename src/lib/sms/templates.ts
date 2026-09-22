@@ -1,5 +1,8 @@
 import { getTimezone, localDateNow } from './config';
 import { addDays } from '@/lib/shiftUtils';
+import { isGsm7, smsSegments } from './segments';
+
+export { isGsm7, smsSegments };
 
 /**
  * Message copy.
@@ -80,6 +83,20 @@ export function optOutMessage(): string {
 /** Confirms an opt-back-in, e.g. after a reply of START. */
 export function optInMessage(): string {
   return `${BUSINESS}: you're back on the list and will receive shift messages again.`;
+}
+
+// ── Message Board (manager broadcast) ───────────────────────────────────────
+// A manager-authored update, not part of any opt-in shift-offer race, so it
+// must independently carry the Spam Act 2003 requirements every other
+// non-race message here does: an identifiable sender and a free opt-out.
+
+/** A manager's broadcast to all/some/selected staff. `body` may already
+ *  contain the Unicode bold/italic/underline characters the Message Board
+ *  toolbar produces — this only adds the business-name prefix and STOP line. */
+export function broadcastMessage(body: string, urgency: 'urgent' | 'general', managerName?: string | null): string {
+  const who = managerName ? `${managerName}, ${BUSINESS}` : BUSINESS;
+  const prefix = urgency === 'urgent' ? `${who} (URGENT): ` : `${who}: `;
+  return `${prefix}${body}\nReply STOP to opt out.`;
 }
 
 // ── Availability flow (the "gather" cover tier) ─────────────────────────────
@@ -181,24 +198,6 @@ export function managerOutcomeMessage(shift: ShiftSummary, winnerName: string | 
     : `${SYSTEM}: nobody was available for ${describeShift(shift)}. It is still uncovered.`;
 }
 
-/** Characters that are NOT in the GSM-7 alphabet force a 70-char UCS-2 segment. */
-const GSM7 =
-  "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?" +
-  "¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
-const GSM7_EXTENDED = '^{}\\[~]|€';
-
-export function isGsm7(text: string): boolean {
-  return [...text].every(c => GSM7.includes(c) || GSM7_EXTENDED.includes(c));
-}
-
-/** How many SMS segments this body will cost. */
-export function smsSegments(text: string): number {
-  if (!isGsm7(text)) {
-    return text.length <= 70 ? 1 : Math.ceil(text.length / 67);
-  }
-  // Extended characters occupy two septets each.
-  const septets = [...text].reduce(
-    (n, c) => n + (GSM7_EXTENDED.includes(c) ? 2 : 1), 0
-  );
-  return septets <= 160 ? 1 : Math.ceil(septets / 153);
-}
+// isGsm7 / smsSegments now live in ./segments (re-exported above) so the
+// Message Board's client-side character counter can import them without
+// pulling in this file's sms/config.ts dependency (supabaseAdmin).

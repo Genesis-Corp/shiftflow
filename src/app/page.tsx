@@ -6,6 +6,7 @@ import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriang
 import { formatDate, weekBounds, shiftDurationMinutes, todayStr } from '@/lib/shiftUtils';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import StaffName from '@/components/StaffName';
+import MessageBoard from '@/components/MessageBoard';
 
 interface Stats {
   totalStaff: number;
@@ -169,6 +170,8 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      <MessageBoard />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card p-4">

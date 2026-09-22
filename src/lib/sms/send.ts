@@ -4,7 +4,7 @@ import { getSmsMode, getTestNumber, getAllowlist, SmsMode } from './config';
 export type MessageKind =
   | 'offer' | 'covered' | 'winner' | 'too_late' | 'declined_ack' | 'opt_out_ack' | 'opt_in_ack'
   | 'availability' | 'availability_ack' | 'manager_list' | 'manager_outcome'
-  | 'manager_invalid_pick' | 'manager_stale_pick';
+  | 'manager_invalid_pick' | 'manager_stale_pick' | 'broadcast';
 
 export interface SendRequest {
   to: string;                 // intended recipient, E.164
