@@ -276,6 +276,7 @@ export const RELIABILITY_DELTAS: Record<string, number> = {
   rejected: -3,
   covered: +10,
   late: -5,
+  opted_out_sms: -30,
 };
 
 export function clampScore(score: number): number {

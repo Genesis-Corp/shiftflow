@@ -587,7 +587,18 @@ export async function handleInboundReply(params: {
 
   if (parsed.intent === 'stop') {
     const staffId = recipient?.staff_id ?? await staffIdForPhone(from);
-    if (staffId) await supabaseAdmin.from('staff').update({ sms_opt_out: true }).eq('id', staffId);
+    if (staffId) {
+      await supabaseAdmin.from('staff').update({ sms_opt_out: true }).eq('id', staffId);
+      await supabaseAdmin.from('reliability_incidents').insert([{
+        staff_id: staffId, incident_type: 'opted_out_sms', shift_id: null,
+        date: localDateNow(), notes: 'Opted out via STOP reply',
+      }]);
+      const { data: staffRow } = await supabaseAdmin
+        .from('staff').select('reliability_score').eq('id', staffId).single();
+      await supabaseAdmin.from('staff').update({
+        reliability_score: applyReliabilityDelta(staffRow?.reliability_score ?? 50, 'opted_out_sms'),
+      }).eq('id', staffId);
+    }
     return { handled: true, reply: optOutMessage(), result: 'opted_out', staffId: staffId ?? undefined };
   }
 

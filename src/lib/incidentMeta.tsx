@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { PhoneMissed, XCircle, UserX, CheckCircle, Clock } from 'lucide-react';
+import { PhoneMissed, XCircle, UserX, CheckCircle, Clock, BellOff } from 'lucide-react';
 import { IncidentType } from './types';
 
 /** Shared label/icon/badge/delta for each reliability incident type —
@@ -11,4 +11,5 @@ export const INCIDENT_META: Record<IncidentType, { label: string; icon: ReactNod
   rejected: { label: 'Rejected',   icon: <XCircle size={13} />,     badge: 'badge-amber', delta: '−3%'  },
   covered:  { label: 'Covered',    icon: <CheckCircle size={13} />, badge: 'badge-green', delta: '+10%' },
   late:     { label: 'Late',       icon: <Clock size={13} />,       badge: 'badge-amber', delta: '−5%'  },
+  opted_out_sms: { label: 'Opted Out', icon: <BellOff size={13} />, badge: 'badge-red',   delta: '−30%' },
 };

@@ -44,6 +44,11 @@ describe('applyReliabilityDelta', () => {
   it('is a no-op for an unrecognised incident type', () => {
     expect(applyReliabilityDelta(50, 'not_a_real_type')).toBe(50);
   });
+
+  it('takes a heavier -30% hit for opting out of SMS than any other incident', () => {
+    // -30% of 50, not a flat -30 — 35, not 20.
+    expect(applyReliabilityDelta(50, 'opted_out_sms')).toBe(35);
+  });
 });
 
 describe('formatTimeOfDay', () => {

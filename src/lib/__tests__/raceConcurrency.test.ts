@@ -16,6 +16,8 @@ const state = {
   rpcReturnsNullRow: false,
   shiftUpdates: [] as Record<string, unknown>[],
   recipientUpdates: [] as Record<string, unknown>[],
+  staffUpdates: [] as Record<string, unknown>[],
+  incidentInserts: [] as Record<string, unknown>[],
 };
 
 const RACE = {
@@ -40,11 +42,13 @@ function makeQuery(table: string, filters: Record<string, unknown> = {}): any {
     select: () => q,
     insert: (rows: unknown) => {
       if (table === 'shift_claim_recipients') state.recipientUpdates.push({ insert: rows });
+      if (table === 'reliability_incidents') state.incidentInserts.push(...(rows as Record<string, unknown>[]));
       return { select: () => ({ single: async () => ({ data: null, error: null }) }), then: undefined, error: null };
     },
     update: (values: Record<string, unknown>) => {
       if (table === 'shifts') state.shiftUpdates.push(values);
       if (table === 'shift_claim_recipients') state.recipientUpdates.push({ ...values, ...filters });
+      if (table === 'staff') state.staffUpdates.push({ ...values, ...filters });
       return makeQuery(table, filters);
     },
     eq: (k: string, v: unknown) => makeQuery(table, { ...filters, [k]: v }),
@@ -68,7 +72,14 @@ function resolve(table: string, filters: Record<string, unknown>) {
   }
   if (table === 'shift_claim_races') return RACE;
   if (table === 'shifts') return SHIFT;
-  if (table === 'staff') return { id: filters.id, name: 'Dave', reliability_score: 50 };
+  if (table === 'staff') {
+    // staffIdForPhone() filters by phone_e164 rather than id — map the one
+    // test number that needs it back to Dave, same staff_id as RECIPIENTS.
+    if (filters.phone_e164) {
+      return filters.phone_e164 === '+61433821798' ? { id: 'staff-dave', reliability_score: 50 } : null;
+    }
+    return { id: filters.id, name: 'Dave', reliability_score: 50 };
+  }
   return null;
 }
 
@@ -107,6 +118,8 @@ describe('simultaneous YES replies', () => {
     state.rpcReturnsNullRow = false;
     state.shiftUpdates = [];
     state.recipientUpdates = [];
+    state.staffUpdates = [];
+    state.incidentInserts = [];
   });
 
   it('produces exactly one winner when two replies race', async () => {
@@ -162,6 +175,17 @@ describe('simultaneous YES replies', () => {
 
     expect(res.result).toBe('too_late');
     expect(state.shiftUpdates.filter(u => u.status === 'covered')).toHaveLength(0);
+  });
+
+  it('logs an incident and docks reliability when someone replies STOP', async () => {
+    const res = await handleInboundReply({ from: '+61433821798', body: 'STOP', providerSid: 'SM4' });
+
+    expect(res.result).toBe('opted_out');
+    expect(state.incidentInserts).toHaveLength(1);
+    expect(state.incidentInserts[0]).toMatchObject({ incident_type: 'opted_out_sms', staff_id: 'staff-dave' });
+
+    const scoreUpdate = state.staffUpdates.find(u => 'reliability_score' in u);
+    expect(scoreUpdate?.reliability_score).toBe(35); // -30% of the fake DB's 50
   });
 
   it('ignores a duplicate webhook delivery', async () => {
