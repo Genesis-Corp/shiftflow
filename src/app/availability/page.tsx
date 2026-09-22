@@ -1020,8 +1020,11 @@ export default function AvailabilityPage() {
           fills the fields below — still editable, and any other file type
           still just gets kept on file. Either way, the date range on file
           is what excludes that person from claim races, same as a birthday
-          already does. Shown on every tab, including Holidays, so saving one
-          here updates the calendar right above it without switching tabs. */}
+          already does. Holidays-only now: it's the tab that actually shows
+          the result, so saving one here updates the calendar right above it
+          without switching tabs — Editor and Daily Timeline don't need
+          their own copy of the same form. */}
+      {view === 'holidays' && (
       <div className="card p-4">
         <h2 className="font-semibold text-slate-800 mb-1 flex items-center gap-2">
           <CalendarX size={16} className="text-slate-400" /> Time Off
@@ -1127,6 +1130,7 @@ export default function AvailabilityPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
