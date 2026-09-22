@@ -610,13 +610,13 @@ export default function WageTable() {
               <form onSubmit={e => addTier(category, e)} className="flex gap-1.5">
                 <input
                   type="number" min={0} step={0.5} placeholder="Hrs into OT" required
-                  className="input text-xs px-2 py-1 w-24"
+                  className="input text-base sm:text-xs px-2 py-1 w-24"
                   value={newTier[category].hours}
                   onChange={e => setNewTier(t => ({ ...t, [category]: { ...t[category], hours: e.target.value } }))}
                 />
                 <input
                   type="number" min={0} step={1} placeholder="%" required
-                  className="input text-xs px-2 py-1 w-16"
+                  className="input text-base sm:text-xs px-2 py-1 w-16"
                   value={newTier[category].pct}
                   onChange={e => setNewTier(t => ({ ...t, [category]: { ...t[category], pct: e.target.value } }))}
                 />
@@ -651,7 +651,7 @@ export default function WageTable() {
         {addableGroups.length > 0 && (
           <form onSubmit={addOverride} className="flex gap-1.5">
             <select
-              className="input text-xs px-2 py-1 flex-1" value={newOverrideGroup}
+              className="input text-base sm:text-xs px-2 py-1 flex-1" value={newOverrideGroup}
               onChange={e => setNewOverrideGroup(e.target.value)}
             >
               <option value="">Add an override…</option>
@@ -679,14 +679,14 @@ export default function WageTable() {
           <div>
             <label className="block text-xs text-slate-500 mb-1">Starts</label>
             <input
-              type="time" className="input text-xs px-2 py-1.5 w-28"
+              type="time" className="input text-base sm:text-xs px-2 py-1.5 w-28"
               value={quietStartInput} onChange={e => setQuietStartInput(e.target.value)}
             />
           </div>
           <div>
             <label className="block text-xs text-slate-500 mb-1">Ends</label>
             <input
-              type="time" className="input text-xs px-2 py-1.5 w-28"
+              type="time" className="input text-base sm:text-xs px-2 py-1.5 w-28"
               value={quietEndInput} onChange={e => setQuietEndInput(e.target.value)}
             />
           </div>
@@ -744,14 +744,14 @@ export default function WageTable() {
               <div>
                 <label className="block text-xs text-slate-500 mb-1">Country</label>
                 <input
-                  className="input text-xs px-2 py-1.5 w-28" placeholder="AU" required maxLength={2}
+                  className="input text-base sm:text-xs px-2 py-1.5 w-28" placeholder="AU" required maxLength={2}
                   value={countryInput} onChange={e => setCountryInput(e.target.value.toUpperCase())}
                 />
               </div>
               <div>
                 <label className="block text-xs text-slate-500 mb-1">State</label>
                 <input
-                  className="input text-xs px-2 py-1.5 w-28" placeholder="WA"
+                  className="input text-base sm:text-xs px-2 py-1.5 w-28" placeholder="WA"
                   value={stateInput} onChange={e => setStateInput(e.target.value.toUpperCase())}
                 />
               </div>
@@ -941,7 +941,7 @@ export default function WageTable() {
                     <span className="flex items-center gap-1.5 text-xs text-slate-500 shrink-0">
                       {formatDate(h.start_date)} – last day
                       <input
-                        type="date" className="input text-xs py-1 w-auto"
+                        type="date" className="input text-base sm:text-xs py-1 w-auto"
                         value={h.end_date}
                         onChange={e => e.target.value && setScannedEnd(h.start_date, e.target.value)}
                       />

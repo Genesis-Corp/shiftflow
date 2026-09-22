@@ -78,7 +78,7 @@ function SortableHeader({ label, sortKey, active, dir, onClick, className = '' }
   className?: string;
 }) {
   return (
-    <th className={`text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${className}`}>
+    <th className={`sticky top-0 z-10 bg-slate-50 text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${className}`}>
       <button onClick={() => onClick(sortKey)} className="flex items-center gap-1 hover:text-slate-700 transition-colors">
         {label}
         {active
@@ -624,7 +624,7 @@ function StaffPageInner() {
               manager needs them, so a phone shows a readable four-column
               table rather than seven squashed ones. Everything hidden here
               is still on the staff member's own popup and edit form. */}
-          <div className="table-scroll">
+          <div className="table-scroll-y">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -634,7 +634,7 @@ function StaffPageInner() {
                 <SortableHeader label="Departments" sortKey="departments" active={sortKey === 'departments'} dir={sortDir} onClick={toggleSort} className="hidden lg:table-cell" />
                 <SortableHeader label="Reliability" sortKey="reliability_score" active={sortKey === 'reliability_score'} dir={sortDir} onClick={toggleSort} className="hidden sm:table-cell" />
                 <SortableHeader label="Status" sortKey="active" active={sortKey === 'active'} dir={sortDir} onClick={toggleSort} className="hidden sm:table-cell" />
-                <th className="text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
+                <th className="sticky top-0 z-10 bg-slate-50 text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

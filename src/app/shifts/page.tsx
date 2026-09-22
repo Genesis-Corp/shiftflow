@@ -845,7 +845,7 @@ export default function ShiftsPage() {
                 </button>
                 <input
                   type="date" value={timelineDate} onChange={e => setTimelineDate(e.target.value)}
-                  className="border-x border-slate-200 px-2 py-1.5 text-sm focus:outline-none"
+                  className="border-x border-slate-200 px-2 py-1.5 text-base sm:text-sm focus:outline-none"
                 />
                 <button onClick={() => setTimelineDate(d => addDays(d, 1))} className="p-2 text-slate-500 hover:bg-slate-50 rounded-r-lg" title="Next day">
                   <ChevronRight size={16} />

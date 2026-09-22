@@ -307,6 +307,38 @@ function LeaveDraftRow({
   );
 }
 
+/** The Gantt's phone equivalent — a 28-31-day bar chart has no good answer
+ *  at 375px, so below `sm` this renders instead: one line per leave entry,
+ *  flattened out of the same per-staff rows the Gantt draws from, so the two
+ *  never disagree about who's actually on leave. */
+function HolidayList({ rows }: { rows: HolidayRow[] }) {
+  const entries = rows
+    .flatMap(r => r.entries.map(e => ({ ...e, staffName: r.name })))
+    .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.staffName.localeCompare(b.staffName));
+
+  return (
+    <div className="divide-y divide-slate-100">
+      {entries.map(e => (
+        <div key={e.id} className="py-2.5 flex items-start gap-3">
+          <span className={`mt-0.5 flex-shrink-0 ${e.leave_type === 'leave' ? 'badge-blue' : 'badge-amber'}`}>
+            {e.leave_type === 'leave' ? <Umbrella size={11} className="mr-1" /> : <CalendarX size={11} className="mr-1" />}
+            {e.leave_type === 'leave' ? 'Leave' : 'Day off'}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-slate-700 truncate">
+              <StaffName staffId={e.staff_id} name={e.staffName} />
+            </p>
+            <p className="text-xs text-slate-500">
+              {formatDate(e.start_date)}{e.end_date !== e.start_date && ` – ${formatDate(e.end_date)}`}
+              {e.notes && ` · ${e.notes}`}
+            </p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The Gantt itself — a date header plus one row per staff member on leave,
  *  each with a bar per entry spanning the dates it covers. Used both for the
  *  single-month view and, in miniature, for every month panel in the yearly
@@ -749,26 +781,34 @@ export default function AvailabilityPage() {
             holidayRows.length === 0 ? (
               <p className="text-slate-400 text-center py-16">No one is on leave in {monthLabel(calendarMonth)}.</p>
             ) : (
-              <div className="overflow-x-auto">
-                <MonthHolidayGantt monthDates={monthDates} rows={holidayRows} />
-              </div>
+              <>
+                {/* A date-axis bar chart has no good answer at phone width —
+                    below sm it's a plain list instead, same data either way. */}
+                <div className="sm:hidden"><HolidayList rows={holidayRows} /></div>
+                <div className="hidden sm:block overflow-x-auto">
+                  <MonthHolidayGantt monthDates={monthDates} rows={holidayRows} />
+                </div>
+              </>
             )
           ) : (
-            <div className="overflow-x-auto">
-              <div className="space-y-4">
-                {yearMonths.map(({ yearMonth, dates, rows }) => (
-                  <div key={yearMonth}>
-                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
-                      {monthLabel(yearMonth).replace(` ${calendarMonth.slice(0, 4)}`, '')}
-                    </p>
-                    {rows.length === 0 ? (
-                      <p className="text-xs text-slate-300 pl-1">No leave</p>
-                    ) : (
-                      <MonthHolidayGantt monthDates={dates} rows={rows} compact />
-                    )}
-                  </div>
-                ))}
-              </div>
+            <div className="space-y-4">
+              {yearMonths.map(({ yearMonth, dates, rows }) => (
+                <div key={yearMonth}>
+                  <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5">
+                    {monthLabel(yearMonth).replace(` ${calendarMonth.slice(0, 4)}`, '')}
+                  </p>
+                  {rows.length === 0 ? (
+                    <p className="text-xs text-slate-300 pl-1">No leave</p>
+                  ) : (
+                    <>
+                      <div className="sm:hidden"><HolidayList rows={rows} /></div>
+                      <div className="hidden sm:block overflow-x-auto">
+                        <MonthHolidayGantt monthDates={dates} rows={rows} compact />
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -865,12 +905,12 @@ export default function AvailabilityPage() {
           {/* Full matrix overview — times, not just a dot */}
           <div className="card p-4">
             <h2 className="font-semibold text-slate-800 mb-3">Availability Matrix Overview</h2>
-            <div className="overflow-x-auto">
+            <div className="table-scroll-y">
               <table className="w-full text-xs">
                 <thead>
                   <tr>
-                    <th className="text-left px-3 py-2 text-slate-500 font-semibold w-36">Staff</th>
-                    {DAY_SHORT.map(d => <th key={d} className="px-3 py-2 text-slate-500 font-semibold text-center">{d}</th>)}
+                    <th className="sticky top-0 z-10 bg-white text-left px-3 py-2 text-slate-500 font-semibold w-36">Staff</th>
+                    {DAY_SHORT.map(d => <th key={d} className="sticky top-0 z-10 bg-white px-3 py-2 text-slate-500 font-semibold text-center">{d}</th>)}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">

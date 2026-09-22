@@ -54,8 +54,22 @@ body {
     @apply overflow-x-auto;
     -webkit-overflow-scrolling: touch;
   }
+  /* For the "every staff member" tables, which are the ones actually long
+   * enough to lose track of a column while scrolling. Bounded height is
+   * what makes `sticky` on the header cells mean anything — inside an
+   * unbounded container (the usual case) there's nothing to stick against,
+   * since the container never scrolls independently of the page. */
+  .table-scroll-y {
+    @apply overflow-auto;
+    -webkit-overflow-scrolling: touch;
+    max-height: 65vh;
+  }
+  /* text-base (16px) below sm, text-sm (14px) from sm up — iOS Safari
+   * auto-zooms the page on focusing any input under 16px, and once zoomed
+   * in the page stays that way (and can scroll sideways) until the user
+   * manually zooms back out. 16px on a phone sidesteps that entirely. */
   .input {
-    @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors;
+    @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors;
   }
   .label {
     @apply block text-sm font-medium text-slate-700 mb-1;

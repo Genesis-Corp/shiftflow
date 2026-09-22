@@ -111,7 +111,7 @@ export default function ReliabilityPage() {
         {/* Name, score and no-shows are what a manager actually scans for;
             the rest of the incident counts only appear once there's room for
             them, so a phone shows the whole width of this table at once. */}
-        <div className="table-scroll">
+        <div className="table-scroll-y">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -124,7 +124,7 @@ export default function ReliabilityPage() {
                   { label: 'Late', cls: 'hidden sm:table-cell' },
                   { label: 'Covered', cls: 'hidden sm:table-cell' },
                 ].map(({ label, cls }) => (
-                  <th key={label} className={`text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${cls}`}>{label}</th>
+                  <th key={label} className={`sticky top-0 z-10 bg-slate-50 text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${cls}`}>{label}</th>
                 ))}
               </tr>
             </thead>
