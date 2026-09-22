@@ -1,6 +1,6 @@
 'use client';
 
-import { FlaskConical, Radio, Terminal } from 'lucide-react';
+import { FlaskConical, Terminal } from 'lucide-react';
 import { SmsConfig } from '@/lib/types';
 
 /**
@@ -10,18 +10,10 @@ import { SmsConfig } from '@/lib/types';
 export default function SmsModeBanner({ config }: { config: SmsConfig | null }) {
   if (!config) return null;
 
-  if (config.mode === 'live') {
-    return (
-      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 flex items-center gap-2 text-sm text-red-800">
-        <Radio size={15} className="flex-shrink-0" />
-        <span>
-          <strong>LIVE MODE</strong> — messages go to real staff mobiles.
-          {config.allowlist_size > 0 &&
-            ` Restricted to ${config.allowlist_size} allowlisted number(s).`}
-        </span>
-      </div>
-    );
-  }
+  // Live mode is the normal running state now, not a thing to flag — the
+  // banner stays for redirect/console so a test race is never mistaken for
+  // a real one, but a real one no longer announces itself as an anomaly.
+  if (config.mode === 'live') return null;
 
   if (config.mode === 'redirect') {
     return (
