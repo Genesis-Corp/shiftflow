@@ -489,7 +489,7 @@ export default function CoverShiftPage() {
                 Already rostered overlapping this time — excluded from the claim race, but stretching their shift covers it without double-booking them.
               </p>
               {result.extendable.map(c => (
-                <div key={c.id} className="card p-4 flex items-center gap-4 border-blue-200 bg-blue-50/40">
+                <div key={c.id} className="card p-3 sm:p-4 flex flex-wrap items-center gap-3 sm:gap-4 border-blue-200 bg-blue-50/40">
                   <div className="flex-1 min-w-0">
                     <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
                     <p className="text-xs text-slate-500 mt-0.5 font-mono">
@@ -519,8 +519,11 @@ export default function CoverShiftPage() {
             </div>
           ) : result.candidates.length === 0 ? null : (
             <div className="space-y-2">
+              {/* Rank + name hold the first line; cost, score and the incident
+                  buttons drop to a second full-width line on a phone rather
+                  than crushing the name into an ellipsis. */}
               {result.candidates.map((c, i) => (
-                <div key={c.id} className={`card p-4 flex items-center gap-4 ${i === 0 ? 'border-blue-300 bg-blue-50/50' : ''}`}>
+                <div key={c.id} className={`card p-3 sm:p-4 flex flex-wrap items-center gap-3 sm:gap-4 ${i === 0 ? 'border-blue-300 bg-blue-50/50' : ''}`}>
                   <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold bg-slate-100 text-slate-600">
                     {i === 0 ? <Trophy size={16} className="text-amber-500" /> : i + 1}
                   </div>
@@ -539,37 +542,39 @@ export default function CoverShiftPage() {
                         </span>
                       )}
                     </div>
-                    <div className="mt-1.5 w-48">
+                    <div className="mt-1.5 w-full max-w-[12rem]">
                       <ReliabilityBar score={c.reliability_score} />
                     </div>
                   </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-semibold text-slate-700">
-                      {c.shift_cost === null
-                        ? <span className="text-slate-300 font-normal" title={costReasonHint(c.cost_reason)}>no rate</span>
-                        : formatCost(c.shift_cost)}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {c.shift_cost === null ? costReasonLabel(c.cost_reason) : 'cost'}
-                    </p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-lg font-bold text-slate-700">{c.computed_score}</p>
-                    <p className="text-xs text-slate-400">score</p>
-                  </div>
-                  <div className="flex gap-1.5 flex-shrink-0">
-                    <button title="Covered" disabled={!!incidentLoading}
-                      onClick={() => logIncident(c.id, 'covered')}
-                      className="btn-ghost p-1.5 text-green-600 hover:bg-green-50"
-                    ><CheckCircle size={16} /></button>
-                    <button title="Rejected" disabled={!!incidentLoading}
-                      onClick={() => logIncident(c.id, 'rejected')}
-                      className="btn-ghost p-1.5 text-orange-500 hover:bg-orange-50"
-                    ><XCircle size={16} /></button>
-                    <button title="No answer" disabled={!!incidentLoading}
-                      onClick={() => logIncident(c.id, 'no_answer')}
-                      className="btn-ghost p-1.5 text-slate-500 hover:bg-slate-100"
-                    ><PhoneMissed size={16} /></button>
+                  <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end">
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-sm font-semibold text-slate-700">
+                        {c.shift_cost === null
+                          ? <span className="text-slate-300 font-normal" title={costReasonHint(c.cost_reason)}>no rate</span>
+                          : formatCost(c.shift_cost)}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {c.shift_cost === null ? costReasonLabel(c.cost_reason) : 'cost'}
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-lg font-bold text-slate-700">{c.computed_score}</p>
+                      <p className="text-xs text-slate-400">score</p>
+                    </div>
+                    <div className="flex gap-1.5 flex-shrink-0">
+                      <button title="Covered" disabled={!!incidentLoading}
+                        onClick={() => logIncident(c.id, 'covered')}
+                        className="btn-ghost p-1.5 text-green-600 hover:bg-green-50"
+                      ><CheckCircle size={16} /></button>
+                      <button title="Rejected" disabled={!!incidentLoading}
+                        onClick={() => logIncident(c.id, 'rejected')}
+                        className="btn-ghost p-1.5 text-orange-500 hover:bg-orange-50"
+                      ><XCircle size={16} /></button>
+                      <button title="No answer" disabled={!!incidentLoading}
+                        onClick={() => logIncident(c.id, 'no_answer')}
+                        className="btn-ghost p-1.5 text-slate-500 hover:bg-slate-100"
+                      ><PhoneMissed size={16} /></button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -603,7 +608,7 @@ export default function CoverShiftPage() {
                 Excluded from the claim race for going over the weekly hours cap. Kept here in case there's no other option — contact them yourself if you decide to.
               </p>
               {result.backup.map(c => (
-                <div key={c.id} className="card p-4 flex items-center gap-4 border-amber-200 bg-amber-50/40">
+                <div key={c.id} className="card p-3 sm:p-4 flex flex-wrap items-center gap-3 sm:gap-4 border-amber-200 bg-amber-50/40">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />

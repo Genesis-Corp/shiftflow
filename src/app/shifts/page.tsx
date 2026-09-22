@@ -158,11 +158,20 @@ function ShiftDayGroup({
               {dg.name}
             </span>
           </div>
+          <div className="table-scroll">
           <table className="w-full text-sm">
             <thead className="border-b border-slate-100">
               <tr>
-                {['Time', 'Duration', 'Role', 'Break', 'Status', 'Assigned', ''].map(h => (
-                  <th key={h} className="text-left px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">{h}</th>
+                {[
+                  { label: 'Time', cls: '' },
+                  { label: 'Duration', cls: 'hidden md:table-cell' },
+                  { label: 'Role', cls: 'hidden lg:table-cell' },
+                  { label: 'Break', cls: 'hidden lg:table-cell' },
+                  { label: 'Status', cls: '' },
+                  { label: 'Assigned', cls: '' },
+                  { label: '', cls: '' },
+                ].map(({ label, cls }) => (
+                  <th key={label} className={`text-left px-3 sm:px-4 py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide ${cls}`}>{label}</th>
                 ))}
               </tr>
             </thead>
@@ -172,25 +181,29 @@ function ShiftDayGroup({
                 const isBday = isBirthday(assignedBirthday(s), group.date);
                 return (
                   <tr key={s.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 font-mono text-slate-800">{s.start_time} – {s.end_time}</td>
-                    <td className="px-4 py-3 text-slate-500">{formatDuration(s.start_time, s.end_time)}</td>
-                    <td className="px-4 py-3">
+                    {/* Seconds were never meaningful here and cost a third of
+                        the column's width on a phone. */}
+                    <td className="px-3 sm:px-4 py-3 font-mono text-slate-800 whitespace-nowrap">
+                      {s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}
+                    </td>
+                    <td className="px-3 sm:px-4 py-3 text-slate-500 hidden md:table-cell">{formatDuration(s.start_time, s.end_time)}</td>
+                    <td className="px-3 sm:px-4 py-3 hidden lg:table-cell">
                       <span className="badge-slate capitalize">{s.required_role}</span>
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 sm:px-4 py-3 hidden lg:table-cell">
                       {s.has_break ? <span className="badge-amber"><Coffee size={11} className="mr-1" />{s.break_duration_minutes}m</span> : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 sm:px-4 py-3">
                       <span className={STATUS_BADGE[s.status] ?? 'badge-slate'}>{s.status}</span>
                     </td>
-                    <td className="px-4 py-3 text-slate-500 text-xs">
+                    <td className="px-3 sm:px-4 py-3 text-slate-500 text-xs">
                       {name && s.assigned_staff_id
                         ? <StaffName staffId={s.assigned_staff_id} name={name} />
                         : '—'}
                       {isBday && <span title="Birthday today" className="ml-1">🎁</span>}
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-1">
+                    <td className="px-3 sm:px-4 py-3">
+                      <div className="flex gap-0.5 sm:gap-1">
                         {s.assigned_staff_id && name && !splitShiftIds.has(s.assigned_staff_id) && (
                           <button
                             onClick={() => onCalledInSick({ staff_id: s.assigned_staff_id!, name, shifts: [s] })}
@@ -210,6 +223,7 @@ function ShiftDayGroup({
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ))}
     </div>
@@ -945,8 +959,8 @@ export default function ShiftsPage() {
             <p className="text-slate-400 text-center py-8">No shifts scheduled.</p>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[900px]">
-                <div className="flex pl-36">
+              <div className="min-w-[620px] sm:min-w-[900px]">
+                <div className="flex pl-24 sm:pl-36">
                   {timelineHours.map(h => (
                     <div key={h} className="flex-1 text-[11px] text-slate-400 font-medium border-l border-slate-100 pl-1">
                       {formatHour12(h)}
@@ -957,7 +971,7 @@ export default function ShiftsPage() {
                 <div className="mt-1 divide-y divide-slate-100">
                   {unassigned.length > 0 && (
                     <div className="flex items-center py-2">
-                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-amber-700 italic truncate">
+                      <div className="w-24 sm:w-36 flex-shrink-0 pr-2 text-sm font-medium text-amber-700 italic truncate">
                         Unassigned
                       </div>
                       <div className="relative flex-1 h-7 rounded bg-amber-50/50">
@@ -973,7 +987,7 @@ export default function ShiftsPage() {
 
                   {staffRows.map(({ staffId, name, birthday, shifts: rowShifts }) => (
                     <div key={staffId} className="flex items-center py-2">
-                      <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                      <div className="w-24 sm:w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
                         <StaffName staffId={staffId} name={name} />{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
                       </div>
                       <div className="relative flex-1 h-7 rounded bg-slate-50">

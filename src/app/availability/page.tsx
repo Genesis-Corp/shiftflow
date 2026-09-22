@@ -319,13 +319,17 @@ function MonthHolidayGantt({
   /** Smaller row height and no bar label — legible stacked twelve at a time. */
   compact?: boolean;
 }) {
-  const labelWidth = compact ? 'w-24' : 'w-36';
+  // Narrower name column and day columns on a phone: a 31-day axis is wide
+  // whatever happens, so the job is to keep the scroll inside this box and
+  // as short as it can be rather than pretend it away.
+  const labelWidth = compact ? 'w-20 sm:w-24' : 'w-24 sm:w-36';
+  const headerPad = compact ? 'pl-20 sm:pl-24' : 'pl-24 sm:pl-36';
   const rowHeight = compact ? 'h-4' : 'h-7';
   const today = todayStr();
 
   return (
-    <div style={{ minWidth: `${(compact ? 6 : 9) + monthDates.length * (compact ? 1.1 : 1.75)}rem` }}>
-      <div className={`flex ${compact ? 'pl-24' : 'pl-36'}`}>
+    <div style={{ minWidth: `${(compact ? 5 : 6) + monthDates.length * (compact ? 1 : 1.35)}rem` }}>
+      <div className={`flex ${headerPad}`}>
         {monthDates.map(date => {
           const dow = new Date(date + 'T00:00:00').getDay();
           const isToday = date === today;
@@ -923,9 +927,9 @@ export default function AvailabilityPage() {
             <p className="text-slate-400 text-center py-8">No active staff.</p>
           ) : (
             <div className="overflow-x-auto">
-              <div className="min-w-[900px]">
+              <div className="min-w-[620px] sm:min-w-[900px]">
                 {/* Hour header */}
-                <div className="flex pl-36">
+                <div className="flex pl-24 sm:pl-36">
                   {timelineHours.map(h => (
                     <div key={h} className="flex-1 text-[11px] text-slate-400 font-medium border-l border-slate-100 pl-1">
                       {formatHour12(h)}
@@ -939,7 +943,7 @@ export default function AvailabilityPage() {
                     const pos = t ? timelineBarPosition(t.start_time, t.end_time) : null;
                     return (
                       <div key={s.id} className="flex items-center py-2">
-                        <div className="w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                        <div className="w-24 sm:w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
                           <StaffName staffId={s.id} name={s.name} />
                         </div>
                         <div className="relative flex-1 h-7 rounded bg-slate-50">

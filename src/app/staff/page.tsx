@@ -72,11 +72,13 @@ function sortValue(s: Staff, key: SortKey): string | number {
   }
 }
 
-function SortableHeader({ label, sortKey, active, dir, onClick }: {
+function SortableHeader({ label, sortKey, active, dir, onClick, className = '' }: {
   label: string; sortKey: SortKey; active: boolean; dir: 'asc' | 'desc'; onClick: (key: SortKey) => void;
+  /** Lets a column drop out on narrow screens — must match its cells'. */
+  className?: string;
 }) {
   return (
-    <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+    <th className={`text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${className}`}>
       <button onClick={() => onClick(sortKey)} className="flex items-center gap-1 hover:text-slate-700 transition-colors">
         {label}
         {active
@@ -618,16 +620,21 @@ function StaffPageInner() {
 
       {loading ? <p className="text-slate-400">Loading...</p> : loadError ? null : (
         <div className="card overflow-hidden">
+          {/* Columns drop off narrow screens in reverse order of how often a
+              manager needs them, so a phone shows a readable four-column
+              table rather than seven squashed ones. Everything hidden here
+              is still on the staff member's own popup and edit form. */}
+          <div className="table-scroll">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <SortableHeader label="Name" sortKey="name" active={sortKey === 'name'} dir={sortDir} onClick={toggleSort} />
                 <SortableHeader label="Type" sortKey="age_group" active={sortKey === 'age_group'} dir={sortDir} onClick={toggleSort} />
-                <SortableHeader label="Role" sortKey="role_type" active={sortKey === 'role_type'} dir={sortDir} onClick={toggleSort} />
-                <SortableHeader label="Departments" sortKey="departments" active={sortKey === 'departments'} dir={sortDir} onClick={toggleSort} />
-                <SortableHeader label="Reliability" sortKey="reliability_score" active={sortKey === 'reliability_score'} dir={sortDir} onClick={toggleSort} />
-                <SortableHeader label="Status" sortKey="active" active={sortKey === 'active'} dir={sortDir} onClick={toggleSort} />
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
+                <SortableHeader label="Role" sortKey="role_type" active={sortKey === 'role_type'} dir={sortDir} onClick={toggleSort} className="hidden md:table-cell" />
+                <SortableHeader label="Departments" sortKey="departments" active={sortKey === 'departments'} dir={sortDir} onClick={toggleSort} className="hidden lg:table-cell" />
+                <SortableHeader label="Reliability" sortKey="reliability_score" active={sortKey === 'reliability_score'} dir={sortDir} onClick={toggleSort} className="hidden sm:table-cell" />
+                <SortableHeader label="Status" sortKey="active" active={sortKey === 'active'} dir={sortDir} onClick={toggleSort} className="hidden sm:table-cell" />
+                <th className="text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -650,15 +657,15 @@ function StaffPageInner() {
                       <p className="mt-0.5 text-xs text-amber-500">{rateGapReason(s)}</p>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <span className={effectiveAgeGroup(s) === 'senior' ? 'badge-blue' : 'badge-amber'}>
                       {effectiveAgeGroup(s) === 'senior' ? 'Senior' : 'Junior'}
                     </span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3 hidden md:table-cell">
                     <span className={ROLE_BADGE[s.role_type]}>{ROLE_LABELS[s.role_type]}</span>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3 hidden lg:table-cell">
                     <div className="flex flex-wrap gap-1">
                       {(s.staff_departments ?? []).map(d => (
                         <span key={d.department_id} className="badge-slate text-xs">
@@ -668,15 +675,15 @@ function StaffPageInner() {
                       ))}
                     </div>
                   </td>
-                  <td className="px-4 py-3 min-w-[140px]">
+                  <td className="px-3 sm:px-4 py-3 min-w-[140px] hidden sm:table-cell">
                     <ReliabilityBar score={s.reliability_score} />
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3 hidden sm:table-cell">
                     <button onClick={() => toggleActive(s)} className={`badge ${s.active ? 'badge-green cursor-pointer' : 'badge-red cursor-pointer'}`}>
                       {s.active ? <><UserCheck size={11} className="mr-1" />Active</> : <><UserX size={11} className="mr-1" />Inactive</>}
                     </button>
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-3 sm:px-4 py-3">
                     <div className="flex gap-1">
                       <button onClick={() => openEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
                       <button onClick={() => archiveStaff(s)} title="Archive" className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Archive size={14} /></button>
@@ -686,6 +693,7 @@ function StaffPageInner() {
               ))}
             </tbody>
           </table>
+          </div>
           {sorted.length === 0 && <p className="text-center text-slate-400 py-8">No staff found.</p>}
         </div>
       )}

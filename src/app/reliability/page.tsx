@@ -108,31 +108,44 @@ export default function ReliabilityPage() {
         <div className="px-4 py-3 border-b border-slate-200">
           <h2 className="font-semibold text-slate-800">All Staff Scores</h2>
         </div>
-        <table className="w-full text-sm">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              {['Name', 'Reliability', 'No Shows', 'No Answer', 'Rejections', 'Late', 'Covered'].map(h => (
-                <th key={h} className="text-left px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {staff.sort((a, b) => a.reliability_score - b.reliability_score).map(s => {
-              const stat = staffStats.find(st => st.staff.id === s.id);
-              return (
-                <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 font-medium text-slate-800"><StaffName staffId={s.id} name={s.name} /></td>
-                  <td className="px-4 py-3 min-w-[160px]"><ReliabilityBar score={s.reliability_score} /></td>
-                  <td className="px-4 py-3"><span className={stat?.no_shows ? 'badge-red' : 'text-slate-300'}>{stat?.no_shows ?? 0}</span></td>
-                  <td className="px-4 py-3"><span className={stat?.no_answers ? 'badge-amber' : 'text-slate-300'}>{stat?.no_answers ?? 0}</span></td>
-                  <td className="px-4 py-3"><span className={stat?.rejections ? 'badge-amber' : 'text-slate-300'}>{stat?.rejections ?? 0}</span></td>
-                  <td className="px-4 py-3"><span className={stat?.lates ? 'badge-amber' : 'text-slate-300'}>{stat?.lates ?? 0}</span></td>
-                  <td className="px-4 py-3"><span className={stat?.covered ? 'badge-green' : 'text-slate-300'}>{stat?.covered ?? 0}</span></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {/* Name, score and no-shows are what a manager actually scans for;
+            the rest of the incident counts only appear once there's room for
+            them, so a phone shows the whole width of this table at once. */}
+        <div className="table-scroll">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                {[
+                  { label: 'Name', cls: '' },
+                  { label: 'Reliability', cls: '' },
+                  { label: 'No Shows', cls: '' },
+                  { label: 'No Answer', cls: 'hidden md:table-cell' },
+                  { label: 'Rejections', cls: 'hidden md:table-cell' },
+                  { label: 'Late', cls: 'hidden sm:table-cell' },
+                  { label: 'Covered', cls: 'hidden sm:table-cell' },
+                ].map(({ label, cls }) => (
+                  <th key={label} className={`text-left px-3 sm:px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${cls}`}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {staff.sort((a, b) => a.reliability_score - b.reliability_score).map(s => {
+                const stat = staffStats.find(st => st.staff.id === s.id);
+                return (
+                  <tr key={s.id} className="hover:bg-slate-50">
+                    <td className="px-3 sm:px-4 py-3 font-medium text-slate-800"><StaffName staffId={s.id} name={s.name} /></td>
+                    <td className="px-3 sm:px-4 py-3 w-28 sm:w-auto sm:min-w-[160px]"><ReliabilityBar score={s.reliability_score} /></td>
+                    <td className="px-3 sm:px-4 py-3"><span className={stat?.no_shows ? 'badge-red' : 'text-slate-300'}>{stat?.no_shows ?? 0}</span></td>
+                    <td className="px-3 sm:px-4 py-3 hidden md:table-cell"><span className={stat?.no_answers ? 'badge-amber' : 'text-slate-300'}>{stat?.no_answers ?? 0}</span></td>
+                    <td className="px-3 sm:px-4 py-3 hidden md:table-cell"><span className={stat?.rejections ? 'badge-amber' : 'text-slate-300'}>{stat?.rejections ?? 0}</span></td>
+                    <td className="px-3 sm:px-4 py-3 hidden sm:table-cell"><span className={stat?.lates ? 'badge-amber' : 'text-slate-300'}>{stat?.lates ?? 0}</span></td>
+                    <td className="px-3 sm:px-4 py-3 hidden sm:table-cell"><span className={stat?.covered ? 'badge-green' : 'text-slate-300'}>{stat?.covered ?? 0}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Incident log */}
