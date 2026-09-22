@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus,
-  CalendarDays, ChevronLeft, ChevronRight,
+  CalendarDays, ChevronLeft, ChevronRight, Pencil, AlertTriangle, Check,
 } from 'lucide-react';
 import ErrorBanner from '@/components/ErrorBanner';
 import StaffName from '@/components/StaffName';
@@ -92,6 +92,200 @@ function leaveBarPosition(
   return { leftPct: (startIdx / n) * 100, widthPct: ((endIdx - startIdx + 1) / n) * 100 };
 }
 
+/** One uploaded form (or a manually-started entry) staged for review before
+ *  it becomes a real staff_leave row. `extraStaff` mirrors the same "more
+ *  than one name on this form" case the old single-entry flow handled, just
+ *  scoped per draft now that there can be several in flight at once. */
+interface LeaveDraft {
+  key: string;
+  file: File | null;
+  status: 'reading' | 'ready' | 'error';
+  note: string;
+  editing: boolean;
+  staff_id: string;
+  extraStaff: { id: string; rawName: string }[];
+  leave_type: LeaveType;
+  start_date: string;
+  end_date: string;
+  notes: string;
+}
+
+function newDraftKey(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function blankDraft(): LeaveDraft {
+  return {
+    key: newDraftKey(), file: null, status: 'ready', note: '', editing: true,
+    staff_id: '', extraStaff: [], leave_type: 'day_off', start_date: '', end_date: '', notes: '',
+  };
+}
+
+function draftStaffIds(d: LeaveDraft): string[] {
+  return Array.from(new Set([d.staff_id, ...d.extraStaff.map(s => s.id)].filter(Boolean)));
+}
+
+function draftIsValid(d: LeaveDraft): boolean {
+  return draftStaffIds(d).length > 0 && !!d.start_date && !!d.end_date;
+}
+
+/** One pending upload — collapsed to a summary line once it's read cleanly,
+ *  expanded automatically (and by the pencil button any time after) so a
+ *  misread is never more than one glance away from the fix. */
+function LeaveDraftRow({
+  draft, staffList, onUpdate, onRemove,
+}: {
+  draft: LeaveDraft;
+  staffList: Staff[];
+  onUpdate: (key: string, patch: Partial<LeaveDraft>) => void;
+  onRemove: (key: string) => void;
+}) {
+  const primaryName = staffList.find(s => s.id === draft.staff_id)?.name;
+  const extraNames = draft.extraStaff.map(e => staffList.find(s => s.id === e.id)?.name).filter(Boolean) as string[];
+  const namesLabel = [primaryName, ...extraNames].filter(Boolean).join(', ');
+  const needsAttention = draft.status === 'error' || !draftIsValid(draft);
+
+  return (
+    <div className={`rounded-lg border p-3 ${needsAttention ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        {draft.status === 'reading' ? (
+          <Loader2 size={14} className="animate-spin text-slate-400 flex-shrink-0" />
+        ) : needsAttention ? (
+          <AlertTriangle size={14} className="text-amber-500 flex-shrink-0" />
+        ) : (
+          <Check size={14} className="text-green-500 flex-shrink-0" />
+        )}
+
+        {draft.file && (
+          <span className="text-xs text-slate-400 flex items-center gap-1 truncate max-w-[10rem]">
+            <Paperclip size={11} />{draft.file.name}
+          </span>
+        )}
+
+        <span className={draft.leave_type === 'leave' ? 'badge-blue' : 'badge-amber'}>
+          {draft.leave_type === 'leave' ? <Umbrella size={11} className="mr-1" /> : <CalendarX size={11} className="mr-1" />}
+          {draft.leave_type === 'leave' ? 'Leave' : 'Day Off'}
+        </span>
+
+        <span className="text-sm font-medium text-slate-700 truncate">
+          {namesLabel || (draft.status === 'reading' ? 'Reading…' : 'Select staff')}
+        </span>
+
+        {draft.start_date && (
+          <span className="text-sm text-slate-500">
+            {formatDate(draft.start_date)}{draft.end_date !== draft.start_date && ` – ${formatDate(draft.end_date)}`}
+          </span>
+        )}
+
+        <div className="ml-auto flex items-center gap-1">
+          <button type="button" onClick={() => onUpdate(draft.key, { editing: !draft.editing })} className="btn-ghost p-1.5 text-slate-500" title="Edit">
+            <Pencil size={13} />
+          </button>
+          <button type="button" onClick={() => onRemove(draft.key)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50" title="Remove">
+            <X size={14} />
+          </button>
+        </div>
+      </div>
+
+      {draft.note && <p className="text-xs text-amber-700 mt-1.5">{draft.note}</p>}
+
+      {draft.editing && (
+        <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className="label">Staff Member</label>
+              <select className="input" value={draft.staff_id} onChange={e => onUpdate(draft.key, { staff_id: e.target.value })}>
+                <option value="">Select staff...</option>
+                {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="label">Type</label>
+              <select
+                className="input"
+                value={draft.leave_type}
+                onChange={e => {
+                  const leave_type = e.target.value as LeaveType;
+                  onUpdate(draft.key, { leave_type, end_date: leave_type === 'day_off' ? draft.start_date : draft.end_date });
+                }}
+              >
+                <option value="day_off">Day Off</option>
+                <option value="leave">Leave</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Start</label>
+              <input
+                type="date" className="input" value={draft.start_date}
+                onChange={e => {
+                  const start_date = e.target.value;
+                  onUpdate(draft.key, {
+                    start_date,
+                    end_date: draft.leave_type === 'day_off' || !draft.end_date || draft.end_date < start_date ? start_date : draft.end_date,
+                  });
+                }}
+              />
+            </div>
+            <div>
+              <label className="label">End</label>
+              <input
+                type="date" className="input" value={draft.end_date} min={draft.start_date || undefined}
+                disabled={draft.leave_type === 'day_off'}
+                onChange={e => onUpdate(draft.key, { end_date: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="label">Notes</label>
+            <input className="input" value={draft.notes} onChange={e => onUpdate(draft.key, { notes: e.target.value })} placeholder="Any context..." />
+          </div>
+
+          {draft.extraStaff.length > 0 && (
+            <div className="space-y-2">
+              <p className="label">Also on this form</p>
+              {draft.extraStaff.map((row, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <select
+                    className="input flex-1"
+                    value={row.id}
+                    onChange={e => onUpdate(draft.key, {
+                      extraStaff: draft.extraStaff.map((r, j) => (j === i ? { ...r, id: e.target.value } : r)),
+                    })}
+                  >
+                    <option value="">{row.rawName ? `Select who "${row.rawName}" is...` : 'Select staff...'}</option>
+                    {staffList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(draft.key, { extraStaff: draft.extraStaff.filter((_, j) => j !== i) })}
+                    className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() => onUpdate(draft.key, { extraStaff: [...draft.extraStaff, { id: '', rawName: '' }] })}
+              className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+            >
+              <Plus size={12} /> Add another staff member on this form
+            </button>
+            <button type="button" onClick={() => onUpdate(draft.key, { editing: false })} className="btn-secondary text-xs">
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function AvailabilityPage() {
   const [view, setView] = useState<'editor' | 'timeline' | 'holidays'>('editor');
   const [calendarMonth, setCalendarMonth] = useState(todayStr().slice(0, 7));
@@ -107,20 +301,13 @@ export default function AvailabilityPage() {
   // Time off — Request Day Off / Leave forms, each excluding that person
   // from claim races for the date range on file (see @/lib/eligibility).
   const [leaveEntries, setLeaveEntries] = useState<StaffLeave[]>([]);
-  const [leaveForm, setLeaveForm] = useState({
-    staff_id: '', leave_type: 'day_off' as LeaveType, start_date: '', end_date: '', notes: '',
-  });
-  const [leaveFile, setLeaveFile] = useState<File | null>(null);
-  const [uploadingLeave, setUploadingLeave] = useState(false);
-  const [leaveError, setLeaveError] = useState('');
 
-  // A scanned form can name more than one staff member (e.g. a Request Day
-  // Off form signed "Eli and Aria") — the primary Staff Member field covers
-  // the first, these extra rows cover the rest, each excluded for the same
-  // date range once saved.
-  const [extraStaff, setExtraStaff] = useState<{ id: string; rawName: string }[]>([]);
-  const [scanningLeave, setScanningLeave] = useState(false);
-  const [scanNote, setScanNote] = useState('');
+  // Every uploaded form (and any manually-added entry) lands here first as a
+  // draft, never straight into staff_leave — a batch of scans always has at
+  // least one misread in it, so nothing saves until it's been eyeballed.
+  const [drafts, setDrafts] = useState<LeaveDraft[]>([]);
+  const [savingDrafts, setSavingDrafts] = useState(false);
+  const [draftsError, setDraftsError] = useState('');
 
   async function load() {
     try {
@@ -148,32 +335,120 @@ export default function AvailabilityPage() {
     }
   }
 
-  async function submitLeave(e: React.FormEvent) {
-    e.preventDefault();
-    const staffIds = Array.from(new Set([leaveForm.staff_id, ...extraStaff.map(s => s.id)].filter(Boolean)));
-    if (!staffIds.length || !leaveForm.start_date || !leaveForm.end_date) return;
-    setLeaveError('');
-    setUploadingLeave(true);
-    for (const staff_id of staffIds) {
-      const fd = new FormData();
-      fd.append('staff_id', staff_id);
-      fd.append('leave_type', leaveForm.leave_type);
-      fd.append('start_date', leaveForm.start_date);
-      fd.append('end_date', leaveForm.end_date);
-      if (leaveForm.notes.trim()) fd.append('notes', leaveForm.notes.trim());
-      if (leaveFile) fd.append('file', leaveFile);
-      const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
-      if (!res.ok) {
-        setUploadingLeave(false);
-        setLeaveError((await res.json().catch(() => ({}))).error ?? 'Could not save that.');
+  function updateDraft(key: string, patch: Partial<LeaveDraft> | ((d: LeaveDraft) => Partial<LeaveDraft>)) {
+    setDrafts(ds => ds.map(d => (d.key === key ? { ...d, ...(typeof patch === 'function' ? patch(d) : patch) } : d)));
+  }
+
+  function removeDraft(key: string) {
+    setDrafts(ds => ds.filter(d => d.key !== key));
+  }
+
+  /**
+   * One or many photos/PDFs at once — each becomes its own draft immediately
+   * (so the list fills in as they're picked rather than waiting on every
+   * scan to finish), then gets read in parallel. A file type that can't be
+   * read (not image or PDF) is still kept as a draft, just left for manual
+   * entry instead of blocking the rest of the batch.
+   */
+  async function handleLeaveFiles(files: File[]) {
+    if (!files.length) return;
+    setDraftsError('');
+    const newDrafts: LeaveDraft[] = files.map(file => ({
+      key: newDraftKey(), file, status: 'reading', note: '', editing: false,
+      staff_id: '', extraStaff: [], leave_type: 'day_off', start_date: '', end_date: '', notes: '',
+    }));
+    setDrafts(ds => [...ds, ...newDrafts]);
+
+    await Promise.all(newDrafts.map(async draft => {
+      const file = draft.file!;
+      const isImage = file.type.startsWith('image/');
+      const isPdf = file.type === 'application/pdf';
+      if (!isImage && !isPdf) {
+        updateDraft(draft.key, { status: 'ready', editing: true, note: "This file type can't be read automatically — fill in the details by hand." });
         return;
       }
+
+      try {
+        const payload = isPdf
+          ? { pdf: await readPdfAsBase64(file) }
+          : await downscalePhoto(file).then(({ base64, mediaType }) => ({ image: base64, mediaType }));
+
+        const res = await postJson<{ form_type: string; staff_names: string[]; start_date: string; end_date: string; notes: string }>(
+          '/api/scan-leave-form', payload, { timeoutMs: 70_000 }
+        );
+        if (!res.ok || !res.data) {
+          updateDraft(draft.key, { status: 'ready', editing: true, note: res.error ?? 'Could not read that form — fill it in by hand.' });
+          return;
+        }
+
+        const { form_type, staff_names, start_date, end_date, notes } = res.data;
+        const matches = staff_names.map(rawName => ({ rawName, id: matchStaffName(rawName, staff) ?? '' }));
+        const unmatchedCount = matches.filter(m => !m.id).length;
+        const note = [
+          staff_names.length ? `Read from form: ${staff_names.join(', ')}.` : '',
+          unmatchedCount
+            ? `Could not auto-match ${unmatchedCount === 1 ? 'one of these' : `${unmatchedCount} of these`} to a staff member — check below.`
+            : '',
+          start_date ? '' : 'Could not read a date off the form — check it by hand.',
+        ].filter(Boolean).join(' ');
+
+        updateDraft(draft.key, {
+          status: 'ready',
+          staff_id: matches[0]?.id ?? '',
+          extraStaff: matches.slice(1),
+          leave_type: form_type === 'request_day_off' ? 'day_off' : form_type === 'farmer_jacks_leave' ? 'leave' : 'day_off',
+          start_date: start_date || '',
+          end_date: end_date || start_date || '',
+          notes: notes || '',
+          note,
+          // Auto-expand only the ones that actually need a look — a clean
+          // read stays collapsed so a big batch doesn't turn into a wall of
+          // open forms to scroll past.
+          editing: unmatchedCount > 0 || !matches[0]?.id || !start_date,
+        });
+      } catch (err) {
+        updateDraft(draft.key, {
+          status: 'error', editing: true,
+          note: err instanceof Error ? err.message : 'Could not read that form — fill it in by hand.',
+        });
+      }
+    }));
+  }
+
+  /** Saves every valid, non-reading draft — one POST per staff member named
+   *  on a form, same as before. A draft that fails to save stays in the
+   *  list with the error attached, rather than losing the whole batch. */
+  async function saveDrafts() {
+    setDraftsError('');
+    const toSave = drafts.filter(d => d.status !== 'reading' && draftIsValid(d));
+    if (!toSave.length) {
+      setDraftsError('Nothing ready to save yet — each entry needs at least a staff member and both dates.');
+      return;
     }
-    setUploadingLeave(false);
-    setLeaveForm({ staff_id: '', leave_type: 'day_off', start_date: '', end_date: '', notes: '' });
-    setLeaveFile(null);
-    setExtraStaff([]);
-    setScanNote('');
+    setSavingDrafts(true);
+    const failedKeys = new Set<string>();
+    for (const d of toSave) {
+      for (const staff_id of draftStaffIds(d)) {
+        const fd = new FormData();
+        fd.append('staff_id', staff_id);
+        fd.append('leave_type', d.leave_type);
+        fd.append('start_date', d.start_date);
+        fd.append('end_date', d.end_date);
+        if (d.notes.trim()) fd.append('notes', d.notes.trim());
+        if (d.file) fd.append('file', d.file);
+        const res = await fetch('/api/staff-leave', { method: 'POST', body: fd });
+        if (!res.ok) {
+          failedKeys.add(d.key);
+          const error = (await res.json().catch(() => ({}))).error ?? 'Could not save this one — try again.';
+          updateDraft(d.key, { note: error, editing: true });
+        }
+      }
+    }
+    setDrafts(ds => ds.filter(d => failedKeys.has(d.key) || !toSave.some(t => t.key === d.key)));
+    setSavingDrafts(false);
+    if (failedKeys.size) {
+      setDraftsError(`${failedKeys.size} ${failedKeys.size === 1 ? 'entry' : 'entries'} couldn't be saved — see below.`);
+    }
     await loadLeave();
   }
 
@@ -181,62 +456,6 @@ export default function AvailabilityPage() {
     if (!confirm('Delete this record? This removes the exclusion for those dates too.')) return;
     await fetch(`/api/staff-leave/${id}`, { method: 'DELETE' });
     loadLeave();
-  }
-
-  /**
-   * A photo or PDF of the form gets read automatically the moment it's
-   * chosen — any other file type (a phone-scanned doc, etc.) is still
-   * attached as-is, just without the auto-fill. Failing to read it never
-   * blocks the upload; it only means the fields below stay manual.
-   */
-  async function handleLeaveFileChange(file: File | null) {
-    setLeaveFile(file);
-    setScanNote('');
-    setExtraStaff([]);
-    if (!file) return;
-
-    const isImage = file.type.startsWith('image/');
-    const isPdf = file.type === 'application/pdf';
-    if (!isImage && !isPdf) return;
-
-    setScanningLeave(true);
-    setLeaveError('');
-    try {
-      const payload = isPdf
-        ? { pdf: await readPdfAsBase64(file) }
-        : await downscalePhoto(file).then(({ base64, mediaType }) => ({ image: base64, mediaType }));
-
-      const res = await postJson<{ form_type: string; staff_names: string[]; start_date: string; end_date: string; notes: string }>(
-        '/api/scan-leave-form', payload, { timeoutMs: 70_000 }
-      );
-      if (!res.ok || !res.data) { setScanNote(res.error ?? 'Could not read that form — fill it in by hand.'); return; }
-
-      const { form_type, staff_names, start_date, end_date, notes } = res.data;
-      const matches = staff_names.map(rawName => ({ rawName, id: matchStaffName(rawName, staff) ?? '' }));
-
-      setLeaveForm(f => ({
-        ...f,
-        staff_id: matches[0]?.id || f.staff_id,
-        leave_type: form_type === 'request_day_off' ? 'day_off' : form_type === 'farmer_jacks_leave' ? 'leave' : f.leave_type,
-        start_date: start_date || f.start_date,
-        end_date: end_date || start_date || f.end_date,
-        notes: f.notes || notes,
-      }));
-      setExtraStaff(matches.slice(1));
-
-      const unmatchedCount = matches.filter(m => !m.id).length;
-      setScanNote([
-        staff_names.length ? `Read from form: ${staff_names.join(', ')}.` : '',
-        unmatchedCount
-          ? `Could not auto-match ${unmatchedCount === 1 ? 'one of these' : `${unmatchedCount} of these`} to a staff member — check the staff field${matches.length > 1 ? 's' : ''} below.`
-          : '',
-        start_date ? '' : 'Could not read a date off the form — check it by hand.',
-      ].filter(Boolean).join(' '));
-    } catch (err) {
-      setScanNote(err instanceof Error ? err.message : 'Could not read that form — fill it in by hand.');
-    } finally {
-      setScanningLeave(false);
-    }
   }
 
   function loadStaffTemplates(s: Staff) {
@@ -660,108 +879,47 @@ export default function AvailabilityPage() {
           <CalendarX size={16} className="text-slate-400" /> Time Off
         </h2>
         <p className="text-xs text-slate-500 mb-4">
-          Upload a Request Day Off or Leave form — a photo or PDF is read automatically, and they&apos;re excluded from claim races for the dates on file.
+          Upload one or more Request Day Off or Leave forms at once — each photo or PDF is read automatically. Check the summary below before saving; anything misread stays open to fix.
         </p>
 
-        <form onSubmit={submitLeave} className="mb-4 pb-4 border-b border-slate-100">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
-            <div className="lg:col-span-2">
-              <label className="label">Staff Member</label>
-              <select className="input" required value={leaveForm.staff_id} onChange={e => setLeaveForm(f => ({ ...f, staff_id: e.target.value }))}>
-                <option value="">Select staff...</option>
-                {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label">Type</label>
-              <select
-                className="input"
-                value={leaveForm.leave_type}
-                onChange={e => {
-                  const leave_type = e.target.value as LeaveType;
-                  setLeaveForm(f => ({ ...f, leave_type, end_date: leave_type === 'day_off' ? f.start_date : f.end_date }));
-                }}
-              >
-                <option value="day_off">Day Off</option>
-                <option value="leave">Leave</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Start</label>
-              <input
-                type="date" className="input" required value={leaveForm.start_date}
-                onChange={e => {
-                  const start_date = e.target.value;
-                  setLeaveForm(f => ({
-                    ...f, start_date,
-                    end_date: f.leave_type === 'day_off' || !f.end_date || f.end_date < start_date ? start_date : f.end_date,
-                  }));
-                }}
-              />
-            </div>
-            <div>
-              <label className="label">End</label>
-              <input
-                type="date" className="input" required value={leaveForm.end_date} min={leaveForm.start_date || undefined}
-                disabled={leaveForm.leave_type === 'day_off'}
-                onChange={e => setLeaveForm(f => ({ ...f, end_date: e.target.value }))}
-              />
-            </div>
-            <div className="lg:col-span-2">
-              <label className="label">Form (optional, any file)</label>
-              <div className="relative">
-                <input type="file" className="input py-1.5" onChange={e => handleLeaveFileChange(e.target.files?.[0] ?? null)} />
-                {scanningLeave && (
-                  <Loader2 size={14} className="animate-spin text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2" />
-                )}
-              </div>
-            </div>
-            <div className="lg:col-span-5">
-              <label className="label">Notes (optional)</label>
-              <input className="input" value={leaveForm.notes} onChange={e => setLeaveForm(f => ({ ...f, notes: e.target.value }))} placeholder="Any context..." />
-            </div>
-            <button type="submit" disabled={uploadingLeave || scanningLeave} className="btn-primary justify-center">
-              <Upload size={14} /> {uploadingLeave ? 'Saving...' : 'Save'}
-            </button>
-          </div>
-
-          {scanNote && <p className="text-xs text-amber-600 mt-2.5">{scanNote}</p>}
-
-          {extraStaff.length > 0 && (
-            <div className="mt-3 space-y-2">
-              <p className="label">Also on this form</p>
-              {extraStaff.map((row, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <select
-                    className="input flex-1"
-                    value={row.id}
-                    onChange={e => setExtraStaff(rows => rows.map((r, j) => j === i ? { ...r, id: e.target.value } : r))}
-                  >
-                    <option value="">{row.rawName ? `Select who "${row.rawName}" is...` : 'Select staff...'}</option>
-                    {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                  <button
-                    type="button"
-                    onClick={() => setExtraStaff(rows => rows.filter((_, j) => j !== i))}
-                    className="btn-ghost p-1.5 text-slate-400 hover:text-red-500"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
+        <div className="flex items-center gap-4 mb-4 pb-4 border-b border-slate-100 flex-wrap">
+          <label className="btn-secondary cursor-pointer">
+            <Upload size={14} /> Upload leave forms
+            <input
+              type="file" multiple accept="image/*,application/pdf" className="hidden"
+              onChange={e => { const files = Array.from(e.target.files ?? []); e.target.value = ''; void handleLeaveFiles(files); }}
+            />
+          </label>
           <button
             type="button"
-            onClick={() => setExtraStaff(rows => [...rows, { id: '', rawName: '' }])}
-            className="mt-2.5 text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+            onClick={() => setDrafts(ds => [...ds, blankDraft()])}
+            className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
           >
-            <Plus size={12} /> Add another staff member on this form
+            <Plus size={14} /> Add manually
           </button>
-        </form>
+        </div>
 
-        {leaveError && <p className="text-sm text-red-600 mb-3">{leaveError}</p>}
+        {drafts.length > 0 && (
+          <div className="space-y-2 mb-4 pb-4 border-b border-slate-100">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Pending ({drafts.length}) — review before saving
+            </p>
+            {drafts.map(d => (
+              <LeaveDraftRow key={d.key} draft={d} staffList={staff} onUpdate={updateDraft} onRemove={removeDraft} />
+            ))}
+            {draftsError && <p className="text-sm text-red-600">{draftsError}</p>}
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                onClick={saveDrafts}
+                disabled={savingDrafts || drafts.some(d => d.status === 'reading') || !drafts.some(draftIsValid)}
+                className="btn-primary"
+              >
+                <Save size={14} /> {savingDrafts ? 'Saving...' : `Save All (${drafts.filter(draftIsValid).length})`}
+              </button>
+            </div>
+          </div>
+        )}
 
         {leaveEntries.length === 0 ? (
           <p className="text-sm text-slate-400 text-center py-4">No time off on file.</p>
