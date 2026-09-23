@@ -16,7 +16,16 @@ export async function POST(req: NextRequest) {
   const { email } = await req.json();
   if (!email) return NextResponse.json({ error: 'email required' }, { status: 400 });
 
-  const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email);
+  // Without an explicit redirectTo, Supabase falls back to the project's
+  // Site URL — easy to leave pointed at an old domain, and even when it's
+  // right there was previously nowhere for the link to land at all (no
+  // /auth/callback existed). This still requires the URL below to be on the
+  // Supabase project's Redirect URLs allowlist (Auth settings), or Supabase
+  // silently falls back to the Site URL anyway.
+  const origin = new URL(req.url).origin;
+  const { error } = await supabaseAdmin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${origin}/auth/callback`,
+  });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true }, { status: 201 });

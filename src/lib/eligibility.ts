@@ -65,7 +65,13 @@ export interface ExtendableCandidate {
   name: string;
   phone: string | null;
   phone_e164: string | null;
-  existing_shift: { id: string; start_time: string; end_time: string };
+  existing_shift: {
+    id: string; start_time: string; end_time: string;
+    /** Which department this extension would pull them out of — a manager
+     *  extending someone's shift needs to see what they're already on, not
+     *  just when. */
+    department_id: string; department_name: string | null;
+  };
   /** The merged range extending their existing shift would produce. */
   proposed: { start_time: string; end_time: string };
 }
@@ -281,13 +287,16 @@ export async function findEligibleCandidates(
   // cap. Both are checked against everyone's actual roster for the week, not
   // just this one shift.
   const { weekStart, weekEnd } = weekBounds(date);
-  type WeekShift = { id: string; assigned_staff_id: string; date: string; start_time: string; end_time: string };
+  type WeekShift = {
+    id: string; assigned_staff_id: string; date: string; start_time: string; end_time: string;
+    department_id: string; departments: { name: string }[] | null;
+  };
   const shiftsByStaff = new Map<string, WeekShift[]>();
 
   if (eligible.length > 0) {
     const { data: weekShiftRows, error: weekShiftErr } = await supabaseAdmin
       .from('shifts')
-      .select('id, assigned_staff_id, date, start_time, end_time')
+      .select('id, assigned_staff_id, date, start_time, end_time, department_id, departments ( name )')
       .eq('status', 'covered')
       .gte('date', weekStart).lte('date', weekEnd)
       .in('assigned_staff_id', eligible.map(s => s.id));
@@ -390,7 +399,10 @@ export async function findEligibleCandidates(
       if (!clashesWithSplitShift && shiftDurationMinutes(merged.start_time, merged.end_time) <= MAX_EXTENDED_SHIFT_MINUTES) {
         extendable.push({
           id: s.id, name: s.name, phone: s.phone ?? null, phone_e164: s.phone_e164 ?? null,
-          existing_shift: { id: conflict.id, start_time: conflict.start_time, end_time: conflict.end_time },
+          existing_shift: {
+            id: conflict.id, start_time: conflict.start_time, end_time: conflict.end_time,
+            department_id: conflict.department_id, department_name: conflict.departments?.[0]?.name ?? null,
+          },
           proposed: merged,
         });
       } else {

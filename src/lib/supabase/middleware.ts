@@ -8,9 +8,14 @@ import { NextResponse, type NextRequest } from 'next/server';
  * '/api/sms/inbound' is Twilio's webhook: it has no user, no cookies, no
  * browser involved, and is verified instead by its own HMAC signature check
  * (validateTwilioSignature). '/api/auth/*' are the login/bootstrap endpoints
- * themselves, which run before a session exists.
+ * themselves, which run before a session exists. '/auth/callback' consumes
+ * an invite email's link before any session cookie exists yet — gating it
+ * would bounce the visitor to /login before the page even runs. '/accept-invite'
+ * follows right after it: the session callback just created is real, but
+ * getUser() needs the cookie the browser is about to send on its *next*
+ * request, not this one, so it stays public too rather than racing that.
  */
-const PUBLIC_PATHS = ['/login', '/api/sms/inbound', '/api/auth'];
+const PUBLIC_PATHS = ['/login', '/api/sms/inbound', '/api/auth', '/auth/callback', '/accept-invite'];
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'));

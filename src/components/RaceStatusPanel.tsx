@@ -129,6 +129,13 @@ export default function RaceStatusPanel({
         </div>
       </div>
 
+      {race.status === 'active' && config?.mode === 'live' && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500 flex items-center gap-1.5">
+          <PhoneOff size={12} className="flex-shrink-0" />
+          Live mode — there's nothing to click here. A reply can only come from a real phone texting back.
+        </div>
+      )}
+
       {/* Recipients */}
       <div className="card divide-y divide-slate-100">
         <div className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">

@@ -23,17 +23,22 @@ export default function CompleteProfileGate() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Nothing to gate on a page reached before a real session exists (or
+  // before the manager has set a password at all) — an invited manager must
+  // reach /accept-invite unobstructed, not have this modal thrown up over it.
+  const ungated = pathname === '/login' || pathname === '/accept-invite' || pathname.startsWith('/auth/callback');
+
   useEffect(() => {
-    if (pathname === '/login') return;
+    if (ungated) return;
     let cancelled = false;
     fetch('/api/managers/profile', { cache: 'no-store' })
       .then(res => (res.ok ? res.json() : null))
       .then((data: Profile | null) => { if (!cancelled) setProfile(data); })
       .catch(() => { if (!cancelled) setProfile(null); });
     return () => { cancelled = true; };
-  }, [pathname]);
+  }, [ungated]);
 
-  if (pathname === '/login' || profile === 'loading' || profile === null) return null;
+  if (ungated || profile === 'loading' || profile === null) return null;
   if (profile.name && profile.phone) return null;
 
   async function save(e: React.FormEvent) {

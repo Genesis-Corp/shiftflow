@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed,
-  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users, ChevronDown, Radio,
+  CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users, ChevronDown, Radio, Building2,
 } from 'lucide-react';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
@@ -491,7 +491,14 @@ export default function CoverShiftPage() {
               {result.extendable.map(c => (
                 <div key={c.id} className="card p-3 sm:p-4 flex flex-wrap items-center gap-3 sm:gap-4 border-blue-200 bg-blue-50/40">
                   <div className="flex-1 min-w-0">
-                    <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <StaffName staffId={c.id} name={c.name} className="font-semibold text-slate-800" />
+                      {c.existing_shift.department_name && (
+                        <span className="badge-slate inline-flex items-center gap-1 text-[11px]">
+                          <Building2 size={10} /> Currently on {c.existing_shift.department_name}
+                        </span>
+                      )}
+                    </div>
                     <p className="text-xs text-slate-500 mt-0.5 font-mono">
                       {c.existing_shift.start_time.slice(0, 5)}–{c.existing_shift.end_time.slice(0, 5)}
                       <span className="mx-1.5 text-slate-400">→</span>
@@ -693,7 +700,9 @@ export default function CoverShiftPage() {
                 <p className="font-medium text-slate-600 mb-1">Not included in this race</p>
                 <ul className="text-slate-500 text-xs space-y-0.5">
                   {preview.extendable.map(e => (
-                    <li key={e.id}>{e.name} — already rostered overlapping this time (extendable instead — close this and use the option below)</li>
+                    <li key={e.id}>
+                      {e.name} — already rostered{e.existing_shift.department_name ? ` on ${e.existing_shift.department_name}` : ''} overlapping this time (extendable instead — close this and use the option below)
+                    </li>
                   ))}
                   {preview.backup.map(b => (
                     <li key={b.id}>{b.name} — would exceed 38h this week (kept as a backup option below)</li>

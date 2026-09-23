@@ -145,7 +145,10 @@ export interface ExtendableCandidate {
   name: string;
   phone: string | null;
   phone_e164: string | null;
-  existing_shift: { id: string; start_time: string; end_time: string };
+  existing_shift: {
+    id: string; start_time: string; end_time: string;
+    department_id: string; department_name: string | null;
+  };
   proposed: { start_time: string; end_time: string };
 }
 

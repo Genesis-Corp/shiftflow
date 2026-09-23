@@ -39,6 +39,11 @@ describe('isPublicPath', () => {
     expect(isPublicPath('/api/sms/simulate')).toBe(false);
     expect(isPublicPath('/api/sms/config')).toBe(false);
   });
+
+  it('allows the invite-acceptance pages, reachable before any session cookie exists', () => {
+    expect(isPublicPath('/auth/callback')).toBe(true);
+    expect(isPublicPath('/accept-invite')).toBe(true);
+  });
 });
 
 describe('isApiPath', () => {
