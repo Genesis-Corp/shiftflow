@@ -19,7 +19,7 @@ import {
 } from '@/lib/sms/templates';
 import {
   getSmsMode, getExpiryMinutes, getMaxRecipients, isQuietHours, getTimezone,
-  localDateNow, localTimeNow,
+  localDateNow, localTimeNow, getBusinessName,
 } from '@/lib/sms/config';
 import { timeToMinutes, applyReliabilityDelta } from '@/lib/shiftUtils';
 
@@ -118,14 +118,15 @@ async function sendToCandidates(
   liveSlice: ScoredCandidate[], summary: ShiftSummary,
   raceId: string, tier: CoverTier, managerName: string | null
 ): Promise<number> {
-  const body = tier === 'immediate'
-    ? urgentAvailabilityMessage(summary, isPastFivePm(), managerName)
-    : availabilityMessage(summary, managerName);
+  const business = await getBusinessName();
+  const bodyFor = (name: string) => tier === 'immediate'
+    ? urgentAvailabilityMessage(summary, isPastFivePm(), name, business, managerName)
+    : availabilityMessage(summary, name, business, managerName);
 
   const results = await Promise.allSettled(
     liveSlice.map(c => sendSms({
       to: c.phone_e164!,
-      body,
+      body: bodyFor(c.name),
       kind: tier === 'gather' ? 'availability' : 'offer',
       raceId,
       staffId: c.id,
@@ -431,9 +432,10 @@ async function advanceImmediate(
   }).eq('id', race.id).eq('status', 'active').eq('current_batch', currentBatch).select().maybeSingle();
   if (!updated) return; // someone else already advanced this batch
 
-  const manager = await managerProfileFor(race.started_by);
+  const [manager, business] = await Promise.all([managerProfileFor(race.started_by), getBusinessName()]);
   const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
-  await sendBatch(toSend, race.id, () => urgentAvailabilityMessage(summary, isPastFivePm(), manager?.name ?? null));
+  await sendBatch(toSend, race.id, r =>
+    urgentAvailabilityMessage(summary, isPastFivePm(), r.staff?.name ?? 'there', business, manager?.name ?? null));
 }
 
 async function advanceGather(
@@ -486,9 +488,9 @@ async function advanceGather(
     .eq('id', race.id).eq('status', 'active').is('degraded_at', null).select().maybeSingle();
   if (!updated) return;
 
-  const manager = await managerProfileFor(race.started_by);
+  const [manager, business] = await Promise.all([managerProfileFor(race.started_by), getBusinessName()]);
   const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
-  await sendBatch(toSend, race.id, () => availabilityMessage(summary, manager?.name ?? null));
+  await sendBatch(toSend, race.id, r => availabilityMessage(summary, r.staff?.name ?? 'there', business, manager?.name ?? null));
 }
 
 async function advanceSequential(
@@ -518,9 +520,9 @@ async function advanceSequential(
   }).eq('id', race.id).eq('status', 'active').eq('sequential_index', currentIndex).select().maybeSingle();
   if (!updated) return; // someone else already advanced this step
 
-  const manager = await managerProfileFor(race.started_by);
+  const [manager, business] = await Promise.all([managerProfileFor(race.started_by), getBusinessName()]);
   const next = recipients.find(r => r.staff_id === action.recipient.staffId);
-  if (next) await sendBatch([next], race.id, () => availabilityMessage(summary, manager?.name ?? null));
+  if (next) await sendBatch([next], race.id, r => availabilityMessage(summary, r.staff?.name ?? 'there', business, manager?.name ?? null));
 }
 
 export interface ReplyOutcome {
@@ -556,6 +558,7 @@ export async function handleInboundReply(params: {
   const managerPick = await handleManagerPick(from, body);
   if (managerPick) return managerPick;
 
+  const business = await getBusinessName();
   const parsed = parseInboundMessage(body);
 
   // Match on the claim code first: it survives a staff member texting from a
@@ -601,13 +604,13 @@ export async function handleInboundReply(params: {
         reliability_score: applyReliabilityDelta(staffRow?.reliability_score ?? 50, 'opted_out_sms'),
       }).eq('id', staffId);
     }
-    return { handled: true, reply: optOutMessage(), result: 'opted_out', staffId: staffId ?? undefined };
+    return { handled: true, reply: optOutMessage(business), result: 'opted_out', staffId: staffId ?? undefined };
   }
 
   if (parsed.intent === 'start') {
     const staffId = recipient?.staff_id ?? await staffIdForPhone(from);
     if (staffId) await supabaseAdmin.from('staff').update({ sms_opt_out: false }).eq('id', staffId);
-    return { handled: true, reply: optInMessage(), result: 'opted_in', staffId: staffId ?? undefined };
+    return { handled: true, reply: optInMessage(business), result: 'opted_in', staffId: staffId ?? undefined };
   }
 
   if (!recipient) {
@@ -633,7 +636,7 @@ export async function handleInboundReply(params: {
       outcome: 'declined', responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
     return {
-      handled: true, reply: declinedMessage(), result: 'declined',
+      handled: true, reply: declinedMessage(business), result: 'declined',
       raceId: race.id, staffId: recipient.staff_id,
     };
   }
@@ -653,7 +656,7 @@ export async function handleInboundReply(params: {
       is_available: true, responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
     return {
-      handled: true, reply: availabilityAckMessage(), result: 'available_ack',
+      handled: true, reply: availabilityAckMessage(business), result: 'available_ack',
       raceId: race.id, staffId: recipient.staff_id,
     };
   }
@@ -675,7 +678,7 @@ export async function handleInboundReply(params: {
       outcome: 'lost', responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
     return {
-      handled: true, reply: tooLateMessage(summary), result: 'too_late',
+      handled: true, reply: tooLateMessage(summary, business), result: 'too_late',
       raceId: race.id, staffId: recipient.staff_id,
     };
   }
@@ -694,7 +697,7 @@ export async function handleInboundReply(params: {
 
   return {
     handled: true,
-    reply: winnerMessage(summary, staff?.name ?? 'there'),
+    reply: winnerMessage(summary, staff?.name ?? 'there', business),
     result: 'won',
     raceId: race.id,
     staffId: recipient.staff_id,
@@ -810,11 +813,11 @@ async function onRaceWon(
     r => r.phone_e164 && r.send_status === 'sent' && r.outcome !== 'declined'
   );
 
-  const names = await staffNames(toNotify.map(r => r.staff_id));
+  const [names, business] = await Promise.all([staffNames(toNotify.map(r => r.staff_id)), getBusinessName()]);
 
   await Promise.allSettled(toNotify.map(r => sendSms({
     to: r.phone_e164!,
-    body: coveredMessage(summary),
+    body: coveredMessage(summary, business),
     kind: 'covered',
     raceId,
     staffId: r.staff_id,

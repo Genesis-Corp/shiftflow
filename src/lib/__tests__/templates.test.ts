@@ -11,19 +11,22 @@ const SHIFT = {
   departmentName: 'Bakery',
 };
 
+const BUSINESS = "Farmer Jack's";
+const STAFF = 'Christopher';
+
 describe('message templates', () => {
   it('trims the seconds Postgres returns on a time column', () => {
     expect(formatShiftTimes('09:00:00', '17:00:00')).toBe('09:00-17:00');
-    expect(availabilityMessage(SHIFT)).not.toContain(':00:00');
+    expect(availabilityMessage(SHIFT, STAFF, BUSINESS)).not.toContain(':00:00');
   });
 
-  it('keeps every message to a single SMS segment', () => {
+  it('keeps every short outcome message to a single SMS segment', () => {
     // At 161 GSM-7 characters the cost silently doubles.
     const messages = [
-      winnerMessage(SHIFT, 'Christopher'),
-      coveredMessage(SHIFT),
-      tooLateMessage(SHIFT),
-      declinedMessage(),
+      winnerMessage(SHIFT, 'Christopher', BUSINESS),
+      coveredMessage(SHIFT, BUSINESS),
+      tooLateMessage(SHIFT, BUSINESS),
+      declinedMessage(BUSINESS),
     ];
     for (const m of messages) {
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
@@ -31,8 +34,8 @@ describe('message templates', () => {
   });
 
   it('uses only GSM-7 characters, so no message drops to a 70-char segment', () => {
-    expect(isGsm7(availabilityMessage(SHIFT))).toBe(true);
-    expect(isGsm7(coveredMessage(SHIFT))).toBe(true);
+    expect(isGsm7(availabilityMessage(SHIFT, STAFF, BUSINESS))).toBe(true);
+    expect(isGsm7(coveredMessage(SHIFT, BUSINESS))).toBe(true);
   });
 });
 
@@ -43,36 +46,52 @@ describe('gather-tier and manager-pick messages', () => {
   ];
 
   it('asks availability without a claim code or "first reply wins", but still offers an opt-out', () => {
-    const msg = availabilityMessage(SHIFT);
+    const msg = availabilityMessage(SHIFT, STAFF, BUSINESS);
     expect(msg).not.toContain('claim');
     expect(msg).not.toContain('first reply wins');
     expect(msg).toContain('YES or NO');
     expect(msg).toContain('STOP');
   });
 
-  it('opens the availability ask with the manager\'s name too', () => {
-    const withName = availabilityMessage(SHIFT, 'John');
-    expect(withName.startsWith("Hey it's John - ")).toBe(true);
-    expect(availabilityMessage(SHIFT).startsWith("Hey it's")).toBe(false);
+  it('greets the staff member by name and identifies the business, with or without a manager', () => {
+    const withManager = availabilityMessage(SHIFT, STAFF, BUSINESS, 'John');
+    expect(withManager.startsWith(`Hey ${STAFF}, it's John from ${BUSINESS},`)).toBe(true);
 
-    const withNullName = availabilityMessage(SHIFT, null);
-    expect(withNullName).toBe(availabilityMessage(SHIFT));
+    const withoutManager = availabilityMessage(SHIFT, STAFF, BUSINESS);
+    expect(withoutManager.startsWith(`Hey ${STAFF}, it's ${BUSINESS},`)).toBe(true);
+
+    const withNullManager = availabilityMessage(SHIFT, STAFF, BUSINESS, null);
+    expect(withNullManager).toBe(withoutManager);
+  });
+
+  it('puts STOP before the YES/NO line, not last — so a phone\'s quick-reply suggestions favour YES/NO', () => {
+    const msg = availabilityMessage(SHIFT, STAFF, BUSINESS, 'John');
+    const lines = msg.split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[2]).toBe('Reply STOP to opt out.');
+    expect(lines[3]).toContain('Reply YES or NO');
+  });
+
+  it('says "we will confirm", never that the shift is already theirs', () => {
+    const msg = availabilityMessage(SHIFT, STAFF, BUSINESS);
+    expect(msg.toLowerCase()).not.toContain('yours');
+    expect(msg).toContain('we will confirm the shift shortly after');
   });
 
   it('the immediate tier\'s urgent ask also carries no claim code but does offer an opt-out', () => {
-    const msg = urgentAvailabilityMessage(SHIFT, false);
+    const msg = urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS);
     expect(msg).not.toContain('claim');
     expect(msg).not.toContain('first reply wins');
     expect(msg).toContain('YES or NO');
+    expect(msg).toContain('ASAP');
     expect(msg).toContain('STOP');
-    expect(smsSegments(msg)).toBe(1);
 
-    const withName = urgentAvailabilityMessage(SHIFT, false, 'John');
-    expect(withName.startsWith("Hey it's John - ")).toBe(true);
+    const withName = urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS, 'John');
+    expect(withName.startsWith(`Hey ${STAFF}, it's John from ${BUSINESS},`)).toBe(true);
   });
 
   it('acknowledges a gather-tier yes without implying it won the shift', () => {
-    const msg = availabilityAckMessage();
+    const msg = availabilityAckMessage(BUSINESS);
     expect(msg.toLowerCase()).not.toContain('yours');
     expect(msg.toLowerCase()).not.toContain('win');
   });
@@ -96,8 +115,7 @@ describe('gather-tier and manager-pick messages', () => {
     // These previously used an em dash outside the GSM-7 alphabet, which
     // silently doubled the segment count — plain hyphens keep them GSM-7.
     const messages = [
-      availabilityMessage(SHIFT),
-      availabilityAckMessage(),
+      availabilityAckMessage(BUSINESS),
       managerListMessage(SHIFT, OPTIONS),
       managerListMessage(SHIFT, []),
       managerStaleSelectionMessage(),
@@ -109,6 +127,15 @@ describe('gather-tier and manager-pick messages', () => {
       expect(isGsm7(m), `"${m}" is not GSM-7`).toBe(true);
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
     }
+  });
+
+  it('the four-line availability ask costs 2 segments, not 1 — a deliberate tradeoff for readability', () => {
+    // Four full sentences (sender ID, the ask, opt-out, what happens next)
+    // don't fit in 160 GSM-7 chars. Documented here so the cost is visible
+    // in the test suite rather than discovered by a phone bill.
+    const msg = availabilityMessage(SHIFT, STAFF, BUSINESS, 'John');
+    expect(isGsm7(msg)).toBe(true);
+    expect(smsSegments(msg)).toBe(2);
   });
 });
 
@@ -150,15 +177,15 @@ describe('date-relative messages, against the real clock', () => {
     // Noon in Perth (UTC+8) on the shift's own date.
     vi.useFakeTimers();
     vi.setSystemTime(new Date(`${SHIFT.date}T04:00:00Z`));
-    expect(availabilityMessage(SHIFT)).toContain('Today');
-    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('today');
+    expect(availabilityMessage(SHIFT, STAFF, BUSINESS)).toContain('Today');
+    expect(urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS)).toContain('today');
   });
 
   it('reads "Tomorrow" when the shift is the day after the current date', () => {
     // Noon in Perth the day before the shift.
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-14T04:00:00Z'));
-    expect(availabilityMessage(SHIFT)).toContain('Tomorrow');
+    expect(availabilityMessage(SHIFT, STAFF, BUSINESS)).toContain('Tomorrow');
   });
 });
 

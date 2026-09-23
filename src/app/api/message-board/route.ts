@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { requireUser, unauthorized } from '@/lib/auth';
 import { sendSms } from '@/lib/sms/send';
 import { broadcastMessage } from '@/lib/sms/templates';
-import { isQuietHours, getTimezone } from '@/lib/sms/config';
+import { isQuietHours, getTimezone, getBusinessName } from '@/lib/sms/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -113,11 +113,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { data: profile } = await supabaseAdmin
-    .from('manager_profiles').select('name').eq('user_id', user.id).maybeSingle();
+  const [{ data: profile }, business] = await Promise.all([
+    supabaseAdmin.from('manager_profiles').select('name').eq('user_id', user.id).maybeSingle(),
+    getBusinessName(),
+  ]);
   const managerName = profile?.name ?? null;
 
-  const finalBody = broadcastMessage(body.trim(), urgency, managerName);
+  const finalBody = broadcastMessage(body.trim(), urgency, business, managerName);
 
   let sentCount = 0;
   let failedCount = 0;

@@ -242,7 +242,7 @@ describe('immediate tier end-to-end', () => {
     expect(messagesTo(C.phone_e164)).toHaveLength(0);
     expect(messagesTo(D.phone_e164)).toHaveLength(0);
     const aBody = bodyOf(messagesTo(A.phone_e164)[0]);
-    expect(aBody).toContain("Hey it's Jamie");
+    expect(aBody).toContain("Hey Alice, it's Jamie");
     expect(aBody).toContain('ASAP');
     expect(aBody).not.toContain('claim');
     expect(aBody).not.toMatch(/YES [A-Z0-9]{4}/);
@@ -314,7 +314,7 @@ describe('gather tier end-to-end', () => {
     for (const c of [E, F, G]) {
       const msgs = messagesTo(c.phone_e164);
       expect(msgs).toHaveLength(1);
-      expect(msgs[0].body).toContain('are you available');
+      expect(msgs[0].body).toMatch(/are you available/i);
       expect(msgs[0].body).not.toContain('claim');
     }
 
@@ -375,7 +375,7 @@ describe('gather tier end-to-end', () => {
     expect(finnMsgs.length).toBeGreaterThanOrEqual(1);
     const lastFinnMsg = finnMsgs[finnMsgs.length - 1];
     expect(lastFinnMsg.body).not.toMatch(/YES [A-Z0-9]{4}/);
-    expect(lastFinnMsg.body).toContain('are you available');
+    expect(lastFinnMsg.body).toMatch(/are you available/i);
 
     const won = await handleInboundReply({ from: F.phone_e164, body: 'YES' });
     expect(won.result).toBe('won');
@@ -404,7 +404,7 @@ describe('sequential tier end-to-end', () => {
     expect(messagesTo(H.phone_e164)).toHaveLength(1);
     expect(messagesTo(I.phone_e164)).toHaveLength(0);
     const hBody = bodyOf(messagesTo(H.phone_e164)[0]);
-    expect(hBody).toContain('are you available');
+    expect(hBody).toMatch(/are you available/i);
     expect(hBody).not.toMatch(/YES [A-Z0-9]{4}/);
 
     // Past the 4-hour step, with no reply from Hana.

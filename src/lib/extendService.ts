@@ -5,7 +5,7 @@ import {
 } from '@/lib/shiftUtils';
 import { sendSms } from '@/lib/sms/send';
 import { extendAskMessage, extendConfirmedMessage, declinedMessage, tooLateMessage, ShiftSummary } from '@/lib/sms/templates';
-import { getExpiryMinutes } from '@/lib/sms/config';
+import { getExpiryMinutes, getBusinessName } from '@/lib/sms/config';
 import { parseInboundMessage } from '@/lib/claimRace';
 
 /**
@@ -135,7 +135,8 @@ export async function requestExtension(
     .single();
   if (insertErr) throw new ExtendError(`Could not create the request: ${insertErr.message}`, 500);
 
-  const body = extendAskMessage(dept?.name ?? 'their department', existing.start_time, merged.start_time, null);
+  const business = await getBusinessName();
+  const body = extendAskMessage(dept?.name ?? 'their department', existing.start_time, merged.start_time, business, null);
   await sendSms({ to: staff.phone_e164, body, kind: 'extend_ask', staffId });
 
   return { applied: false, pending: true, requestId: request.id };
@@ -166,6 +167,8 @@ export async function handleExtendReply(from: string, body: string): Promise<Ext
   const parsed = parseInboundMessage(body);
   if (parsed.intent !== 'yes' && parsed.intent !== 'no') return null;
 
+  const business = await getBusinessName();
+
   if (parsed.intent === 'no') {
     const { data: updated } = await supabaseAdmin
       .from('shift_extend_requests')
@@ -174,7 +177,7 @@ export async function handleExtendReply(from: string, body: string): Promise<Ext
       .select().maybeSingle();
     // Already resolved (expired, or a duplicate reply) — say nothing new.
     if (!updated) return { handled: true, reply: null, result: 'extend_declined', staffId: match.staff_id };
-    return { handled: true, reply: declinedMessage(), result: 'extend_declined', staffId: match.staff_id };
+    return { handled: true, reply: declinedMessage(business), result: 'extend_declined', staffId: match.staff_id };
   }
 
   // YES — claim it. The conditional update is the same atomicity guard the
@@ -200,7 +203,7 @@ export async function handleExtendReply(from: string, body: string): Promise<Ext
       : null;
     return {
       handled: true,
-      reply: summary ? tooLateMessage(summary) : null,
+      reply: summary ? tooLateMessage(summary, business) : null,
       result: 'extend_too_late',
       staffId: match.staff_id,
     };
@@ -209,7 +212,7 @@ export async function handleExtendReply(from: string, body: string): Promise<Ext
   await applyExtension(openShift, existing, { start_time: claimed.proposed_start_time, end_time: claimed.proposed_end_time });
   return {
     handled: true,
-    reply: extendConfirmedMessage(claimed.proposed_start_time),
+    reply: extendConfirmedMessage(claimed.proposed_start_time, business),
     result: 'extend_confirmed',
     staffId: match.staff_id,
   };

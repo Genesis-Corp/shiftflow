@@ -16,7 +16,7 @@ export async function GET() {
   const { data, error } = await supabase.from('store_settings').select('*').eq('id', 'current').maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(
-    data ?? { id: 'current', country: null, state: null, quiet_hours_start: null, quiet_hours_end: null }
+    data ?? { id: 'current', country: null, state: null, quiet_hours_start: null, quiet_hours_end: null, business_name: null }
   );
 }
 
@@ -35,6 +35,11 @@ export async function PUT(req: NextRequest) {
     if (!country) return NextResponse.json({ error: 'country is required.' }, { status: 400 });
     updates.country = country;
     updates.state = typeof body?.state === 'string' && body.state.trim() ? body.state.trim().toUpperCase() : null;
+  }
+
+  if (body?.business_name !== undefined) {
+    const name = typeof body.business_name === 'string' ? body.business_name.trim() : '';
+    updates.business_name = name || null;
   }
 
   if (body?.quiet_hours_start !== undefined || body?.quiet_hours_end !== undefined) {

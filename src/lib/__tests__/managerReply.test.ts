@@ -8,6 +8,8 @@ import {
 const SHIFT = {
   date: '2026-09-18', start_time: '09:00:00', end_time: '17:00:00', departmentName: 'Checkout',
 };
+const BUSINESS = "Farmer Jack's";
+const STAFF = 'Dave';
 
 describe('parseManagerReply', () => {
   it('reads a bare number as a pick', () => {
@@ -72,8 +74,8 @@ describe('allocateOptionNumber', () => {
 
 describe('availability flow copy', () => {
   it('asks about availability without offering the shift or a claim code, but still offers an opt-out', () => {
-    const msg = availabilityMessage(SHIFT);
-    expect(msg).toContain('are you available');
+    const msg = availabilityMessage(SHIFT, STAFF, BUSINESS);
+    expect(msg).toMatch(/are you available/i);
     expect(msg).toContain('Checkout');
     expect(msg).not.toMatch(/first reply wins/i);
     expect(msg).not.toMatch(/claim/i);
@@ -81,31 +83,28 @@ describe('availability flow copy', () => {
   });
 
   it('says somebody is needed now in the no-show case', () => {
-    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('ASAP');
-    expect(urgentAvailabilityMessage(SHIFT, false)).toContain('today');
+    expect(urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS)).toContain('ASAP');
+    expect(urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS)).toContain('today');
   });
 
   it('says "tonight" instead of "today" once asked for after 5pm', () => {
-    expect(urgentAvailabilityMessage(SHIFT, true)).toContain('tonight');
-    expect(urgentAvailabilityMessage(SHIFT, true)).not.toContain('today');
+    expect(urgentAvailabilityMessage(SHIFT, true, STAFF, BUSINESS)).toContain('tonight');
+    expect(urgentAvailabilityMessage(SHIFT, true, STAFF, BUSINESS)).not.toContain('today');
   });
 
-  it('opens with the starting manager\'s name, same as the other tiers', () => {
-    const withName = urgentAvailabilityMessage(SHIFT, false, 'John');
-    expect(withName.startsWith("Hey it's John - ")).toBe(true);
-    expect(urgentAvailabilityMessage(SHIFT, false).startsWith("Hey it's")).toBe(false);
+  it('opens with the staff member\'s name and the starting manager\'s name, same as the other tiers', () => {
+    const withName = urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS, 'John');
+    expect(withName.startsWith(`Hey ${STAFF}, it's John from ${BUSINESS},`)).toBe(true);
+    expect(urgentAvailabilityMessage(SHIFT, false, STAFF, BUSINESS).startsWith(`Hey ${STAFF}, it's John`)).toBe(false);
   });
 
   it('uses the wording the store manager asked for', () => {
-    expect(acceptedMessage()).toContain('thank you for accepting the shift, see you soon!');
-    expect(notSelectedMessage()).toContain('unfortunately it has been covered');
+    expect(acceptedMessage(BUSINESS)).toContain('thank you for accepting the shift, see you soon!');
+    expect(notSelectedMessage(BUSINESS)).toContain('unfortunately it has been covered');
   });
 
-  it('keeps every staff-facing message to one segment', () => {
-    for (const m of [
-      availabilityMessage(SHIFT), urgentAvailabilityMessage(SHIFT, false), urgentAvailabilityMessage(SHIFT, true),
-      acceptedMessage(), notSelectedMessage(),
-    ]) {
+  it('keeps the short outcome messages to one segment (the four-line availability ask is documented as 2 in templates.test.ts)', () => {
+    for (const m of [acceptedMessage(BUSINESS), notSelectedMessage(BUSINESS)]) {
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
       expect(isGsm7(m), `"${m}" has a non-GSM character`).toBe(true);
     }

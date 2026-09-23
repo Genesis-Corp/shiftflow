@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign, CalendarDays, Clock, Sparkles, Globe, Moon } from 'lucide-react';
+import { Camera, FileText, FileSpreadsheet, Table2, Loader2, Trash2, Plus, AlertTriangle, DollarSign, CalendarDays, Clock, Sparkles, Globe, Moon, Store } from 'lucide-react';
 import Modal from '@/components/Modal';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
@@ -38,6 +38,7 @@ interface WagesData {
 }
 
 interface StoreSettings {
+  business_name: string | null;
   id: string;
   country: string | null;
   state: string | null;
@@ -111,6 +112,10 @@ export default function WageTable() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  const [businessNameInput, setBusinessNameInput] = useState('');
+  const [savingBusinessName, setSavingBusinessName] = useState(false);
+  const [businessNameError, setBusinessNameError] = useState('');
+
   const [quietStartInput, setQuietStartInput] = useState('');
   const [quietEndInput, setQuietEndInput] = useState('');
   const [savingQuietHours, setSavingQuietHours] = useState(false);
@@ -143,6 +148,7 @@ export default function WageTable() {
       setStateInput(result.state ?? '');
       setQuietStartInput(result.quiet_hours_start?.slice(0, 5) ?? '');
       setQuietEndInput(result.quiet_hours_end?.slice(0, 5) ?? '');
+      setBusinessNameInput(result.business_name ?? '');
     } catch {
       // Store settings aren't essential to the rest of the page — leave the inputs blank rather than blocking.
     }
@@ -344,6 +350,19 @@ export default function WageTable() {
     });
     setSavingSettings(false);
     if (!res.ok) { const d = await res.json().catch(() => ({})); setError(d.error ?? 'Could not save store settings.'); return; }
+    loadSettings();
+  }
+
+  async function saveBusinessName(e: React.FormEvent) {
+    e.preventDefault();
+    setBusinessNameError('');
+    setSavingBusinessName(true);
+    const res = await fetch('/api/settings/store', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ business_name: businessNameInput.trim() || null }),
+    });
+    setSavingBusinessName(false);
+    if (!res.ok) { const d = await res.json().catch(() => ({})); setBusinessNameError(d.error ?? 'Could not save the store name.'); return; }
     loadSettings();
   }
 
@@ -662,6 +681,31 @@ export default function WageTable() {
             </button>
           </form>
         )}
+      </div>
+
+      {/* ── Store name ───────────────────────────────────────────────────── */}
+      <div className="card p-5">
+        <h2 className="font-semibold text-slate-800 flex items-center gap-2 mb-1">
+          <Store size={16} className="text-slate-400" /> Store Name
+        </h2>
+        <p className="text-xs text-slate-500 mb-3">
+          How every shift-cover text identifies itself to staff — e.g. &quot;Hey Dave, it&apos;s Sarah from{' '}
+          {businessNameInput.trim() || 'Your Store'}&quot;.
+        </p>
+
+        <form onSubmit={saveBusinessName} className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Name</label>
+            <input
+              className="input text-base sm:text-xs px-2 py-1.5 w-56" placeholder="Farmer Jack's"
+              value={businessNameInput} onChange={e => setBusinessNameInput(e.target.value)}
+            />
+          </div>
+          <button type="submit" disabled={savingBusinessName} className="btn-secondary text-xs px-2 py-1.5 flex items-center gap-1">
+            <Store size={12} /> {savingBusinessName ? 'Saving…' : 'Save'}
+          </button>
+        </form>
+        {businessNameError && <p className="text-xs text-red-600 mt-2">{businessNameError}</p>}
       </div>
 
       {/* ── SMS quiet hours ─────────────────────────────────────────────── */}
