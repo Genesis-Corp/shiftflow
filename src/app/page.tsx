@@ -16,18 +16,30 @@ interface Stats {
   todayShifts: number;
 }
 
-interface AttentionStaff { id: string; name: string; reasons: string[] }
+type AttentionReasonType = 'no_phone' | 'opted_out' | 'low_reliability' | 'overworked' | 'no_shifts';
+interface AttentionReason { type: AttentionReasonType; label: string }
+interface AttentionStaff { id: string; name: string; reasons: AttentionReason[] }
 interface HighAchiever { id: string; name: string; score: number }
 
 const NEEDS_ATTENTION_HOURS_CAP = 38 * 60;
 const HIGH_ACHIEVER_THRESHOLD = 80;
 const LOW_RELIABILITY_THRESHOLD = 50;
 
+const ATTENTION_FILTERS: { value: AttentionReasonType | 'all'; label: string }[] = [
+  { value: 'all', label: 'All reasons' },
+  { value: 'no_phone', label: 'No phone number' },
+  { value: 'opted_out', label: 'Opted out of SMS' },
+  { value: 'low_reliability', label: 'Low reliability' },
+  { value: 'overworked', label: 'Overworked (38h+)' },
+  { value: 'no_shifts', label: 'No shifts this week' },
+];
+
 export default function Dashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [openShifts, setOpenShifts] = useState<{ id: string; date: string; start_time: string; end_time: string; departments: { name: string } }[]>([]);
   const [needsAttention, setNeedsAttention] = useState<AttentionStaff[]>([]);
   const [highAchievers, setHighAchievers] = useState<HighAchiever[]>([]);
+  const [attentionFilter, setAttentionFilter] = useState<AttentionReasonType | 'all'>('all');
   const today = todayStr();
 
   useEffect(() => {
@@ -70,18 +82,18 @@ export default function Dashboard() {
         if (!s.active) continue;
         const minutes = weeklyMinutes.get(s.id) ?? 0;
         const score = s.reliability_score ?? 50;
-        const reasons: string[] = [];
-        if (!s.phone && !s.phone_e164) reasons.push('No phone number on file');
+        const reasons: AttentionReason[] = [];
+        if (!s.phone && !s.phone_e164) reasons.push({ type: 'no_phone', label: 'No phone number on file' });
         // Surfaced here rather than penalised on reliability — that score
         // tracks shift attendance, not texting preferences, and STOP has to
         // stay a free, no-consequence opt-out or the business risks the
         // whole SMS number getting suspended for spam-law non-compliance.
         // This is the honest lever: a manager sees it and follows up in
         // person, rather than it sitting invisible in the database.
-        if (s.sms_opt_out) reasons.push('Opted out of SMS — won’t be offered shifts by text');
-        if (score < LOW_RELIABILITY_THRESHOLD) reasons.push('Low reliability');
-        if (minutes > NEEDS_ATTENTION_HOURS_CAP) reasons.push(`${(minutes / 60).toFixed(1)}h rostered this week`);
-        if (minutes === 0) reasons.push('No shifts rostered this week');
+        if (s.sms_opt_out) reasons.push({ type: 'opted_out', label: 'Opted out of SMS — won’t be offered shifts by text' });
+        if (score < LOW_RELIABILITY_THRESHOLD) reasons.push({ type: 'low_reliability', label: 'Low reliability' });
+        if (minutes > NEEDS_ATTENTION_HOURS_CAP) reasons.push({ type: 'overworked', label: `${(minutes / 60).toFixed(1)}h rostered this week` });
+        if (minutes === 0) reasons.push({ type: 'no_shifts', label: 'No shifts rostered this week' });
         if (reasons.length) attention.push({ id: s.id, name: s.name, reasons });
         if (score > HIGH_ACHIEVER_THRESHOLD) achievers.push({ id: s.id, name: s.name, score });
       }
@@ -175,29 +187,53 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle size={16} className="text-amber-500" />
-            <h2 className="font-semibold text-slate-800">Needs Attention</h2>
-          </div>
-          {needsAttention.length === 0 ? (
-            <p className="text-slate-400 text-sm">Nothing needs attention right now.</p>
-          ) : (
-            <div className="space-y-2">
-              {needsAttention.map(s => (
-                <div key={s.id} className="flex items-start justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
-                  <StaffName staffId={s.id} name={s.name} className="text-sm font-medium text-slate-700" />
-                  <div className="flex flex-wrap gap-1 justify-end">
-                    {s.reasons.map(r => (
-                      <span key={r} className="badge-amber text-[11px]">
-                        {r === 'No phone number on file' && <Phone size={10} className="mr-1" />}
-                        {r}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-500" />
+              <h2 className="font-semibold text-slate-800">Needs Attention</h2>
             </div>
-          )}
+            <select
+              value={attentionFilter}
+              onChange={e => setAttentionFilter(e.target.value as AttentionReasonType | 'all')}
+              className="input py-1 w-auto text-xs sm:text-xs"
+              aria-label="Filter by"
+            >
+              {ATTENTION_FILTERS.map(f => (
+                <option key={f.value} value={f.value}>{f.value === 'all' ? 'Filter By: All reasons' : `Filter By: ${f.label}`}</option>
+              ))}
+            </select>
+          </div>
+          {(() => {
+            const filtered = attentionFilter === 'all'
+              ? needsAttention
+              : needsAttention.filter(s => s.reasons.some(r => r.type === attentionFilter));
+            if (filtered.length === 0) {
+              return (
+                <p className="text-slate-400 text-sm">
+                  {needsAttention.length === 0 ? 'Nothing needs attention right now.' : 'Nobody matches that filter.'}
+                </p>
+              );
+            }
+            return (
+              <div className="space-y-2">
+                {filtered.map(s => (
+                  <div key={s.id} className="flex items-start justify-between gap-2 py-2 border-b border-slate-100 last:border-0">
+                    <StaffName staffId={s.id} name={s.name} className="text-sm font-medium text-slate-700" />
+                    <div className="flex flex-wrap gap-1 justify-end">
+                      {s.reasons
+                        .filter(r => attentionFilter === 'all' || r.type === attentionFilter)
+                        .map(r => (
+                          <span key={r.type} className="badge-amber text-[11px]">
+                            {r.type === 'no_phone' && <Phone size={10} className="mr-1" />}
+                            {r.label}
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>
 
         <div className="card p-4">
