@@ -70,9 +70,12 @@ export function tooLateMessage(shift: ShiftSummary, business: string): string {
   return `${business}: sorry, the ${describeShift(shift)} shift has already been covered by someone else.`;
 }
 
-/** Acknowledges an explicit NO, so the reply isn't met with silence. */
-export function declinedMessage(business: string): string {
-  return `${business}: no worries, thanks for letting us know.`;
+/** Acknowledges an explicit NO, so the reply isn't met with silence. Always a
+ *  reply within a conversation they started (never the opening message on a
+ *  new race), so it skips the business-name/opt-out preamble the Spam Act
+ *  requires on an unsolicited message. */
+export function declinedMessage(): string {
+  return `No worries, thanks for letting us know.`;
 }
 
 /** Confirms an opt-out. */
@@ -224,7 +227,7 @@ export function managerListMessage(
   options: { option: number; name: string; cost: number | null }[]
 ): string {
   if (options.length === 0) {
-    return `${SYSTEM}: nobody is available for ${describeShift(shift)}. It is still uncovered.`;
+    return `${SYSTEM}: nobody is available for ${describeShift(shift)}. It is still not covered.`;
   }
   const lines = options
     .map(o => `${o.option}. ${o.name} - ${o.cost === null ? 'no rate' : `$${o.cost.toFixed(2)}`}`)
@@ -253,7 +256,7 @@ export function managerInvalidPickMessage(): string {
 export function managerOutcomeMessage(shift: ShiftSummary, winnerName: string | null): string {
   return winnerName
     ? `${SYSTEM}: ${winnerName} will cover ${describeShift(shift)}.`
-    : `${SYSTEM}: nobody was available for ${describeShift(shift)}. It is still uncovered.`;
+    : `${SYSTEM}: nobody was available for ${describeShift(shift)}. It is still not covered.`;
 }
 
 // isGsm7 / smsSegments now live in ./segments (re-exported above) so the

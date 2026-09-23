@@ -78,6 +78,11 @@ export default function CoverShiftPage() {
   const [loading, setLoading] = useState(false);
   const [incidentLoading, setIncidentLoading] = useState('');
   const [extending, setExtending] = useState<string | null>(null);
+  // Set when a claim race just ran out of tiers with nobody having said
+  // yes — shown instead of silently re-listing the same people eligibility
+  // still considers "available" (it doesn't know they were just asked).
+  const [noStaffAvailable, setNoStaffAvailable] = useState(false);
+  const [closingShift, setClosingShift] = useState(false);
   // staffId -> true once "Extend their shift" comes back pending (an
   // earlier-start ask that's gone out by SMS and hasn't been answered yet).
   const [pendingExtends, setPendingExtends] = useState<Record<string, boolean>>({});
@@ -135,6 +140,7 @@ export default function CoverShiftPage() {
     setResult(null);
     setRaceId(null);
     setRaceError('');
+    setNoStaffAvailable(false);
   }
 
   /** A shift stays 'open' for its whole duration, including while a claim
@@ -155,6 +161,7 @@ export default function CoverShiftPage() {
     setResult(null);
     setRaceError('');
     setRaceId(shift.active_race_id);
+    setNoStaffAvailable(false);
   }
 
   /** `expand` ignores department training entirely (still respects
@@ -167,7 +174,7 @@ export default function CoverShiftPage() {
     // Starting a fresh search supersedes whatever was on screen before —
     // without this, a race left showing from an earlier shift hid this
     // search's own results, since they only render while raceId is unset.
-    setLoading(true); setResult(null); setRaceError(''); setRaceId(null); setPreview(null);
+    setLoading(true); setResult(null); setRaceError(''); setRaceId(null); setPreview(null); setNoStaffAvailable(false);
     const res = await fetch('/api/cover-shift', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, shift_id: selectedShiftId, expand_search: expand }),
@@ -223,6 +230,27 @@ export default function CoverShiftPage() {
     setPreview(null);
     if (!res.ok) { setRaceError(data.error ?? 'Could not start the race'); return; }
     setRaceId(data.raceId);
+  }
+
+  /** Gives up on covering this shift — used from the "no trained staff
+   *  available" state once a race has run out of tiers with nobody saying
+   *  yes. Marks it cancelled rather than deleting it, so it still shows up
+   *  (faded) in the shift history instead of vanishing. */
+  async function closeShift() {
+    if (!selectedShiftId) return;
+    if (!confirm('Close this shift with nobody covering it? It will be marked cancelled.')) return;
+    setClosingShift(true); setRaceError('');
+    const res = await fetch(`/api/shifts/${selectedShiftId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'cancelled' }),
+    });
+    const data = await res.json();
+    setClosingShift(false);
+    if (!res.ok) { setRaceError(data.error ?? 'Could not close the shift'); return; }
+    setNoStaffAvailable(false);
+    setResult(null);
+    setSelectedShiftId(null);
+    await loadOpenShifts();
   }
 
   /** Extend someone's existing overlapping shift to cover this one instead of double-booking them.
@@ -455,12 +483,38 @@ export default function CoverShiftPage() {
         <RaceStatusPanel
           raceId={raceId}
           config={smsConfig}
-          onFinished={() => { loadOpenShifts(); findCover(); }}
+          onFinished={(detail) => {
+            loadOpenShifts();
+            const won = detail.recipients.filter(r => r.outcome === 'won').length;
+            // Ran out of tiers with nobody saying yes — don't just silently
+            // re-list the same people; eligibility has no memory of who was
+            // just asked and would offer them straight back up.
+            if (detail.race.status === 'expired' && won === 0) {
+              setRaceId(null);
+              setNoStaffAvailable(true);
+              return;
+            }
+            findCover();
+          }}
         />
       )}
 
+      {noStaffAvailable && !raceId && (
+        <div className="card p-8 text-center space-y-4">
+          <p className="text-slate-500 font-medium">No trained staff members available.</p>
+          <div className="flex items-center justify-center gap-3">
+            <button onClick={() => findCover(true)} disabled={loading} className="btn-secondary">
+              <Users size={14} /> Expand Search
+            </button>
+            <button onClick={closeShift} disabled={closingShift} className="btn-secondary text-red-600">
+              {closingShift ? <Loader2 size={14} className="animate-spin" /> : <XCircle size={14} />} Close Shift
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Results */}
-      {result && !raceId && (
+      {result && !raceId && !noStaffAvailable && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <p className="text-slate-700">

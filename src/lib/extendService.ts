@@ -177,7 +177,7 @@ export async function handleExtendReply(from: string, body: string): Promise<Ext
       .select().maybeSingle();
     // Already resolved (expired, or a duplicate reply) — say nothing new.
     if (!updated) return { handled: true, reply: null, result: 'extend_declined', staffId: match.staff_id };
-    return { handled: true, reply: declinedMessage(business), result: 'extend_declined', staffId: match.staff_id };
+    return { handled: true, reply: declinedMessage(), result: 'extend_declined', staffId: match.staff_id };
   }
 
   // YES — claim it. The conditional update is the same atomicity guard the

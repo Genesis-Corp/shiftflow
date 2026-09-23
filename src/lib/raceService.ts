@@ -643,7 +643,7 @@ export async function handleInboundReply(params: {
       outcome: 'declined', responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
     return {
-      handled: true, reply: declinedMessage(business), result: 'declined',
+      handled: true, reply: declinedMessage(), result: 'declined',
       raceId: race.id, staffId: recipient.staff_id,
     };
   }

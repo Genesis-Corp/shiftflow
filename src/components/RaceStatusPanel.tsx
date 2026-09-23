@@ -16,7 +16,10 @@ export default function RaceStatusPanel({
 }: {
   raceId: string;
   config: SmsConfig | null;
-  onFinished?: () => void;
+  /** Called once the race leaves 'active'/'awaiting_pick', with the final
+   *  race detail — the caller needs the outcome (status, who won) to decide
+   *  what to show next, not just that something happened. */
+  onFinished?: (detail: RaceDetail) => void;
 }) {
   const [detail, setDetail] = useState<RaceDetail | null>(null);
   const [error, setError] = useState('');
@@ -40,7 +43,7 @@ export default function RaceStatusPanel({
     if (!inProgress(detail?.race.status)) return;
     const t = setInterval(async () => {
       const next = await load();
-      if (next && !inProgress(next.race.status)) onFinished?.();
+      if (next && !inProgress(next.race.status)) onFinished?.(next);
     }, POLL_MS);
     return () => clearInterval(t);
   }, [detail?.race.status, load, onFinished]);
@@ -59,7 +62,7 @@ export default function RaceStatusPanel({
     if (!res.ok) setError((await res.json()).error ?? 'Simulation failed');
     setBusy('');
     const next = await load();
-    if (next && next.race.status !== 'active') onFinished?.();
+    if (next && next.race.status !== 'active') onFinished?.(next);
   }
 
   async function cancel() {
@@ -67,8 +70,8 @@ export default function RaceStatusPanel({
     setBusy('cancel');
     await fetch(`/api/claim-race/${raceId}`, { method: 'DELETE' });
     setBusy('');
-    await load();
-    onFinished?.();
+    const next = await load();
+    if (next) onFinished?.(next);
   }
 
   if (error) {

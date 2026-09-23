@@ -26,7 +26,7 @@ describe('message templates', () => {
       winnerMessage(SHIFT, 'Christopher', BUSINESS),
       coveredMessage(SHIFT, BUSINESS),
       tooLateMessage(SHIFT, BUSINESS),
-      declinedMessage(BUSINESS),
+      declinedMessage(),
     ];
     for (const m of messages) {
       expect(smsSegments(m), `"${m}" (${m.length} chars)`).toBe(1);
