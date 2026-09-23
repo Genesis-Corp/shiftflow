@@ -132,6 +132,31 @@ export function urgentAvailabilityMessage(shift: ShiftSummary, isTonight: boolea
     `${shift.departmentName}? Reply YES or NO ASAP. Reply STOP to opt out.`;
 }
 
+// ── Extend-earlier ask ───────────────────────────────────────────────────
+// Extending someone's rostered shift LATER is something a manager can just
+// ask in person — they're already on shift. Extending it EARLIER means
+// asking someone who isn't at the store yet, so that direction goes through
+// an SMS confirmation instead of applying instantly (see
+// extendService.ts). Not an opt-in race message, so — same as the Message
+// Board broadcast — it carries the Spam Act's identification + opt-out on
+// its own.
+
+/** Asks someone to come in earlier than their rostered start time.
+ *  `departmentName` and `existingStart` describe their shift as it stands
+ *  today; `proposedStart` is the earlier time being asked for. */
+export function extendAskMessage(
+  departmentName: string, existingStart: string, proposedStart: string, managerName?: string | null
+): string {
+  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
+  return `${greeting}${BUSINESS}: can you come in earlier today for ${departmentName}, ` +
+    `starting ${proposedStart.slice(0, 5)} instead of ${existingStart.slice(0, 5)}? Reply YES or NO. Reply STOP to opt out.`;
+}
+
+/** Confirms the earlier start once they reply YES. */
+export function extendConfirmedMessage(proposedStart: string): string {
+  return `${BUSINESS}: thanks, see you at ${proposedStart.slice(0, 5)}.`;
+}
+
 /** Sent to whoever the manager picked. */
 export function acceptedMessage(): string {
   return `${BUSINESS}: thank you for accepting the shift, see you soon!`;

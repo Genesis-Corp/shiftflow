@@ -10,6 +10,7 @@ import {
   IMMEDIATE_BATCH_SIZE, IMMEDIATE_BATCH_TIMEOUT_MINUTES, SEQUENTIAL_STEP_MINUTES,
 } from '@/lib/coverTiers';
 import { sendSms, logInbound } from '@/lib/sms/send';
+import { handleExtendReply } from '@/lib/extendService';
 import {
   winnerMessage, coveredMessage, tooLateMessage,
   declinedMessage, optOutMessage, optInMessage, availabilityMessage, availabilityAckMessage,
@@ -527,7 +528,8 @@ export interface ReplyOutcome {
   reply: string | null;      // message to send back to the sender
   result:
     | 'won' | 'too_late' | 'declined' | 'opted_out' | 'opted_in' | 'unmatched' | 'duplicate'
-    | 'available_ack' | 'manager_picked' | 'manager_invalid_pick' | 'manager_stale_pick';
+    | 'available_ack' | 'manager_picked' | 'manager_invalid_pick' | 'manager_stale_pick'
+    | 'extend_confirmed' | 'extend_declined' | 'extend_too_late';
   raceId?: string;
   staffId?: string;
 }
@@ -608,7 +610,13 @@ export async function handleInboundReply(params: {
     return { handled: true, reply: optInMessage(), result: 'opted_in', staffId: staffId ?? undefined };
   }
 
-  if (!recipient) return { handled: true, reply: null, result: 'unmatched' };
+  if (!recipient) {
+    // Not a claim-race reply — check whether it's someone answering a
+    // pending "come in earlier?" extend ask before giving up on it.
+    const extendOutcome = await handleExtendReply(from, body);
+    if (extendOutcome) return extendOutcome;
+    return { handled: true, reply: null, result: 'unmatched' };
+  }
 
   const { data: race } = await supabaseAdmin
     .from('shift_claim_races').select('*').eq('id', recipient.race_id).single();

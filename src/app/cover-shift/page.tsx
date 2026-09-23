@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Search, Trophy, Phone, CheckCircle, XCircle, PhoneMissed,
   CalendarClock, AlertTriangle, Loader2, ArrowRight, ShieldAlert, Users, ChevronDown, Radio, Building2,
+  MessageSquare, RefreshCw,
 } from 'lucide-react';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import Modal from '@/components/Modal';
@@ -77,6 +78,9 @@ export default function CoverShiftPage() {
   const [loading, setLoading] = useState(false);
   const [incidentLoading, setIncidentLoading] = useState('');
   const [extending, setExtending] = useState<string | null>(null);
+  // staffId -> true once "Extend their shift" comes back pending (an
+  // earlier-start ask that's gone out by SMS and hasn't been answered yet).
+  const [pendingExtends, setPendingExtends] = useState<Record<string, boolean>>({});
 
   const [preview, setPreview] = useState<RacePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -216,7 +220,9 @@ export default function CoverShiftPage() {
     setRaceId(data.raceId);
   }
 
-  /** Extend someone's existing overlapping shift to cover this one instead of double-booking them. */
+  /** Extend someone's existing overlapping shift to cover this one instead of double-booking them.
+   *  Extending later applies right away; extending earlier texts them first
+   *  (see requestExtension) and comes back pending instead. */
   async function extendShift(staffId: string) {
     if (!selectedShiftId) return;
     setExtending(staffId); setRaceError('');
@@ -227,10 +233,33 @@ export default function CoverShiftPage() {
     const data = await res.json();
     setExtending(null);
     if (!res.ok) { setRaceError(data.error ?? 'Could not extend the shift'); return; }
+    if (data.pending) { setPendingExtends(p => ({ ...p, [staffId]: true })); return; }
     // The open shift this result was for no longer exists — back to the list.
     setResult(null);
     setSelectedShiftId(null);
     await loadOpenShifts();
+  }
+
+  /** "Check now" on a pending extend ask. If the open shift is gone, someone
+   *  already confirmed it (or it was resolved another way) — back to the
+   *  list, same as an instant extension. Otherwise just refresh the search
+   *  so a decline/expiry shows up. */
+  async function recheckExtend() {
+    if (!selectedShiftId) { await findCover(); return; }
+    const stillOpen = await fetchJson<Shift[]>('/api/shifts?status=open');
+    setOpenShifts(stillOpen);
+    if (!stillOpen.some(s => s.id === selectedShiftId)) {
+      setPendingExtends({});
+      setResult(null);
+      setSelectedShiftId(null);
+      return;
+    }
+    // Still open — either still pending or they said no. Either way, drop
+    // the local "waiting" flag rather than let it go stale forever: a
+    // declined ask is free to try again, and re-clicking a genuinely still-
+    // pending one just gets the "already asked" message back.
+    setPendingExtends({});
+    await findCover();
   }
 
   async function logIncident(staffId: string, type: 'no_show' | 'no_answer' | 'rejected' | 'covered') {
@@ -505,14 +534,30 @@ export default function CoverShiftPage() {
                       <span className="text-blue-700">{c.proposed.start_time.slice(0, 5)}–{c.proposed.end_time.slice(0, 5)}</span>
                       <span className="ml-1.5 text-slate-400">({formatDuration(c.proposed.start_time, c.proposed.end_time)})</span>
                     </p>
+                    {c.proposed.start_time < c.existing_shift.start_time && !pendingExtends[c.id] && (
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Starts earlier than they're rostered — they're not at the store yet, so this texts them to confirm first.
+                      </p>
+                    )}
                   </div>
-                  <button
-                    onClick={() => extendShift(c.id)}
-                    disabled={extending !== null}
-                    className="btn-primary flex-shrink-0"
-                  >
-                    {extending === c.id ? <Loader2 size={14} className="animate-spin" /> : 'Extend their shift'}
-                  </button>
+                  {pendingExtends[c.id] ? (
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span className="badge-blue inline-flex items-center gap-1">
+                        <MessageSquare size={11} /> Texted — waiting for reply
+                      </span>
+                      <button onClick={() => recheckExtend()} className="btn-ghost text-xs px-2 py-1" title="Re-check">
+                        <RefreshCw size={12} />
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => extendShift(c.id)}
+                      disabled={extending !== null}
+                      className="btn-primary flex-shrink-0"
+                    >
+                      {extending === c.id ? <Loader2 size={14} className="animate-spin" /> : 'Extend their shift'}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
