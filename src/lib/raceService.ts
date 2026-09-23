@@ -29,6 +29,7 @@ export interface StartRaceResult {
   excluded: EligibilityIssue[];
   mode: string;
   tier: CoverTier;
+  slotsNeeded: number;
 }
 
 export class RaceError extends Error {
@@ -160,8 +161,9 @@ async function sendToCandidates(
  * away; the rest advance later via advanceRace().
  */
 export async function startRace(
-  shiftId: string, opts: { force?: boolean; startedBy?: string } = {}
+  shiftId: string, opts: { force?: boolean; startedBy?: string; slotsNeeded?: number } = {}
 ): Promise<StartRaceResult> {
+  const slotsNeeded = Math.max(1, Math.trunc(opts.slotsNeeded ?? 1));
   const shift = await loadShift(shiftId);
 
   if (shift.status !== 'open') {
@@ -201,6 +203,11 @@ export async function startRace(
       'No eligible staff with a valid mobile number. Check availability and phone numbers.'
     );
   }
+  if (slotsNeeded > contactable.length) {
+    throw new RaceError(
+      `${slotsNeeded} staff needed, but only ${contactable.length} eligible staff can be reached.`
+    );
+  }
 
   const max = getMaxRecipients();
   if (contactable.length > max) {
@@ -237,7 +244,7 @@ export async function startRace(
   const { data: race, error: raceErr } = await supabaseAdmin
     .from('shift_claim_races')
     .insert([{
-      shift_id: shiftId, status: 'active', mode, tier,
+      shift_id: shiftId, status: 'active', mode, tier, slots_needed: slotsNeeded,
       expires_at: expiresAt.toISOString(), started_by: opts.startedBy ?? null,
       ...tierColumns,
     }])
@@ -295,7 +302,7 @@ export async function startRace(
     contactable;
 
   const contacted = await sendToCandidates(liveSlice, summary, race.id, tier, managerName);
-  return { raceId: race.id, contacted, excluded, mode, tier };
+  return { raceId: race.id, contacted, excluded, mode, tier, slotsNeeded };
 }
 
 interface RecipientRow {
@@ -671,9 +678,10 @@ export async function handleInboundReply(params: {
   // a loss would arrive as a single row of NULLs, which is truthy — and every
   // late replier would be told they had won the shift.
   const claimedRows = Array.isArray(claimed) ? claimed : claimed ? [claimed] : [];
-  const won = claimedRows.some((row: { id?: string | null }) => !!row?.id);
+  const winningRow = claimedRows.find((row: { id?: string | null }) => !!row?.id) as
+    { id: string; slot_index?: number | null } | undefined;
 
-  if (!won) {
+  if (!winningRow) {
     await supabaseAdmin.from('shift_claim_recipients').update({
       outcome: 'lost', responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
@@ -683,7 +691,10 @@ export async function handleInboundReply(params: {
     };
   }
 
-  await onRaceWon(race.id, recipient.id, recipient.staff_id, shift, summary, body);
+  await onRaceWon(
+    race.id, recipient.id, recipient.staff_id, shift, summary, body,
+    winningRow.slot_index ?? 1, race.slots_needed ?? 1
+  );
 
   const { data: staff } = await supabaseAdmin
     .from('staff').select('name').eq('id', recipient.staff_id).single();
@@ -715,12 +726,13 @@ export async function handleInboundReply(params: {
  * somehow has two races awaiting a pick at once, "2" still means one specific
  * person on one specific race rather than being ambiguous between them.
  *
- * The claim itself is a plain conditional UPDATE rather than the
- * claim_shift_race RPC — that function only matches status = 'active', and a
- * race waiting on a manager's pick is 'awaiting_pick'. The same row-level
- * serialisation Postgres gives any UPDATE means this is exactly as atomic
- * against a manager double-texting a number as the RPC is against two
- * staff replying at once; it just targets a different status.
+ * The claim itself goes through claim_shift_race_recipient — a sibling of
+ * claim_shift_race for this status ('awaiting_pick' rather than 'active')
+ * that claims a specific recipient row rather than matching by staff_id,
+ * since the manager already identified exactly who by option number. Same
+ * slot-counting logic: if the race needs more than one person, it stays
+ * 'awaiting_pick' after a pick that doesn't fill every slot, so she can
+ * just reply with another number for the next one.
  */
 async function handleManagerPick(from: string, body: string): Promise<ReplyOutcome | null> {
   const { data: manager } = await supabaseAdmin
@@ -729,7 +741,7 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
 
   const { data: races } = await supabaseAdmin
     .from('shift_claim_races')
-    .select('id, shift_id')
+    .select('id, shift_id, slots_needed')
     .eq('started_by', manager.user_id)
     .eq('status', 'awaiting_pick');
   if (!races || races.length === 0) return null;
@@ -752,17 +764,20 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
     .from('shifts').select(`*, departments ( id, name )`).eq('id', race.shift_id).single();
   const summary = toSummary(shift);
 
-  const { data: won } = await supabaseAdmin
-    .from('shift_claim_races')
-    .update({ winner_staff_id: recipient.staff_id, status: 'claimed', claimed_at: new Date().toISOString() })
-    .eq('id', race.id).eq('status', 'awaiting_pick').is('winner_staff_id', null)
-    .select().maybeSingle();
+  const { data: claimed } = await supabaseAdmin
+    .rpc('claim_shift_race_recipient', { p_race_id: race.id, p_recipient_id: recipient.id });
+  const claimedRows = Array.isArray(claimed) ? claimed : claimed ? [claimed] : [];
+  const winningRow = claimedRows.find((row: { id?: string | null }) => !!row?.id) as
+    { id: string; slot_index?: number | null } | undefined;
 
-  if (!won) {
+  if (!winningRow) {
     return { handled: true, reply: managerStaleSelectionMessage(), result: 'manager_stale_pick', raceId: race.id };
   }
 
-  await onRaceWon(race.id, recipient.id, recipient.staff_id, shift, summary, body);
+  await onRaceWon(
+    race.id, recipient.id, recipient.staff_id, shift, summary, body,
+    winningRow.slot_index ?? 1, race.slots_needed ?? 1
+  );
 
   const { data: staffRow } = await supabaseAdmin.from('staff').select('name').eq('id', recipient.staff_id).single();
   return {
@@ -774,25 +789,46 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
   };
 }
 
-/** Everything that follows a successful claim. */
+/**
+ * Everything that follows a successful claim. `slotIndex` is which of the
+ * race's slots_needed this particular winner filled (1-based, assigned
+ * atomically by the claim_shift_race[_recipient] RPC). Slot 1 always
+ * applies to the original shift row; slot 2+ gets its own new shift row —
+ * one `shifts` row only ever models one person's assignment, so "need 2
+ * people for this block" means two rows once both are filled, not one row
+ * trying to hold two assignees.
+ */
 async function onRaceWon(
   raceId: string, recipientId: string, staffId: string,
-  shift: { id: string; date: string }, summary: ShiftSummary, body: string
+  shift: { id: string; date: string; start_time: string; end_time: string; department_id: string; required_role: string | null },
+  summary: ShiftSummary, body: string, slotIndex: number, slotsNeeded: number
 ) {
   await supabaseAdmin.from('shift_claim_recipients').update({
     outcome: 'won', responded_at: new Date().toISOString(), response_body: body,
   }).eq('id', recipientId);
 
-  await supabaseAdmin.from('shifts').update({
-    status: 'covered', assigned_staff_id: staffId,
-  }).eq('id', shift.id);
+  let coveredShiftId = shift.id;
+  if (slotIndex <= 1) {
+    await supabaseAdmin.from('shifts').update({
+      status: 'covered', assigned_staff_id: staffId,
+    }).eq('id', shift.id);
+  } else {
+    const { data: extraShift, error: extraErr } = await supabaseAdmin.from('shifts').insert([{
+      date: shift.date, start_time: shift.start_time, end_time: shift.end_time,
+      department_id: shift.department_id, required_role: shift.required_role,
+      status: 'covered', assigned_staff_id: staffId,
+      notes: `Additional cover (slot ${slotIndex} of ${slotsNeeded}) via claim race`,
+    }]).select('id').single();
+    if (extraErr) console.error('[race] could not create additional shift row for slot', slotIndex, extraErr.message);
+    else coveredShiftId = extraShift.id;
+  }
 
   // Credit the winner (+10% of their remaining headroom to 100). Declines
   // and silence are deliberately NOT scored automatically — turning down an
   // optional extra shift shouldn't quietly damage someone's reliability.
   // The manual buttons remain for judgement calls.
   await supabaseAdmin.from('reliability_incidents').insert([{
-    staff_id: staffId, incident_type: 'covered', shift_id: shift.id,
+    staff_id: staffId, incident_type: 'covered', shift_id: coveredShiftId,
     date: shift.date, notes: 'Claimed via SMS claim race',
   }]);
   const { data: staffRow } = await supabaseAdmin
@@ -801,8 +837,13 @@ async function onRaceWon(
     reliability_score: applyReliabilityDelta(staffRow?.reliability_score ?? 50, 'covered'),
   }).eq('id', staffId);
 
-  // Tell everyone else. Anyone who already declined is skipped — they have
-  // opted out of caring, and it saves a message.
+  // More slots still open — the race keeps running (other tiers keep
+  // texting/escalating on their own schedule), so it's too early to tell
+  // everyone else it's covered or to write off whoever hasn't answered yet.
+  if (slotIndex < slotsNeeded) return;
+
+  // Final slot filled. Tell everyone else. Anyone who already declined is
+  // skipped — they have opted out of caring, and it saves a message.
   const { data: others } = await supabaseAdmin
     .from('shift_claim_recipients')
     .select('id, staff_id, phone_e164, outcome, send_status')
@@ -810,7 +851,7 @@ async function onRaceWon(
     .neq('id', recipientId);
 
   const toNotify = (others ?? []).filter(
-    r => r.phone_e164 && r.send_status === 'sent' && r.outcome !== 'declined'
+    r => r.phone_e164 && r.send_status === 'sent' && r.outcome !== 'declined' && r.outcome !== 'won'
   );
 
   const [names, business] = await Promise.all([staffNames(toNotify.map(r => r.staff_id)), getBusinessName()]);

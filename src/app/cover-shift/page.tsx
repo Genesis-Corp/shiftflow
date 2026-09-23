@@ -82,6 +82,11 @@ export default function CoverShiftPage() {
   // earlier-start ask that's gone out by SMS and hasn't been answered yet).
   const [pendingExtends, setPendingExtends] = useState<Record<string, boolean>>({});
 
+  // How many people this shift needs covering it — usually 1, sometimes
+  // more (a busy Saturday needing two checkout staff). The race keeps
+  // working through every tier until this many have said yes, not just one.
+  const [slotsNeeded, setSlotsNeeded] = useState(1);
+
   const [preview, setPreview] = useState<RacePreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -199,7 +204,7 @@ export default function CoverShiftPage() {
       loadOpenShifts();
     }
 
-    const res = await fetch(`/api/claim-race?shift_id=${shiftId}`);
+    const res = await fetch(`/api/claim-race?shift_id=${shiftId}&slots_needed=${slotsNeeded}`);
     const data = await res.json();
     setPreviewLoading(false);
     if (!res.ok) { setRaceError(data.error ?? 'Could not load race preview'); return; }
@@ -211,7 +216,7 @@ export default function CoverShiftPage() {
     setStarting(true); setRaceError('');
     const res = await fetch('/api/claim-race', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shift_id: selectedShiftId }),
+      body: JSON.stringify({ shift_id: selectedShiftId, slots_needed: slotsNeeded }),
     });
     const data = await res.json();
     setStarting(false);
@@ -411,6 +416,16 @@ export default function CoverShiftPage() {
         )}
 
         <div className="flex items-center gap-4 mt-4 flex-wrap">
+          <div>
+            <label className="label">How many staff?</label>
+            <select className="input" value={slotsNeeded}
+              onChange={e => setSlotsNeeded(Number(e.target.value))}>
+              <option value={1}>1</option>
+              <option value={2}>2</option>
+              <option value={3}>3</option>
+              <option value={4}>4</option>
+            </select>
+          </div>
           <button onClick={() => findCover()} disabled={loading || !form.department_id || underMinimum || notEnoughTimeLeft} className="btn-primary">
             <Search size={16} /> {loading ? 'Searching...' : 'Find Available Staff'}
           </button>
@@ -707,8 +722,11 @@ export default function CoverShiftPage() {
                   {formatDate(preview.shift.date)} {preview.shift.start_time.slice(0, 5)}–
                   {preview.shift.end_time.slice(0, 5)}
                 </strong>{' '}
-                ({preview.shift.departments?.name}). The first to reply YES gets the shift;
-                everyone else is told it has been covered.
+                ({preview.shift.departments?.name}).{' '}
+                {preview.slots_needed > 1
+                  ? <>The first <strong>{preview.slots_needed}</strong> to reply YES get the shift;
+                      everyone else is told it has been covered.</>
+                  : <>The first to reply YES gets the shift; everyone else is told it has been covered.</>}
               </p>
             </div>
 

@@ -121,18 +121,54 @@ class FakeDb {
 
   from(table: string) { return new FakeQuery(this, table); }
 
+  /** Mirrors claim_shift_race / claim_shift_race_recipient's slot-counting
+   *  logic (supabase-migrations/20260930h_multi_slot_claim_race.sql) —
+   *  same count-then-claim-then-maybe-close shape, just in JS instead of
+   *  plpgsql, since a single-threaded test has no real concurrency to guard
+   *  against; what's tested here is that OUR side reads the result right. */
   async rpc(name: string, params: Record<string, unknown>) {
-    if (name !== 'claim_shift_race') throw new Error(`Unmocked RPC: ${name}`);
     const races = (this.tables.shift_claim_races ??= []);
-    const race = races.find(r =>
-      r.id === params.p_race_id && r.status === 'active' && r.winner_staff_id == null
-      && new Date(r.expires_at).getTime() > this.now().getTime()
-    );
-    if (!race) return { data: [], error: null };
-    race.winner_staff_id = params.p_staff_id;
-    race.status = 'claimed';
-    race.claimed_at = this.now().toISOString();
-    return { data: [race], error: null };
+    const recipients = (this.tables.shift_claim_recipients ??= []);
+
+    let race: Row | undefined;
+    let recipient: Row | undefined;
+
+    if (name === 'claim_shift_race') {
+      race = races.find(r =>
+        r.id === params.p_race_id && r.status === 'active'
+        && new Date(r.expires_at).getTime() > this.now().getTime()
+      );
+      if (race) {
+        const filled = recipients.filter(r => r.race_id === race!.id && r.outcome === 'won').length;
+        if (filled < (race.slots_needed ?? 1)) {
+          recipient = recipients.find(r =>
+            r.race_id === race!.id && r.staff_id === params.p_staff_id && r.outcome == null
+          );
+        }
+      }
+    } else if (name === 'claim_shift_race_recipient') {
+      race = races.find(r => r.id === params.p_race_id && r.status === 'awaiting_pick');
+      if (race) {
+        const filled = recipients.filter(r => r.race_id === race!.id && r.outcome === 'won').length;
+        if (filled < (race.slots_needed ?? 1)) {
+          recipient = recipients.find(r => r.id === params.p_recipient_id && r.race_id === race!.id && r.outcome == null);
+        }
+      }
+    } else {
+      throw new Error(`Unmocked RPC: ${name}`);
+    }
+
+    if (!race || !recipient) return { data: [], error: null };
+
+    const filledBefore = recipients.filter(r => r.race_id === race!.id && r.outcome === 'won').length;
+    recipient.outcome = 'won';
+    recipient.responded_at = this.now().toISOString();
+    recipient.slot_index = filledBefore + 1;
+    if (filledBefore + 1 >= (race.slots_needed ?? 1)) {
+      race.status = 'claimed';
+      race.claimed_at = this.now().toISOString();
+    }
+    return { data: [recipient], error: null };
   }
 
   reset() { this.tables = {}; this.idCounter = 0; }
@@ -265,12 +301,61 @@ describe('immediate tier end-to-end', () => {
 
     const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
     expect(race?.status).toBe('claimed');
-    expect(race?.winner_staff_id).toBe('c');
+    const shift = db.tables.shifts.find(s => s.id === race?.shift_id);
+    expect(shift?.assigned_staff_id).toBe('c');
 
     // The manager finds out who's covering it, unprompted.
     const managerTexts = messagesTo('+61400000099');
     expect(managerTexts).toHaveLength(1);
     expect(managerTexts[0].body).toContain('Cara will cover');
+  });
+
+  it('needing 2 people: keeps the race open after the first yes, gives the second winner their own shift row, and only tells everyone else "covered" once both slots are full', async () => {
+    seedShift('shift-imm-multi', '2026-09-18', '09:10');
+    seedManager('mgr-1', 'Jamie', '+61400000099');
+    candidatesForNextRace = [A, B, C, D];
+    seedStaff(A, B, C, D);
+
+    const result = await startRace('shift-imm-multi', { startedBy: 'mgr-1', slotsNeeded: 2 });
+    expect(result.slotsNeeded).toBe(2);
+
+    // Alice says yes — fills slot 1. The race must stay active: there's
+    // still a second slot to fill, so nobody else should be told it's
+    // covered yet, and Bob (still pending in the same batch) is still live.
+    const aliceWin = await handleInboundReply({ from: A.phone_e164, body: 'YES' });
+    expect(aliceWin.result).toBe('won');
+
+    const raceAfterFirst = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(raceAfterFirst?.status).toBe('active');
+    expect(messagesTo(B.phone_e164).some(m => m.body.includes('covered'))).toBe(false);
+
+    const originalShift = db.tables.shifts.find(s => s.id === raceAfterFirst?.shift_id);
+    expect(originalShift?.status).toBe('covered');
+    expect(originalShift?.assigned_staff_id).toBe('a');
+
+    // Bob says yes next — fills the second and final slot. Rather than
+    // overwriting Alice's assignment, he gets his own new shift row for the
+    // same date/time/department.
+    const bobWin = await handleInboundReply({ from: B.phone_e164, body: 'YES' });
+    expect(bobWin.result).toBe('won');
+
+    const raceAfterSecond = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(raceAfterSecond?.status).toBe('claimed');
+
+    const allShifts = db.tables.shifts.filter(s =>
+      s.date === '2026-09-18' && s.department_id === 'dept-1' && s.assigned_staff_id
+    );
+    expect(allShifts).toHaveLength(2);
+    expect(allShifts.map(s => s.assigned_staff_id).sort()).toEqual(['a', 'b']);
+
+    // Cara and Dee were never in the first batch, so they were never
+    // actually texted (send_status stays 'queued') — nobody was left to
+    // notify. The real "tell everyone else" path is covered by the
+    // existing single-slot test above; what matters here is that it ran at
+    // all only once the race was actually fully claimed, not after Alice's
+    // partial win.
+    const covered = sentMessages.filter(m => m.body.includes('now been covered'));
+    expect(covered).toHaveLength(0);
   });
 
   it('notifies the manager that nobody was available when the whole list is exhausted', async () => {
@@ -348,7 +433,8 @@ describe('gather tier end-to-end', () => {
 
     const resolved = db.tables.shift_claim_races.find(r => r.id === result.raceId);
     expect(resolved?.status).toBe('claimed');
-    expect(resolved?.winner_staff_id).toBe('e');
+    const shift = db.tables.shifts.find(s => s.id === resolved?.shift_id);
+    expect(shift?.assigned_staff_id).toBe('e');
   });
 
   it('degrades to first-yes-wins when nobody is available at the window close', async () => {
@@ -417,7 +503,8 @@ describe('sequential tier end-to-end', () => {
 
     const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
     expect(race?.status).toBe('claimed');
-    expect(race?.winner_staff_id).toBe('i');
+    const shift = db.tables.shifts.find(s => s.id === race?.shift_id);
+    expect(shift?.assigned_staff_id).toBe('i');
     expect(messagesTo('+61400000099')[0].body).toContain('Ivan will cover');
   });
 });

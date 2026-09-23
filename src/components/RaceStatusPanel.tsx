@@ -85,7 +85,9 @@ export default function RaceStatusPanel({
   }
 
   const { race, recipients, messages } = detail;
-  const winner = recipients.find(r => r.outcome === 'won');
+  const winners = recipients
+    .filter(r => r.outcome === 'won')
+    .sort((a, b) => (a.slot_index ?? 0) - (b.slot_index ?? 0));
   const contacted = recipients.filter(r => r.send_status === 'sent');
   const skipped = recipients.filter(
     r => r.send_status === 'skipped_no_phone' || r.send_status === 'skipped_opted_out'
@@ -111,15 +113,21 @@ export default function RaceStatusPanel({
               {race.status === 'active' && ` · expires ${new Date(race.expires_at).toLocaleTimeString()}`}
             </p>
             <p className="text-xs text-slate-400 mt-0.5">{tierNote(race)}</p>
-            {winner && (
-              <p className="text-sm text-green-800 mt-2 flex items-center gap-1.5 font-medium">
+            {race.slots_needed > 1 && winners.length > 0 && winners.length < race.slots_needed && (
+              <p className="text-xs text-blue-600 mt-1 font-medium">
+                {winners.length} of {race.slots_needed} slots filled — still looking for the rest.
+              </p>
+            )}
+            {winners.map(winner => (
+              <p key={winner.id} className="text-sm text-green-800 mt-2 flex items-center gap-1.5 font-medium">
                 <Trophy size={14} className="text-amber-500" />
                 {winner.staff?.name && (
                   <StaffName staffId={winner.staff_id} name={winner.staff.name} className="text-green-800" />
                 )}{' '}claimed the shift
+                {race.slots_needed > 1 && winner.slot_index && ` (slot ${winner.slot_index} of ${race.slots_needed})`}
                 {winner.responded_at && ` at ${new Date(winner.responded_at).toLocaleTimeString()}`}
               </p>
-            )}
+            ))}
           </div>
           {race.status === 'active' && (
             <button onClick={cancel} disabled={!!busy} className="btn-secondary text-sm">

@@ -12,8 +12,11 @@ export async function GET(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
 
-  const shiftId = new URL(req.url).searchParams.get('shift_id');
+  const url = new URL(req.url);
+  const shiftId = url.searchParams.get('shift_id');
   if (!shiftId) return NextResponse.json({ error: 'shift_id required' }, { status: 400 });
+  const slotsNeededRaw = Number(url.searchParams.get('slots_needed'));
+  const slotsNeeded = Number.isFinite(slotsNeededRaw) && slotsNeededRaw >= 1 ? Math.trunc(slotsNeededRaw) : 1;
 
   const { data: shift, error } = await supabaseAdmin
     .from('shifts').select(`*, departments ( id, name )`).eq('id', shiftId).single();
@@ -43,19 +46,20 @@ export async function GET(req: NextRequest) {
     extendable,
     backup,
     active_race_id: active?.id ?? null,
+    slots_needed: slotsNeeded,
   });
 }
 
-/** POST /api/claim-race { shift_id, force? } — start the race. */
+/** POST /api/claim-race { shift_id, force?, slots_needed? } — start the race. */
 export async function POST(req: NextRequest) {
   const user = await requireUser();
   if (!user) return unauthorized();
 
   try {
-    const { shift_id, force } = await req.json();
+    const { shift_id, force, slots_needed } = await req.json();
     if (!shift_id) return NextResponse.json({ error: 'shift_id required' }, { status: 400 });
 
-    const result = await startRace(shift_id, { force: !!force, startedBy: user.id });
+    const result = await startRace(shift_id, { force: !!force, startedBy: user.id, slotsNeeded: slots_needed });
     return NextResponse.json(result, { status: 201 });
   } catch (err) {
     if (err instanceof RaceError) {

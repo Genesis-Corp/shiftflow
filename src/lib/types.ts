@@ -199,6 +199,7 @@ export interface ClaimRace {
   degraded_at?: string | null;
   sequential_index?: number | null;
   step_deadline?: string | null;
+  slots_needed: number;
   shifts?: Shift & { departments?: Department };
 }
 
@@ -216,6 +217,7 @@ export interface ClaimRecipient {
   outcome?: RecipientOutcome | null;
   is_available?: boolean | null;
   option_number?: number | null;
+  slot_index?: number | null;
   responded_at?: string | null;
   response_body?: string | null;
   staff?: Pick<Staff, 'id' | 'name' | 'age_group' | 'reliability_score'>;
@@ -252,6 +254,7 @@ export interface RacePreview {
   extendable: ExtendableCandidate[];
   backup: CoverCandidate[];
   active_race_id: string | null;
+  slots_needed: number;
 }
 
 export interface SmsConfig {
