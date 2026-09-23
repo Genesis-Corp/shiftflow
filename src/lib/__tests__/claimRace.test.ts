@@ -92,7 +92,7 @@ describe('isRaceOpen', () => {
 describe('splitContactable', () => {
   it('separates who can be reached from who cannot, with reasons', () => {
     const { contactable, excluded } = splitContactable([
-      { id: '1', name: 'Dave',  phone_e164: '+61433821798', sms_opt_out: false },
+      { id: '1', name: 'Dave',  phone_e164: '+61491570156', sms_opt_out: false },
       { id: '2', name: 'Sarah', phone_e164: null,           sms_opt_out: false },
       { id: '3', name: 'Tom',   phone_e164: '+61400000000', sms_opt_out: true  },
     ]);

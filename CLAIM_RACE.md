@@ -46,7 +46,7 @@ the twenty-nine that aren't yours.
 
 ```
 SMS_MODE=redirect
-SMS_TEST_NUMBER=+61433821798
+SMS_TEST_NUMBER=+61491570156
 ```
 
 Messages are genuinely sent through Twilio, but every recipient is rewritten to

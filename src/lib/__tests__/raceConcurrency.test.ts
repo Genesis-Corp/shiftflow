@@ -76,7 +76,7 @@ function resolve(table: string, filters: Record<string, unknown>) {
     // staffIdForPhone() filters by phone_e164 rather than id — map the one
     // test number that needs it back to Dave, same staff_id as RECIPIENTS.
     if (filters.phone_e164) {
-      return filters.phone_e164 === '+61433821798' ? { id: 'staff-dave', reliability_score: 50 } : null;
+      return filters.phone_e164 === '+61491570156' ? { id: 'staff-dave', reliability_score: 50 } : null;
     }
     return { id: filters.id, name: 'Dave', reliability_score: 50 };
   }
@@ -124,7 +124,7 @@ describe('simultaneous YES replies', () => {
 
   it('produces exactly one winner when two replies race', async () => {
     const [dave, sarah] = await Promise.all([
-      handleInboundReply({ from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM1' }),
+      handleInboundReply({ from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM1' }),
       handleInboundReply({ from: '+61400000001', body: 'YES 9XM2', providerSid: 'SM2' }),
     ]);
 
@@ -134,7 +134,7 @@ describe('simultaneous YES replies', () => {
 
   it('covers the shift once, not once per replier', async () => {
     await Promise.all([
-      handleInboundReply({ from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM1' }),
+      handleInboundReply({ from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM1' }),
       handleInboundReply({ from: '+61400000001', body: 'YES 9XM2', providerSid: 'SM2' }),
     ]);
 
@@ -143,7 +143,7 @@ describe('simultaneous YES replies', () => {
   });
 
   it('answers the loser rather than leaving them in silence', async () => {
-    await handleInboundReply({ from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM1' });
+    await handleInboundReply({ from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM1' });
     const late = await handleInboundReply({ from: '+61400000001', body: 'YES 9XM2', providerSid: 'SM2' });
 
     expect(late.result).toBe('too_late');
@@ -151,13 +151,13 @@ describe('simultaneous YES replies', () => {
   });
 
   it('confirms the win to the winner', async () => {
-    const first = await handleInboundReply({ from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM1' });
+    const first = await handleInboundReply({ from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM1' });
     expect(first.result).toBe('won');
     expect(first.reply).toContain('is yours');
   });
 
   it('treats a declining reply as a decline, not a claim', async () => {
-    const res = await handleInboundReply({ from: '+61433821798', body: 'NO 4F7K', providerSid: 'SM3' });
+    const res = await handleInboundReply({ from: '+61491570156', body: 'NO 4F7K', providerSid: 'SM3' });
     expect(res.result).toBe('declined');
     expect(state.shiftUpdates.filter(u => u.status === 'covered')).toHaveLength(0);
   });
@@ -170,7 +170,7 @@ describe('simultaneous YES replies', () => {
     state.rpcReturnsNullRow = true;
 
     const res = await handleInboundReply({
-      from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM9',
+      from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM9',
     });
 
     expect(res.result).toBe('too_late');
@@ -178,7 +178,7 @@ describe('simultaneous YES replies', () => {
   });
 
   it('logs an incident and docks reliability when someone replies STOP', async () => {
-    const res = await handleInboundReply({ from: '+61433821798', body: 'STOP', providerSid: 'SM4' });
+    const res = await handleInboundReply({ from: '+61491570156', body: 'STOP', providerSid: 'SM4' });
 
     expect(res.result).toBe('opted_out');
     expect(state.incidentInserts).toHaveLength(1);
@@ -192,7 +192,7 @@ describe('simultaneous YES replies', () => {
     const send = await import('@/lib/sms/send');
     vi.spyOn(send, 'logInbound').mockResolvedValueOnce(false);
 
-    const res = await handleInboundReply({ from: '+61433821798', body: 'YES 4F7K', providerSid: 'SM1' });
+    const res = await handleInboundReply({ from: '+61491570156', body: 'YES 4F7K', providerSid: 'SM1' });
     expect(res.result).toBe('duplicate');
     expect(res.handled).toBe(false);
     expect(state.shiftUpdates).toHaveLength(0);

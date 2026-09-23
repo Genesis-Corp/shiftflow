@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, Phone, Cake, Calendar, Briefcase, Archive, BellOff } from 'lucide-react';
+import { Loader2, Phone, Cake, Calendar, Briefcase, Archive, BellOff, CalendarClock } from 'lucide-react';
 import Modal from './Modal';
 import ReliabilityBar from './ReliabilityBar';
 import { fetchJson } from '@/lib/apiClient';
@@ -147,7 +147,10 @@ export default function StaffSummaryModal({ staffId, onClose }: { staffId: strin
             )}
           </div>
 
-          <div className="flex justify-end pt-2 border-t border-slate-100">
+          <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+            <Link href={`/availability?staff=${staff.id}`} onClick={onClose} className="btn-secondary">
+              <CalendarClock size={14} /> View availability
+            </Link>
             <Link href={`/staff?edit=${staff.id}`} onClick={onClose} className="btn-primary">
               Edit staff member
             </Link>

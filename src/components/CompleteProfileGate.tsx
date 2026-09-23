@@ -75,7 +75,7 @@ export default function CompleteProfileGate() {
           <div>
             <label className="block text-xs text-slate-500 mb-1">Mobile number</label>
             <input
-              className="input" required placeholder="0433 821 798" value={phone}
+              className="input" required placeholder="0491 570 156" value={phone}
               onChange={e => setPhone(e.target.value)}
             />
           </div>

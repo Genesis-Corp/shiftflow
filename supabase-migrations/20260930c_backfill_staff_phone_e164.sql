@@ -2,7 +2,7 @@
 -- uses — see src/lib/phone.ts toE164AU) was never populated by the
 -- availability-sheet upload path (src/lib/staffSync.ts), only by the manual
 -- Staff form and CSV import. It stored the sheet's mobile number as a
--- display string ("0433 821 798") in `phone`, and never derived `phone_e164`
+-- display string ("0491 570 156") in `phone`, and never derived `phone_e164`
 -- from it at all — so any staff member created or updated only through that
 -- upload has always had phone_e164 null, and has never been reachable by
 -- the claim race, no matter how many times their real number was on file.

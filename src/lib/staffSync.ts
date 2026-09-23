@@ -210,7 +210,7 @@ export async function syncStaffSheet(rows: string[][], options: SyncOptions = {}
           ...(withNameParts ? { first_name: row.first_name, last_name: row.last_name || null } : {}),
           phone: row.phone,
           // The sheet's mobile column is normalised to a display string
-          // ("0433 821 798"), never the +61 form SMS sending needs — that
+          // ("0491 570 156"), never the +61 form SMS sending needs — that
           // has to be derived separately or this person can never be texted.
           phone_e164: toE164AU(row.phone),
           age_group: row.age_group,

@@ -23,7 +23,7 @@ describe('validateTwilioSignature', () => {
 
   it('rejects a tampered parameter', () => {
     // An attacker swapping the sender to claim a shift as someone else.
-    const tampered = { ...DOC_PARAMS, From: '+61433821798' };
+    const tampered = { ...DOC_PARAMS, From: '+61491570156' };
     expect(validateTwilioSignature(DOC_SIGNATURE, DOC_URL, tampered, DOC_TOKEN)).toBe(false);
   });
 

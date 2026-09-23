@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   Save, List, GanttChartSquare, Upload, Paperclip, Trash2, CalendarX, Umbrella, Loader2, X, Plus,
   CalendarDays, ChevronLeft, ChevronRight, Pencil, AlertTriangle, Check,
@@ -424,7 +425,8 @@ function MonthHolidayGantt({
   );
 }
 
-export default function AvailabilityPage() {
+function AvailabilityPageInner() {
+  const searchParams = useSearchParams();
   const [view, setView] = useState<'editor' | 'timeline' | 'holidays'>('editor');
   const [calendarMonth, setCalendarMonth] = useState(todayStr().slice(0, 7));
   const [calendarScale, setCalendarScale] = useState<'month' | 'year'>('month');
@@ -466,6 +468,25 @@ export default function AvailabilityPage() {
   }
 
   useEffect(() => { load(); }, []);
+
+  // Deep link from the Staff modal's "View availability" button — jumps
+  // straight to that person's editor instead of leaving the manager to find
+  // them again in the list. Only fires once the roster has actually loaded,
+  // and only once per page load (a later refresh of the data must not keep
+  // snapping the editor back to this person if the manager has since picked
+  // someone else).
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current || staff.length === 0) return;
+    const staffParam = searchParams.get('staff');
+    if (!staffParam) return;
+    const match = staff.find(s => s.id === staffParam);
+    if (!match) return;
+    autoSelectedRef.current = true;
+    setView('editor');
+    loadStaffTemplates(match);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [staff, searchParams]);
 
   async function loadLeave() {
     try {
@@ -1132,5 +1153,13 @@ export default function AvailabilityPage() {
       </div>
       )}
     </div>
+  );
+}
+
+export default function AvailabilityPage() {
+  return (
+    <Suspense fallback={null}>
+      <AvailabilityPageInner />
+    </Suspense>
   );
 }

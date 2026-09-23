@@ -12,8 +12,8 @@ const AU_MOBILE_E164 = /^\+614\d{8}$/;
 /**
  * Normalise an Australian mobile number to E.164, or return null if it isn't
  * a valid AU mobile. Accepts the formats the CSV import produces:
- *   0433821798 · 0433 821 798 · (04) 3382 1798 · +61 433 821 798
- *   61433821798 · 433821798
+ *   0491570156 · 0491 570 156 · (04) 9157 0156 · +61 491 570 156
+ *   61491570156 · 491570156
  */
 export function toE164AU(raw: string | null | undefined): string | null {
   if (!raw) return null;
@@ -28,9 +28,9 @@ export function toE164AU(raw: string | null | undefined): string | null {
   }
 
   const digits = trimmed.replace(/\D/g, '');
-  if (/^04\d{8}$/.test(digits))  return '+61' + digits.slice(1);  // 0433821798
-  if (/^614\d{8}$/.test(digits)) return '+' + digits;             // 61433821798
-  if (/^4\d{8}$/.test(digits))   return '+61' + digits;           // 433821798
+  if (/^04\d{8}$/.test(digits))  return '+61' + digits.slice(1);  // 0491570156
+  if (/^614\d{8}$/.test(digits)) return '+' + digits;             // 61491570156
+  if (/^4\d{8}$/.test(digits))   return '+61' + digits;           // 491570156
 
   return null;
 }
@@ -40,10 +40,10 @@ export function isValidAUMobile(value: string | null | undefined): boolean {
   return !!value && AU_MOBILE_E164.test(value);
 }
 
-/** Display an E.164 AU mobile as 0433 821 798. Falls back to the input. */
+/** Display an E.164 AU mobile as 0491 570 156. Falls back to the input. */
 export function formatAUMobile(e164: string | null | undefined): string {
   if (!isValidAUMobile(e164)) return e164 ?? '';
-  const local = '0' + e164!.slice(3);                    // +61433821798 -> 0433821798
+  const local = '0' + e164!.slice(3);                    // +61491570156 -> 0491570156
   return `${local.slice(0, 4)} ${local.slice(4, 7)} ${local.slice(7)}`;
 }
 
@@ -51,7 +51,7 @@ export function formatAUMobile(e164: string | null | undefined): string {
  * Parse an allowlist env var into E.164 numbers.
  *
  * Entries are separated by commas, semicolons or newlines — NOT by spaces.
- * People write "+61 433 821 798" in a config value, and splitting on
+ * People write "+61 491 570 156" in a config value, and splitting on
  * whitespace would turn that one number into four meaningless entries and an
  * allowlist that matches nothing.
  */

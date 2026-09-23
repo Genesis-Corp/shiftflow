@@ -12,7 +12,7 @@ comment on column staff.phone_e164 is
   'Phone normalised to E.164 (+614XXXXXXXX). NULL means the number is missing or unparseable; staff cannot be included in a claim race.';
 
 -- Best-effort backfill of existing AU mobile numbers.
--- Handles: 0433821798 / 0433 821 798 / +61 433 821 798 / 61433821798 / 433821798
+-- Handles: 0491570156 / 0491 570 156 / +61 491 570 156 / 61491570156 / 491570156
 update staff
 set phone_e164 = '+61' || substring(regexp_replace(phone, '[^0-9]', '', 'g') from 2)
 where phone_e164 is null
