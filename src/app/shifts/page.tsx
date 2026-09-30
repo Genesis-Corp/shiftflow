@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Plus, Pencil, Trash2, Coffee, Download, List, GanttChartSquare,
-  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer, Filter, X,
+  History, ChevronLeft, ChevronRight, Camera, FileText, FileSpreadsheet, Thermometer, Clock, Filter, X,
 } from 'lucide-react';
 import Modal from '@/components/Modal';
 import ErrorBanner from '@/components/ErrorBanner';
 import UploadMenu from '@/components/UploadMenu';
 import DropOverlay from '@/components/DropOverlay';
 import StaffName from '@/components/StaffName';
+import { INCIDENT_META } from '@/lib/incidentMeta';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
 import { Shift, Department, Staff, SchoolHoliday } from '@/lib/types';
@@ -109,11 +110,12 @@ function groupByStaff(shifts: Shift[]): StaffDayShifts[] {
 }
 
 function ShiftDayGroup({
-  group, onAdjust, onEdit, onRemove, onCalledInSick,
+  group, onAdjust, onEdit, onRemove, onCalledInSick, onLate,
 }: {
   group: DayGroup;
   onAdjust: (s: Shift) => void; onEdit: (s: Shift) => void; onRemove: (s: Shift) => void;
   onCalledInSick: (g: StaffDayShifts) => void;
+  onLate: (s: Shift) => void;
 }) {
   // Only people with more than one shift today need the merged line and
   // button below — everyone else is a single row in the department tables
@@ -213,6 +215,15 @@ function ShiftDayGroup({
                             <Thermometer size={13} />
                           </button>
                         )}
+                        {s.assigned_staff_id && name && (
+                          <button
+                            onClick={() => onLate(s)}
+                            title="Log a late arrival — docks reliability by the configured %"
+                            className="btn-ghost p-1.5 text-amber-600"
+                          >
+                            <Clock size={13} />
+                          </button>
+                        )}
                         <button onClick={() => onAdjust(s)} title="Adjust times" className="btn-ghost p-1.5 text-blue-500"><Coffee size={13} /></button>
                         <button onClick={() => onEdit(s)} className="btn-ghost p-1.5"><Pencil size={14} /></button>
                         <button onClick={() => onRemove(s)} className="btn-ghost p-1.5 text-red-500 hover:bg-red-50"><Trash2 size={14} /></button>
@@ -264,6 +275,14 @@ export default function ShiftsPage() {
   });
 
   const [adjustForm, setAdjustForm] = useState({ start_time: '', end_time: '' });
+
+  // Set while the "log a late arrival" modal is open for a shift — a
+  // separate small modal rather than reusing `editing`/`modal`, since it
+  // only ever needs the one arrival-time field and shouldn't share state
+  // with the full edit form.
+  const [lateShift, setLateShift] = useState<Shift | null>(null);
+  const [lateTime, setLateTime] = useState('');
+  const [lateSaving, setLateSaving] = useState(false);
   /** Who a shift being edited is assigned to — '' means unassigned. Kept
    *  separate from `form` since it only applies in edit mode and drives the
    *  shift's status (covered/open) alongside assigned_staff_id on save. */
@@ -649,6 +668,35 @@ export default function ShiftsPage() {
     load();
   }
 
+  function openLate(s: Shift) {
+    setLateShift(s);
+    setLateTime('');
+    setSaveError('');
+  }
+
+  /** Logs a 'late' reliability incident against this shift's assigned
+   *  staff member — the same incident type and % delta the Reliability
+   *  page's manual log form already uses, just reachable straight from the
+   *  shift they were late to instead of hunting for them in that list. */
+  async function saveLate() {
+    if (!lateShift || !lateTime || !lateShift.assigned_staff_id) return;
+    setLateSaving(true); setSaveError('');
+    const res = await fetch('/api/reliability', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        staff_id: lateShift.assigned_staff_id,
+        incident_type: 'late',
+        shift_id: lateShift.id,
+        date: lateShift.date,
+        late_time: lateTime,
+      }),
+    });
+    setLateSaving(false);
+    if (!res.ok) { setSaveError((await res.json()).error ?? 'Could not log the late arrival.'); return; }
+    setLateShift(null);
+    load();
+  }
+
   /** Reopens every shift in the group so each shows up on Cover Shift like
    *  any other open shift — the same state a lost claim race leaves it in —
    *  and logs exactly one no-show incident for the day, however many
@@ -938,7 +986,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No upcoming shifts.</p></div>
           )}
           {futureGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} />
           ))}
         </div>
       ) : view === 'past' ? (
@@ -947,7 +995,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No past shifts.</p></div>
           )}
           {pastGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} />
           ))}
         </div>
       ) : (
@@ -1140,6 +1188,29 @@ export default function ShiftsPage() {
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setModal(null)} className="btn-secondary">Cancel</button>
               <button onClick={saveAdjust} disabled={adjustUnderMinimum} className="btn-primary">Apply Adjustment</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {lateShift && (
+        <Modal title={`Late: ${lateShift.departments?.name} ${lateShift.date}`} onClose={() => setLateShift(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">
+              Rostered start <strong>{lateShift.start_time.slice(0, 5)}</strong> for{' '}
+              <StaffName staffId={lateShift.assigned_staff_id!} name={assignedName(lateShift) ?? ''} className="font-medium text-slate-700" />.
+              {' '}Logging this drops their reliability score by <strong>{INCIDENT_META.late.delta}</strong>.
+            </p>
+            <div>
+              <label className="label">Arrived At</label>
+              <input type="time" className="input" value={lateTime} onChange={e => setLateTime(e.target.value)} />
+            </div>
+            {saveError && <p className="text-sm text-red-600">{saveError}</p>}
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setLateShift(null)} className="btn-secondary">Cancel</button>
+              <button onClick={saveLate} disabled={!lateTime || lateSaving} className="btn-primary">
+                {lateSaving ? 'Saving…' : 'Log Late Arrival'}
+              </button>
             </div>
           </div>
         </Modal>
