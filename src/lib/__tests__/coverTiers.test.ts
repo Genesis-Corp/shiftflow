@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   tierFor, gatherWindowMinutes, rankCandidates, batchesOf, deferMinutesForQuietHours,
   leadMinutesFor, nextImmediateAction, nextGatherAction, nextSequentialAction,
-  SEQUENTIAL_LEAD_MINUTES, TierRecipient,
+  SEQUENTIAL_LEAD_MINUTES, SEQUENTIAL_STEP_MINUTES, SEQUENTIAL_HANDOFF_LEAD_MINUTES,
+  sequentialStepMinutes, TierRecipient,
 } from '../coverTiers';
 
 describe('leadMinutesFor', () => {
@@ -38,14 +39,15 @@ describe('tierFor', () => {
     expect(tierFor(29)).toBe('immediate');
   });
 
-  it('gathers from 30 minutes out up to two days', () => {
+  it('gathers from 30 minutes out up to the sequential threshold', () => {
     expect(tierFor(30)).toBe('gather');
     expect(tierFor(4 * 60)).toBe('gather');
     expect(tierFor(SEQUENTIAL_LEAD_MINUTES - 1)).toBe('gather');
   });
 
-  it('goes one at a time from two days out', () => {
+  it('goes one at a time once there is room for a full step before the handoff', () => {
     expect(tierFor(SEQUENTIAL_LEAD_MINUTES)).toBe('sequential');
+    expect(tierFor(22 * 60)).toBe('sequential'); // the evening before a next-day shift
     expect(tierFor(7 * 24 * 60)).toBe('sequential');
   });
 });
@@ -273,33 +275,64 @@ describe('nextSequentialAction', () => {
   const NOW = new Date('2026-09-18T10:00:00Z');
   const notYet = new Date('2026-09-18T14:00:00Z');
   const overdue = new Date('2026-09-18T09:00:00Z');
+  const DAY = 24 * 60;
 
   it('waits mid-step with no decline and no timeout', () => {
     const recipients = [recipient('a'), recipient('b')];
-    expect(nextSequentialAction(recipients, 0, notYet, NOW)).toEqual({ type: 'wait' });
+    expect(nextSequentialAction(recipients, 0, notYet, NOW, DAY)).toEqual({ type: 'wait' });
   });
 
   it('advances to the next person once the step deadline passes', () => {
     const recipients = [recipient('a'), recipient('b')];
-    expect(nextSequentialAction(recipients, 0, overdue, NOW)).toEqual({
-      type: 'advance', index: 1, recipient: recipient('b'),
+    expect(nextSequentialAction(recipients, 0, overdue, NOW, DAY)).toEqual({
+      type: 'advance', index: 1, recipient: recipient('b'), stepMinutes: SEQUENTIAL_STEP_MINUTES,
     });
   });
 
   it('advances immediately on an explicit decline, without waiting for the timeout', () => {
     const recipients = [recipient('a', { outcome: 'declined' }), recipient('b')];
-    expect(nextSequentialAction(recipients, 0, notYet, NOW)).toEqual({
-      type: 'advance', index: 1, recipient: recipient('b'),
+    expect(nextSequentialAction(recipients, 0, notYet, NOW, DAY)).toEqual({
+      type: 'advance', index: 1, recipient: recipient('b'), stepMinutes: SEQUENTIAL_STEP_MINUTES,
     });
   });
 
   it('is exhausted once the last person times out', () => {
     const recipients = [recipient('a')];
-    expect(nextSequentialAction(recipients, 0, overdue, NOW)).toEqual({ type: 'exhausted' });
+    expect(nextSequentialAction(recipients, 0, overdue, NOW, DAY)).toEqual({ type: 'exhausted' });
   });
 
   it('is exhausted if the current index is already past the end of the list', () => {
     const recipients = [recipient('a')];
-    expect(nextSequentialAction(recipients, 5, overdue, NOW)).toEqual({ type: 'exhausted' });
+    expect(nextSequentialAction(recipients, 5, overdue, NOW, DAY)).toEqual({ type: 'exhausted' });
+  });
+
+  it('cuts the next step short so it ends at the handoff point', () => {
+    const recipients = [recipient('a'), recipient('b')];
+    // 5h to go: 2h step, ending with 3h left.
+    expect(nextSequentialAction(recipients, 0, overdue, NOW, 5 * 60)).toEqual({
+      type: 'advance', index: 1, recipient: recipient('b'), stepMinutes: 2 * 60,
+    });
+  });
+
+  it('hands everyone not yet asked over to a gather window once the shift is close', () => {
+    const recipients = [
+      recipient('a'), recipient('b'), recipient('c', { outcome: 'declined' }), recipient('d'),
+    ];
+    // 3.5h to go: under an hour left for another step before the handoff point.
+    expect(nextSequentialAction(recipients, 0, overdue, NOW, 3.5 * 60)).toEqual({
+      type: 'handoff', recipients: [recipient('b'), recipient('d')], gatherMinutes: 120,
+    });
+  });
+
+  it('is exhausted, not handed off, when the close-to-shift step was the last person', () => {
+    expect(nextSequentialAction([recipient('a')], 0, overdue, NOW, 60)).toEqual({ type: 'exhausted' });
+  });
+});
+
+describe('sequentialStepMinutes', () => {
+  it('is a full step with plenty of notice, and never runs past the handoff point', () => {
+    expect(sequentialStepMinutes(24 * 60)).toBe(SEQUENTIAL_STEP_MINUTES);
+    expect(sequentialStepMinutes(SEQUENTIAL_LEAD_MINUTES)).toBe(SEQUENTIAL_STEP_MINUTES);
+    expect(sequentialStepMinutes(SEQUENTIAL_HANDOFF_LEAD_MINUTES + 90)).toBe(90);
   });
 });

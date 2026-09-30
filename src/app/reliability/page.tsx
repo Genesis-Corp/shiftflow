@@ -49,6 +49,7 @@ export default function ReliabilityPage() {
     return {
       staff: s,
       no_shows: sIncidents.filter(i => i.incident_type === 'no_show').length,
+      sick_days: sIncidents.filter(i => i.incident_type === 'sick').length,
       no_answers: sIncidents.filter(i => i.incident_type === 'no_answer').length,
       rejections: sIncidents.filter(i => i.incident_type === 'rejected').length,
       lates: sIncidents.filter(i => i.incident_type === 'late').length,
@@ -84,7 +85,7 @@ export default function ReliabilityPage() {
             <h2 className="font-semibold text-red-800">Flagged Staff ({flagged.length})</h2>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {flagged.map(({ staff: s, no_shows, no_answers, rejections, lates }) => (
+            {flagged.map(({ staff: s, no_shows, sick_days, no_answers, rejections, lates }) => (
               <div key={s.id} className="bg-white rounded-lg border border-red-200 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <StaffName staffId={s.id} name={s.name} className="font-medium text-slate-800" />
@@ -93,6 +94,7 @@ export default function ReliabilityPage() {
                 <ReliabilityBar score={s.reliability_score} showLabel={false} />
                 <div className="flex gap-3 mt-2 text-xs text-slate-500">
                   {no_shows > 0 && <span className="text-red-600">{no_shows}× no-show</span>}
+                  {sick_days > 0 && <span>{sick_days}× sick</span>}
                   {no_answers > 0 && <span>{no_answers}× no-answer</span>}
                   {rejections > 0 && <span>{rejections}× rejected</span>}
                   {lates > 0 && <span>{lates}× late</span>}
@@ -171,7 +173,7 @@ export default function ReliabilityPage() {
                   {formatDate(inc.date)}
                   {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}
                 </span>
-                <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{meta.delta}</span>
+                <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : inc.incident_type === 'sick' ? 'text-slate-400' : 'text-red-500'}`}>{meta.delta}</span>
                 {inc.notes && <span className="text-xs text-slate-400">{inc.notes}</span>}
               </div>
             );

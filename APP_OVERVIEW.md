@@ -193,8 +193,8 @@ manager presses Start — the manager never picks the method:
 | Tier | Lead time | How it works |
 |---|---|---|
 | **Immediate** | under 30 min, or already started | 2 people at a time, first YES wins, 5 min before moving to the next 2 |
-| **Gather** | 30 min – 48 hours | everyone eligible texted at once, replies collected for a window (5–120 min, sized by notice), manager picks from who said yes |
-| **Sequential** | 48+ hours | one person at a time, cheapest first, 4 hours to answer |
+| **Gather** | 30 min – 7 hours | everyone eligible texted at once, replies collected for a window (5–120 min, sized by notice), manager picks from who said yes |
+| **Sequential** | 7+ hours | one person at a time, cheapest first, 4 hours to answer; once the shift is within 3 hours, anyone not yet asked is switched to a Gather window all at once |
 
 **Every reply resolves one of four ways**: `YES <code>` (wins it outright in
 Immediate/Sequential, or marks "available" for the manager to pick from in

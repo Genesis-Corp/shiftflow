@@ -154,14 +154,14 @@ export async function findEligibleCandidates(
     .from('staff_leave').select('staff_id').lte('start_date', date).gte('end_date', date);
   const onLeaveIds = new Set((onLeave ?? []).map((l: { staff_id: string }) => l.staff_id));
 
-  // Called in sick (or otherwise logged a no-show) recently. Same day: out
+  // Called in sick or no-showed recently. Same day: out
   // of the race entirely, for every shift that day, not just the one they
   // were pulled from — turning up unavailable for one shift means
   // unavailable for all of them. The 3 days after: still offered shifts,
   // just ranked towards the bottom of the list (see rankCandidates).
   const { data: recentNoShows } = await supabaseAdmin
     .from('reliability_incidents').select('staff_id, date')
-    .eq('incident_type', 'no_show').gte('date', addDays(date, -3)).lte('date', date);
+    .in('incident_type', ['no_show', 'sick']).gte('date', addDays(date, -3)).lte('date', date);
   const excludedForDayIds = new Set<string>();
   const recentlyAbsentIds = new Set<string>();
   for (const r of (recentNoShows ?? []) as { staff_id: string; date: string }[]) {

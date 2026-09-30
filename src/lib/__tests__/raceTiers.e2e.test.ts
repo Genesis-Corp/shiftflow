@@ -507,4 +507,47 @@ describe('sequential tier end-to-end', () => {
     expect(shift?.assigned_staff_id).toBe('i');
     expect(messagesTo('+61400000099')[0].body).toContain('Ivan will cover');
   });
+
+  it('goes one at a time for a shift the next morning, and a NO texts the next person straight away', async () => {
+    seedShift('shift-tomorrow', '2026-09-19', '07:00'); // 22 hours out
+    candidatesForNextRace = [H, I];
+    seedStaff(H, I);
+
+    const result = await startRace('shift-tomorrow');
+    expect(result.tier).toBe('sequential');
+    expect(messagesTo(H.phone_e164)).toHaveLength(1);
+    expect(messagesTo(I.phone_e164)).toHaveLength(0);
+
+    // No advanceRace call here — the NO itself moves the race on.
+    const declined = await handleInboundReply({ from: H.phone_e164, body: 'NO' });
+    expect(declined.result).toBe('declined');
+    expect(messagesTo(I.phone_e164)).toHaveLength(1);
+  });
+
+  it('hands whoever is still unasked over to a gather window once the shift gets close', async () => {
+    const J = candidate('j', 'Jade', 20);
+    seedShift('shift-close', '2026-09-18', '16:00'); // 7 hours out -> sequential, just
+    seedManager('mgr-1', 'Jamie', '+61400000099');
+    candidatesForNextRace = [H, I, J];
+    seedStaff(H, I, J);
+
+    const result = await startRace('shift-close', { startedBy: 'mgr-1' });
+    expect(result.tier).toBe('sequential');
+    expect(messagesTo(H.phone_e164)).toHaveLength(1);
+
+    // Hana's 4 hours are up and the shift is under 3 hours away: Ivan and
+    // Jade are both asked at once rather than getting a step each.
+    vi.setSystemTime(new Date(BASE_NOW.getTime() + 4 * 60 * 60_000 + 60_000));
+    await advanceRace(result.raceId);
+    expect(messagesTo(I.phone_e164)).toHaveLength(1);
+    expect(messagesTo(J.phone_e164)).toHaveLength(1);
+    expect(messagesTo(H.phone_e164)).toHaveLength(1);
+
+    const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(race?.tier).toBe('gather');
+
+    // Now it's a gather race: a YES marks them available for the manager to pick.
+    const ack = await handleInboundReply({ from: J.phone_e164, body: 'YES' });
+    expect(ack.result).toBe('available_ack');
+  });
 });

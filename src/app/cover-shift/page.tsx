@@ -771,16 +771,22 @@ export default function CoverShiftPage() {
 
             <div>
               <p className="text-sm text-slate-600">
-                <strong>{preview.contactable.length}</strong> staff will be texted about{' '}
+                <strong>{preview.contactable.length}</strong> staff can be texted about{' '}
                 <strong>
                   {formatDate(preview.shift.date)} {preview.shift.start_time.slice(0, 5)}–
                   {preview.shift.end_time.slice(0, 5)}
                 </strong>{' '}
                 ({preview.shift.departments?.name}).{' '}
-                {preview.slots_needed > 1
-                  ? <>The first <strong>{preview.slots_needed}</strong> to reply YES get the shift;
-                      everyone else is told it has been covered.</>
-                  : <>The first to reply YES gets the shift; everyone else is told it has been covered.</>}
+                {preview.tier === 'sequential'
+                  ? <>They&apos;ll be asked <strong>one at a time</strong>, in the order below, with 4 hours each to
+                      reply. If the shift gets within 3 hours with people still unasked, the rest are asked
+                      all at once.</>
+                  : preview.tier === 'gather'
+                  ? <>They&apos;ll <strong>all be asked at once</strong>. Replies are collected for a short window,
+                      then you&apos;re sent a list of who said yes to pick from.</>
+                  : <>It&apos;s urgent, so they&apos;ll be asked <strong>two at a time</strong>, moving on after
+                      5 minutes without an answer. First YES gets the shift.</>}
+                {preview.slots_needed > 1 && <> Needs <strong>{preview.slots_needed}</strong> people.</>}
               </p>
             </div>
 

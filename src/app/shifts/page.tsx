@@ -715,14 +715,13 @@ export default function ShiftsPage() {
 
   /** Reopens every shift in the group so each shows up on Cover Shift like
    *  any other open shift — the same state a lost claim race leaves it in —
-   *  and logs exactly one no-show incident for the day, however many
+   *  and logs exactly one sick incident for the day, however many
    *  departments' worth of shifts that covers. A split shift is one absence,
-   *  not two: without this, a manager who separately marks each department
-   *  shift as sick ends up docking the same person's reliability score
-   *  twice for the one day off. */
+   *  not two. Logged as 'sick', never 'no_show' — they told us they
+   *  weren't coming, which is a different thing from not turning up. */
   async function calledInSick(group: { staff_id: string; name: string; shifts: Shift[] }) {
     const shiftWord = group.shifts.length > 1 ? `all ${group.shifts.length} shifts` : 'this shift';
-    if (!confirm(`Mark ${group.name} as called in sick and reopen ${shiftWord} today? Logged as one no-show.`)) return;
+    if (!confirm(`Mark ${group.name} as called in sick and reopen ${shiftWord} today?`)) return;
     await Promise.all(group.shifts.map(s => fetch(`/api/shifts/${s.id}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'open', assigned_staff_id: null, excluded_staff_id: group.staff_id }),
@@ -731,7 +730,7 @@ export default function ShiftsPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         staff_id: group.staff_id,
-        incident_type: 'no_show',
+        incident_type: 'sick',
         date: group.shifts[0].date,
         notes: group.shifts.length > 1
           ? `Called in sick — ${group.shifts.length} shifts reopened (${group.shifts.map(s => s.departments?.name ?? 'Unknown').join(', ')})`

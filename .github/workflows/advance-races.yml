@@ -1,0 +1,34 @@
+name: Advance claim races
+
+# Moves running claim races along on a schedule — texts the next person when
+# a sequential step (4 hours each) or an immediate batch times out, even when
+# nobody has the race open in the app. Without this, a race only advances
+# when someone views it or replies to it.
+#
+# Uses the same repo secrets as the Humanforce sync:
+#   SHIFTFLOW_URL    — the production URL, e.g. https://shiftflow-phi.vercel.app
+#   AUTOMATION_TOKEN — must match AUTOMATION_TOKEN on the Vercel deployment.
+#
+# GitHub may start scheduled runs a few minutes late; that's fine for
+# four-hour steps.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Advance active races
+        env:
+          SHIFTFLOW_URL: ${{ secrets.SHIFTFLOW_URL }}
+          AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$SHIFTFLOW_URL" ] || [ -z "$AUTOMATION_TOKEN" ]; then
+            echo "SHIFTFLOW_URL / AUTOMATION_TOKEN secrets not set — skipping."
+            exit 0
+          fi
+          curl -fsS -X POST "${SHIFTFLOW_URL%/}/api/automation/advance-races" \
+            -H "Authorization: Bearer $AUTOMATION_TOKEN"

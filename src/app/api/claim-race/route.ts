@@ -4,6 +4,8 @@ import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { findEligibleCandidates } from '@/lib/eligibility';
 import { splitContactable } from '@/lib/claimRace';
 import { requireUser, unauthorized } from '@/lib/auth';
+import { tierFor, leadMinutesFor } from '@/lib/coverTiers';
+import { localDateNow, localTimeNow } from '@/lib/sms/config';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,6 +49,7 @@ export async function GET(req: NextRequest) {
     backup,
     active_race_id: active?.id ?? null,
     slots_needed: slotsNeeded,
+    tier: tierFor(leadMinutesFor(shift.date, shift.start_time, localDateNow(), localTimeNow())),
   });
 }
 

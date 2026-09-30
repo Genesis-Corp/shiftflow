@@ -29,7 +29,7 @@ export default function SettingsPage() {
   const [removing, setRemoving] = useState('');
 
   // Read-only copy of the Reliability page's incident log — no shows, sick
-  // calls (logged as a no-show), lates and rejections all land here so a
+  // calls, lates and rejections all land here so a
   // manager can skim it without leaving Settings. Logging a new one, or
   // seeing scores, still happens on the Reliability page itself.
   const [incidents, setIncidents] = useState<ReliabilityIncident[]>([]);
@@ -168,7 +168,7 @@ export default function SettingsPage() {
                       {formatDate(inc.date)}
                       {inc.incident_type === 'late' && inc.late_time && ` · arrived ${formatTimeOfDay(inc.late_time.slice(0, 5))}`}
                     </span>
-                    <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : 'text-red-500'}`}>{meta.delta}</span>
+                    <span className={`text-xs ml-auto font-mono font-bold ${inc.incident_type === 'covered' ? 'text-green-600' : inc.incident_type === 'sick' ? 'text-slate-400' : 'text-red-500'}`}>{meta.delta}</span>
                     {inc.notes && <span className="text-xs text-slate-400 w-full sm:w-auto">{inc.notes}</span>}
                   </div>
                 );

@@ -269,9 +269,14 @@ export function formatDate(dateStr: string): string {
 /** Reliability score delta for each incident type — every entry is a
  *  PERCENTAGE, not a flat point value (see applyReliabilityDelta): a
  *  negative one shrinks the current score towards 0, a positive one grows
- *  it towards 100. */
+ *  it towards 100.
+ *
+ *  `sick` is deliberately zero: calling in sick is a legitimate, notified
+ *  absence, not a no-show, so it's logged (and still keeps them out of
+ *  that day's claim races) without touching their score. */
 export const RELIABILITY_DELTAS: Record<string, number> = {
   no_show: -15,
+  sick: 0,
   no_answer: -5,
   rejected: -3,
   covered: +10,

@@ -14,9 +14,12 @@
  *              with nobody having said yes, it degrades to first yes wins so
  *              the shift still gets filled.
  *
- *  sequential  Two or more days out. One person at a time, four hours each,
+ *  sequential  Hours or days out. One person at a time, four hours each,
  *              working down the ranked list — no point blasting everyone for
- *              a shift that isn't for days.
+ *              a shift that isn't until tomorrow. If the list is still going
+ *              as the shift gets close, whoever hasn't been asked yet is
+ *              handed over to a gather window all at once, so a long list
+ *              can never run the shift out of time.
  *
  * Pure functions only. Every time value is passed in rather than read from
  * the clock, so the awkward cases (a window that would run past the shift,
@@ -33,8 +36,17 @@ export const IMMEDIATE_BATCH_SIZE = 2;
 export const IMMEDIATE_BATCH_TIMEOUT_MINUTES = 5;
 /** How long each person gets in the sequential tier. */
 export const SEQUENTIAL_STEP_MINUTES = 4 * 60;
-/** At or beyond this much notice, go one at a time instead of gathering. */
-export const SEQUENTIAL_LEAD_MINUTES = 48 * 60;
+/** Once the shift is this close, a sequential race stops asking one at a
+ *  time and hands everyone still unasked over to a gather window. Three
+ *  hours leaves room for the full two-hour gather window plus the manager's
+ *  pick before they'd need to leave for work. */
+export const SEQUENTIAL_HANDOFF_LEAD_MINUTES = 3 * 60;
+/** A sequential step shorter than this isn't worth giving someone — hand
+ *  over to the gather window instead. */
+export const MIN_SEQUENTIAL_STEP_MINUTES = 60;
+/** At or beyond this much notice, go one at a time instead of gathering:
+ *  enough for at least one full four-hour step before the handoff point. */
+export const SEQUENTIAL_LEAD_MINUTES = SEQUENTIAL_STEP_MINUTES + SEQUENTIAL_HANDOFF_LEAD_MINUTES;
 /** Below this much notice there isn't time to gather anything. */
 export const MIN_GATHER_LEAD_MINUTES = 30;
 /** Never let a gather window run right up to the shift — they have to get there. */
@@ -177,16 +189,29 @@ export function nextGatherAction(recipients: TierRecipient[], gatherDeadline: Da
 
 export type SequentialAction =
   | { type: 'wait' }
-  | { type: 'advance'; index: number; recipient: TierRecipient }
+  | { type: 'advance'; index: number; recipient: TierRecipient; stepMinutes: number }
+  | { type: 'handoff'; recipients: TierRecipient[]; gatherMinutes: number }
   | { type: 'exhausted' };
+
+/**
+ * How long the next sequential step can run: the usual four hours, cut short
+ * so it ends at the handoff point rather than running on towards the shift.
+ * `leadMinutes` is how long until the shift starts, right now.
+ */
+export function sequentialStepMinutes(leadMinutes: number): number {
+  return Math.min(SEQUENTIAL_STEP_MINUTES, leadMinutes - SEQUENTIAL_HANDOFF_LEAD_MINUTES);
+}
 
 /**
  * `recipients` is every contactable candidate, ranked — one is "live" at a
  * time. Their step ends on an explicit decline or the step deadline; either
- * way the next person in line (if any) is asked next.
+ * way the next person in line (if any) is asked next — unless the shift is
+ * now too close for another step (see sequentialStepMinutes), in which case
+ * everyone not yet asked is handed over to a gather window at once.
+ * `leadMinutes` is how long until the shift starts, right now.
  */
 export function nextSequentialAction(
-  recipients: TierRecipient[], currentIndex: number, stepDeadline: Date, now: Date
+  recipients: TierRecipient[], currentIndex: number, stepDeadline: Date, now: Date, leadMinutes: number
 ): SequentialAction {
   const current = recipients[currentIndex];
   if (!current) return { type: 'exhausted' };
@@ -196,7 +221,14 @@ export function nextSequentialAction(
 
   const next = recipients[currentIndex + 1];
   if (!next) return { type: 'exhausted' };
-  return { type: 'advance', index: currentIndex + 1, recipient: next };
+
+  const stepMinutes = sequentialStepMinutes(leadMinutes);
+  if (stepMinutes < MIN_SEQUENTIAL_STEP_MINUTES) {
+    const unasked = recipients.slice(currentIndex + 1).filter(r => r.outcome === null);
+    if (unasked.length === 0) return { type: 'exhausted' };
+    return { type: 'handoff', recipients: unasked, gatherMinutes: gatherWindowMinutes(leadMinutes) };
+  }
+  return { type: 'advance', index: currentIndex + 1, recipient: next, stepMinutes };
 }
 
 /**

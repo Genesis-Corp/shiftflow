@@ -61,7 +61,7 @@ create table if not exists availability_templates (
 create table if not exists reliability_incidents (
   id uuid primary key default gen_random_uuid(),
   staff_id uuid not null references staff(id) on delete cascade,
-  incident_type text not null check (incident_type in ('no_show', 'no_answer', 'rejected', 'covered')),
+  incident_type text not null check (incident_type in ('no_show', 'sick', 'no_answer', 'rejected', 'covered', 'late', 'opted_out_sms')),
   shift_id uuid references shifts(id) on delete set null,
   date date not null,
   notes text,

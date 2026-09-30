@@ -6,7 +6,7 @@ import {
 import { parseManagerReply, allocateOptionNumber } from '@/lib/managerReply';
 import {
   tierFor, leadMinutesFor, gatherWindowMinutes, nextImmediateAction, nextGatherAction,
-  nextSequentialAction, TierRecipient, CoverTier,
+  nextSequentialAction, sequentialStepMinutes, TierRecipient, CoverTier,
   IMMEDIATE_BATCH_SIZE, IMMEDIATE_BATCH_TIMEOUT_MINUTES, SEQUENTIAL_STEP_MINUTES,
 } from '@/lib/coverTiers';
 import { sendSms, logInbound } from '@/lib/sms/send';
@@ -237,7 +237,7 @@ export async function startRace(
     } :
     tier === 'sequential' ? {
       sequential_index: 0,
-      step_deadline: new Date(now + SEQUENTIAL_STEP_MINUTES * 60_000).toISOString(),
+      step_deadline: new Date(now + sequentialStepMinutes(leadMinutes) * 60_000).toISOString(),
     } :
     { gather_deadline: new Date(now + gatherWindowMinutes(leadMinutes) * 60_000).toISOString() };
 
@@ -501,15 +501,19 @@ async function advanceGather(
 }
 
 async function advanceSequential(
-  race: { id: string; shift_id: string; started_by: string | null; sequential_index: number | null; step_deadline: string },
+  race: { id: string; shift_id: string; started_by: string | null; sequential_index: number | null; step_deadline: string; expires_at: string },
   recipients: RecipientRow[], tierRecipients: TierRecipient[], now: Date
 ): Promise<void> {
   const currentIndex = race.sequential_index ?? 0;
-  const action = nextSequentialAction(tierRecipients, currentIndex, new Date(race.step_deadline), now);
-  if (action.type === 'wait') return;
+  // Only whether the step is done needs no shift; the lead time is read
+  // below once it is, so a race that's just waiting costs no extra query.
+  if (nextSequentialAction(tierRecipients, currentIndex, new Date(race.step_deadline), now, Infinity).type === 'wait') return;
 
   const shift = await loadShift(race.shift_id);
   const summary = toSummary(shift);
+  const leadMinutes = leadMinutesFor(shift.date, shift.start_time, localDateNow(), localTimeNow());
+  const action = nextSequentialAction(tierRecipients, currentIndex, new Date(race.step_deadline), now, leadMinutes);
+  if (action.type === 'wait') return;
 
   if (action.type === 'exhausted') {
     const { data: updated } = await supabaseAdmin.from('shift_claim_races')
@@ -521,9 +525,30 @@ async function advanceSequential(
     return;
   }
 
+  if (action.type === 'handoff') {
+    // The shift is too close to keep going one at a time: switch the race to
+    // the gather tier and ask everyone not yet asked at once. From here it
+    // runs exactly like a race that started as gather — replies collected
+    // until gather_deadline, then the manager's pick list (or the degrade).
+    const gatherDeadline = new Date(now.getTime() + action.gatherMinutes * 60_000);
+    const minExpiry = new Date(gatherDeadline.getTime() + 30 * 60_000);
+    const { data: updated } = await supabaseAdmin.from('shift_claim_races').update({
+      tier: 'gather',
+      gather_deadline: gatherDeadline.toISOString(),
+      expires_at: new Date(Math.max(new Date(race.expires_at).getTime(), minExpiry.getTime())).toISOString(),
+    }).eq('id', race.id).eq('status', 'active').eq('tier', 'sequential')
+      .eq('sequential_index', currentIndex).select().maybeSingle();
+    if (!updated) return; // someone else already handed this race over
+
+    const [manager, business] = await Promise.all([managerProfileFor(race.started_by), getBusinessName()]);
+    const toSend = recipients.filter(r => action.recipients.some(a => a.staffId === r.staff_id));
+    await sendBatch(toSend, race.id, r => availabilityMessage(summary, r.staff?.name ?? 'there', business, manager?.name ?? null));
+    return;
+  }
+
   const { data: updated } = await supabaseAdmin.from('shift_claim_races').update({
     sequential_index: action.index,
-    step_deadline: new Date(now.getTime() + SEQUENTIAL_STEP_MINUTES * 60_000).toISOString(),
+    step_deadline: new Date(now.getTime() + action.stepMinutes * 60_000).toISOString(),
   }).eq('id', race.id).eq('status', 'active').eq('sequential_index', currentIndex).select().maybeSingle();
   if (!updated) return; // someone else already advanced this step
 
@@ -642,6 +667,11 @@ export async function handleInboundReply(params: {
     await supabaseAdmin.from('shift_claim_recipients').update({
       outcome: 'declined', responded_at: new Date().toISOString(), response_body: body,
     }).eq('id', recipient.id);
+    // A NO ends that person's turn in the immediate and sequential tiers —
+    // ask the next in line now rather than whenever someone next opens the
+    // race. Best effort: the decline itself is already recorded, and the
+    // next poll or scheduled tick retries the advance if this one fails.
+    await advanceRace(race.id).catch(err => console.error('advanceRace after decline failed', err));
     return {
       handled: true, reply: declinedMessage(), result: 'declined',
       raceId: race.id, staffId: recipient.staff_id,
@@ -905,6 +935,28 @@ export async function cancelRace(raceId: string): Promise<void> {
   }).eq('id', raceId).eq('status', 'active');
   await supabaseAdmin.from('shift_claim_recipients')
     .update({ outcome: 'no_response' }).eq('race_id', raceId).is('outcome', null);
+}
+
+/**
+ * Advance and expire every race that's still running. Races otherwise only
+ * move on when someone has the race open or replies to it, so without this a
+ * sequential step that times out overnight would sit there until morning.
+ * Called on a schedule by /api/automation/advance-races.
+ */
+export async function advanceAllActiveRaces(): Promise<{ checked: number; failed: number }> {
+  const { data } = await supabaseAdmin.from('shift_claim_races').select('id').eq('status', 'active');
+  const ids = (data ?? []).map((r: { id: string }) => r.id);
+  let failed = 0;
+  for (const id of ids) {
+    try {
+      await advanceRace(id);
+      await expireIfDue(id);
+    } catch (err) {
+      failed++;
+      console.error(`advanceAllActiveRaces: race ${id} failed`, err);
+    }
+  }
+  return { checked: ids.length, failed };
 }
 
 /** Full race detail for the status panel. */
