@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const staff_id = searchParams.get('staff_id');
+  const incident_type = searchParams.get('incident_type');
 
   let query = supabase
     .from('reliability_incidents')
@@ -16,6 +17,7 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false });
 
   if (staff_id) query = query.eq('staff_id', staff_id);
+  if (incident_type) query = query.eq('incident_type', incident_type);
 
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -13,7 +13,7 @@ import StaffName from '@/components/StaffName';
 import { INCIDENT_META } from '@/lib/incidentMeta';
 import { fetchJson } from '@/lib/apiClient';
 import { postJson } from '@/lib/api';
-import { Shift, Department, Staff, SchoolHoliday } from '@/lib/types';
+import { Shift, Department, Staff, SchoolHoliday, ReliabilityIncident } from '@/lib/types';
 import {
   formatDate, formatDuration, requiresBreak, BREAK_DURATION_MINUTES,
   TIMELINE_START_HOUR, TIMELINE_END_HOUR, timelineBarPosition, formatHour12, addDays, isBirthday, todayStr,
@@ -110,12 +110,13 @@ function groupByStaff(shifts: Shift[]): StaffDayShifts[] {
 }
 
 function ShiftDayGroup({
-  group, onAdjust, onEdit, onRemove, onCalledInSick, onLate,
+  group, onAdjust, onEdit, onRemove, onCalledInSick, onLate, lateByShift,
 }: {
   group: DayGroup;
   onAdjust: (s: Shift) => void; onEdit: (s: Shift) => void; onRemove: (s: Shift) => void;
   onCalledInSick: (g: StaffDayShifts) => void;
   onLate: (s: Shift) => void;
+  lateByShift: Map<string, string>;
 }) {
   // Only people with more than one shift today need the merged line and
   // button below — everyone else is a single row in the department tables
@@ -181,12 +182,17 @@ function ShiftDayGroup({
               {dg.shifts.map(s => {
                 const name = assignedName(s);
                 const isBday = isBirthday(assignedBirthday(s), group.date);
+                const lateTime = lateByShift.get(s.id);
                 return (
                   <tr key={s.id} className="hover:bg-slate-50 transition-colors">
                     {/* Seconds were never meaningful here and cost a third of
-                        the column's width on a phone. */}
-                    <td className="px-3 sm:px-4 py-3 font-mono text-slate-800 whitespace-nowrap">
-                      {s.start_time.slice(0, 5)} – {s.end_time.slice(0, 5)}
+                        the column's width on a phone. A logged late arrival
+                        replaces the rostered start with when they actually
+                        showed up, flagged red — the rostered time is no
+                        longer what happened. */}
+                    <td className={`px-3 sm:px-4 py-3 font-mono whitespace-nowrap ${lateTime ? 'text-red-600' : 'text-slate-800'}`}>
+                      {lateTime && <span title="Logged late arrival">⚠️ </span>}
+                      {(lateTime ?? s.start_time).slice(0, 5)} – {s.end_time.slice(0, 5)}
                     </td>
                     <td className="px-3 sm:px-4 py-3 text-slate-500 hidden md:table-cell">{formatDuration(s.start_time, s.end_time)}</td>
                     <td className="px-3 sm:px-4 py-3 hidden lg:table-cell">
@@ -304,24 +310,34 @@ export default function ShiftsPage() {
   const [schoolHolidays, setSchoolHolidays] = useState<SchoolHoliday[]>([]);
   const [publicHolidayDates, setPublicHolidayDates] = useState<Set<string>>(new Set());
 
+  // shift_id -> the time they actually arrived, for every shift with a
+  // logged late arrival — drives the ⚠️ + red actual-arrival display on
+  // that shift's row instead of its rostered start time.
+  const [lateByShift, setLateByShift] = useState<Map<string, string>>(new Map());
+
   // Load everything once. List/Past/Timeline are all just different slices
   // of the same array — no per-view refetch, and stepping the timeline's day
   // is instant instead of a round trip.
   async function load() {
     setLoading(true);
     try {
-      const [shiftsData, deptData, staffData, schoolHolidaysData, wagesData] = await Promise.all([
+      const [shiftsData, deptData, staffData, schoolHolidaysData, wagesData, lateIncidents] = await Promise.all([
         fetchJson<Shift[]>('/api/shifts'),
         fetchJson<Department[]>('/api/departments'),
         fetchJson<Staff[]>('/api/staff'),
         fetchJson<SchoolHoliday[]>('/api/school-holidays').catch(() => []),
         fetchJson<{ public_holidays: { date: string }[] }>('/api/wages').catch(() => null),
+        fetchJson<ReliabilityIncident[]>('/api/reliability?incident_type=late').catch(() => []),
       ]);
       setShifts(shiftsData);
       setDepartments(deptData);
       setStaff(staffData.filter(s => s.active && !s.archived).sort((a, b) => a.name.localeCompare(b.name)));
       setSchoolHolidays(schoolHolidaysData);
       setPublicHolidayDates(new Set((wagesData?.public_holidays ?? []).map(h => h.date)));
+      setLateByShift(new Map(
+        lateIncidents.filter((i): i is ReliabilityIncident & { shift_id: string; late_time: string } => !!i.shift_id && !!i.late_time)
+          .map(i => [i.shift_id, i.late_time] as [string, string])
+      ));
       setLoadError('');
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load shifts');
@@ -818,11 +834,16 @@ export default function ShiftsPage() {
     const isCancelled = s.status === 'cancelled';
     const isOpen = s.status === 'open';
     const fill = isCancelled ? '#cbd5e1' : normalizeDeptColor(s.departments?.color);
-    const textColor = isCancelled ? '#334155' : deptTextColor(s.departments?.color);
+    // The bar itself stays positioned on its rostered slot — only the label
+    // swaps to when they actually arrived, same as the List view's Time
+    // column, so the grid still reflects the roster while the text flags
+    // reality.
+    const lateTime = lateByShift.get(s.id);
+    const textColor = lateTime ? '#dc2626' : isCancelled ? '#334155' : deptTextColor(s.departments?.color);
     return (
       <div
         key={s.id}
-        title={`${s.start_time}–${s.end_time} · ${s.status}${deptName ? ` · ${deptName}` : ''}`}
+        title={`${s.start_time}–${s.end_time} · ${s.status}${deptName ? ` · ${deptName}` : ''}${lateTime ? ` · logged late, arrived ${lateTime.slice(0, 5)}` : ''}`}
         onClick={() => openEdit(s)}
         className={`absolute inset-y-0.5 rounded flex items-center px-1.5 overflow-hidden cursor-pointer ${
           isOpen ? 'ring-2 ring-red-500 ring-offset-1' : ''
@@ -833,7 +854,8 @@ export default function ShiftsPage() {
           className={`text-[11px] font-medium whitespace-nowrap ${isCancelled ? 'line-through' : ''}`}
           style={{ color: textColor }}
         >
-          {s.start_time.slice(0, 5)}–{s.end_time.slice(0, 5)}{deptName ? ` · ${deptName}` : ''}
+          {lateTime && '⚠️ '}
+          {(lateTime ?? s.start_time).slice(0, 5)}–{s.end_time.slice(0, 5)}{deptName ? ` · ${deptName}` : ''}
         </span>
       </div>
     );
@@ -986,7 +1008,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No upcoming shifts.</p></div>
           )}
           {futureGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} lateByShift={lateByShift} />
           ))}
         </div>
       ) : view === 'past' ? (
@@ -995,7 +1017,7 @@ export default function ShiftsPage() {
             <div className="card"><p className="text-center text-slate-400 py-8">No past shifts.</p></div>
           )}
           {pastGroups.map(g => (
-            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} />
+            <ShiftDayGroup key={g.date} group={g} onAdjust={openAdjust} onEdit={openEdit} onRemove={remove} onCalledInSick={calledInSick} onLate={openLate} lateByShift={lateByShift} />
           ))}
         </div>
       ) : (
