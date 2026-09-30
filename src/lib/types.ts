@@ -218,6 +218,9 @@ export interface ClaimRecipient {
   is_available?: boolean | null;
   option_number?: number | null;
   slot_index?: number | null;
+  /** Set when they replied with a different time ("yes but only til 8") —
+   *  pending until the manager accepts or declines it. */
+  different_time_status?: 'pending' | 'accepted' | 'declined' | null;
   responded_at?: string | null;
   response_body?: string | null;
   staff?: Pick<Staff, 'id' | 'name' | 'age_group' | 'reliability_score'>;

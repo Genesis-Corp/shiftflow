@@ -78,6 +78,21 @@ export function declinedMessage(): string {
   return `No worries, thanks for letting us know.`;
 }
 
+/** Acknowledges a "different time" reply while the manager decides. */
+export function differentTimeAckMessage(business: string): string {
+  return `${business}: thanks - I've passed that on to the manager and will let you know shortly.`;
+}
+
+/** The manager accepted their different time — the shift is theirs. */
+export function differentTimeAcceptedMessage(name: string, business: string): string {
+  return `${business}: Yes, that time works, thank you ${name}.`;
+}
+
+/** The manager needs the times as asked. */
+export function differentTimeDeclinedMessage(business: string): string {
+  return `${business}: Sorry, we really need that specific time covered. Thank you anyway.`;
+}
+
 /** Confirms an opt-out. */
 export function optOutMessage(business: string): string {
   return `${business}: you will not receive any more shift messages from us.`;
@@ -239,6 +254,23 @@ export function managerListMessage(
 export function managerEscalationMessage(shift: ShiftSummary): string {
   return `${SYSTEM}: no junior staff available for ${describeShift(shift)}, ` +
     `and nobody can extend. Reply YES to ask senior staff, or NO to leave it.`;
+}
+
+/** Forwards a staff member's "different time" reply for the manager to
+ *  accept (reply the number) or decline (NO + the number). */
+export function managerDifferentTimeMessage(
+  shift: ShiftSummary, name: string, reply: string, option: number
+): string {
+  const quoted = reply.trim().replace(/\s+/g, ' ').slice(0, 160);
+  return `${SYSTEM}: ${name} replied about ${describeShift(shift)}: "${quoted}". ` +
+    `Reply ${option} to accept, or NO ${option} to decline.`;
+}
+
+/** Confirms the manager's accept/decline of a different-time reply. */
+export function managerDifferentTimeResultMessage(name: string, accepted: boolean, shift: ShiftSummary): string {
+  return accepted
+    ? `${SYSTEM}: done - ${name} has the ${describeShift(shift)} shift. Update the times in ShiftFlow if they've changed.`
+    : `${SYSTEM}: done - ${name} has been told no. Still looking for cover.`;
 }
 
 /** Answers a pick for a shift that has already been filled or closed. */

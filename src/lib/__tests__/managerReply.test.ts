@@ -26,6 +26,11 @@ describe('parseManagerReply', () => {
     expect(parseManagerReply('yes 2')).toEqual({ kind: 'select', option: 2 });
   });
 
+  it('reads NO with a number as turning that option down', () => {
+    expect(parseManagerReply('NO 5')).toEqual({ kind: 'reject', option: 5 });
+    expect(parseManagerReply('nah 12')).toEqual({ kind: 'reject', option: 12 });
+  });
+
   it('refuses to guess when two numbers appear', () => {
     // Guessing here would hand the shift to the wrong person.
     expect(parseManagerReply('call at 3 or 4')).toEqual({ kind: 'unknown' });

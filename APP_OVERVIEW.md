@@ -203,6 +203,15 @@ as a decline), or `STOP` (opts out — see below). In Gather tier, once the
 window closes the manager gets a numbered list by text and replies with a
 number to pick.
 
+**A different time** — "yes but only til 8", "can do 7-9", "can't do 5:45
+but can do 7" — never wins the shift on its own. The staff member is told
+it's been passed on, the manager gets their reply quoted with a number
+(reply the number to accept, `NO` + the number to decline, or use the
+Accept/Decline buttons on the race panel), and the race moves on to the next
+person meanwhile. Accepting gives them the shift ("Yes, that time works,
+thank you") — update the shift's times in ShiftFlow if they changed;
+declining tells them "Sorry, we really need that specific time covered".
+
 **Winning a shift** covers it, notifies everyone else it's filled, and
 credits the winner's reliability (+10% of their remaining headroom to 100).
 

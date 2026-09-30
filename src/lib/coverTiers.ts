@@ -136,7 +136,20 @@ export function batchesOf<T>(items: T[], size: number = IMMEDIATE_BATCH_SIZE): T
 export interface TierRecipient {
   staffId: string;
   outcome: 'won' | 'lost' | 'declined' | 'no_response' | null;
+  /** true: said YES in a gather window. false: offered a different time
+   *  instead — that's with the manager now, so their turn is over. */
   isAvailable?: boolean | null;
+}
+
+/** Offered a different time the manager hasn't answered yet — the race
+ *  mustn't give up as "nobody available" while she might still accept it. */
+function awaitingManager(recipients: TierRecipient[]): boolean {
+  return recipients.some(r => r.isAvailable === false && r.outcome === null);
+}
+
+/** Answered with anything other than a plain YES — their turn is done. */
+function hasAnswered(r: TierRecipient): boolean {
+  return r.outcome === 'declined' || r.isAvailable === false;
 }
 
 export type ImmediateAction =
@@ -147,7 +160,7 @@ export type ImmediateAction =
 /**
  * `recipients` is every contactable candidate for the race, in rank order
  * (cheapest first) — the same order they were inserted in. A batch is done
- * once its deadline passes, or once everyone in it has explicitly declined;
+ * once its deadline passes, or once everyone in it has declined or offered a different time;
  * either way the next batch (if any) is asked next.
  */
 export function nextImmediateAction(
@@ -156,11 +169,11 @@ export function nextImmediateAction(
   const batches = batchesOf(recipients);
   const active = batches[currentBatch] ?? [];
   const batchDone = now.getTime() >= batchDeadline.getTime()
-    || (active.length > 0 && active.every(r => r.outcome === 'declined'));
+    || (active.length > 0 && active.every(hasAnswered));
   if (!batchDone) return { type: 'wait' };
 
   const nextBatch = batches[currentBatch + 1];
-  if (!nextBatch || nextBatch.length === 0) return { type: 'exhausted' };
+  if (!nextBatch || nextBatch.length === 0) return awaitingManager(recipients) ? { type: 'wait' } : { type: 'exhausted' };
   return { type: 'advance', batchIndex: currentBatch + 1, recipients: nextBatch };
 }
 
@@ -204,7 +217,7 @@ export function sequentialStepMinutes(leadMinutes: number): number {
 
 /**
  * `recipients` is every contactable candidate, ranked — one is "live" at a
- * time. Their step ends on an explicit decline or the step deadline; either
+ * time. Their step ends on a decline, a different-time offer, or the step deadline; either
  * way the next person in line (if any) is asked next — unless the shift is
  * now too close for another step (see sequentialStepMinutes), in which case
  * everyone not yet asked is handed over to a gather window at once.
@@ -216,16 +229,16 @@ export function nextSequentialAction(
   const current = recipients[currentIndex];
   if (!current) return { type: 'exhausted' };
 
-  const stepDone = now.getTime() >= stepDeadline.getTime() || current.outcome === 'declined';
+  const stepDone = now.getTime() >= stepDeadline.getTime() || hasAnswered(current);
   if (!stepDone) return { type: 'wait' };
 
   const next = recipients[currentIndex + 1];
-  if (!next) return { type: 'exhausted' };
+  if (!next) return awaitingManager(recipients) ? { type: 'wait' } : { type: 'exhausted' };
 
   const stepMinutes = sequentialStepMinutes(leadMinutes);
   if (stepMinutes < MIN_SEQUENTIAL_STEP_MINUTES) {
     const unasked = recipients.slice(currentIndex + 1).filter(r => r.outcome === null);
-    if (unasked.length === 0) return { type: 'exhausted' };
+    if (unasked.length === 0) return awaitingManager(recipients) ? { type: 'wait' } : { type: 'exhausted' };
     return { type: 'handoff', recipients: unasked, gatherMinutes: gatherWindowMinutes(leadMinutes) };
   }
   return { type: 'advance', index: currentIndex + 1, recipient: next, stepMinutes };

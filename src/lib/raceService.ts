@@ -16,6 +16,8 @@ import {
   declinedMessage, optOutMessage, optInMessage, availabilityMessage, availabilityAckMessage,
   urgentAvailabilityMessage, managerListMessage, managerOutcomeMessage,
   managerInvalidPickMessage, managerStaleSelectionMessage, ShiftSummary,
+  differentTimeAckMessage, differentTimeAcceptedMessage, differentTimeDeclinedMessage,
+  managerDifferentTimeMessage, managerDifferentTimeResultMessage,
 } from '@/lib/sms/templates';
 import {
   getSmsMode, getExpiryMinutes, getMaxRecipients, isQuietHours, getTimezone,
@@ -71,8 +73,10 @@ async function managerProfileFor(userId: string | null): Promise<{ name: string 
  *  number already in play across every race currently awaiting their pick —
  *  see managerReply.ts's allocateOptionNumber for why gaps aren't reused. */
 async function nextOptionNumbers(managerId: string, count: number): Promise<number[]> {
+  // Active races count too: a different-time reply is numbered while its
+  // race is still running (see handleDifferentTime).
   const { data: openRaces } = await supabaseAdmin
-    .from('shift_claim_races').select('id').eq('started_by', managerId).eq('status', 'awaiting_pick');
+    .from('shift_claim_races').select('id').eq('started_by', managerId).in('status', ['active', 'awaiting_pick']);
   const raceIds = (openRaces ?? []).map(r => r.id);
 
   let taken: number[] = [];
@@ -563,7 +567,8 @@ export interface ReplyOutcome {
   result:
     | 'won' | 'too_late' | 'declined' | 'opted_out' | 'opted_in' | 'unmatched' | 'duplicate'
     | 'available_ack' | 'manager_picked' | 'manager_invalid_pick' | 'manager_stale_pick'
-    | 'extend_confirmed' | 'extend_declined' | 'extend_too_late';
+    | 'extend_confirmed' | 'extend_declined' | 'extend_too_late'
+    | 'different_time' | 'manager_different_time';
   raceId?: string;
   staffId?: string;
 }
@@ -678,6 +683,10 @@ export async function handleInboundReply(params: {
     };
   }
 
+  if (parsed.intent === 'different_time') {
+    return handleDifferentTime(race, recipient, summary, body, business);
+  }
+
   if (parsed.intent !== 'yes') {
     return { handled: true, reply: null, result: 'unmatched', raceId: race.id };
   }
@@ -769,27 +778,44 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
     .from('manager_profiles').select('user_id').eq('phone_e164', from).maybeSingle();
   if (!manager) return null;
 
+  const intent = parseManagerReply(body);
+  // Not an unambiguous number — leave it to ordinary handling.
+  if (intent.kind !== 'select' && intent.kind !== 'reject') return null;
+
   const { data: races } = await supabaseAdmin
     .from('shift_claim_races')
-    .select('id, shift_id, slots_needed')
+    .select('id, shift_id, slots_needed, status')
     .eq('started_by', manager.user_id)
-    .eq('status', 'awaiting_pick');
+    .in('status', ['active', 'awaiting_pick']);
   if (!races || races.length === 0) return null;
-
-  const intent = parseManagerReply(body);
-  if (intent.kind !== 'select') return null; // not an unambiguous number — leave it to ordinary handling
 
   const raceIds = races.map(r => r.id);
   const { data: recipient } = await supabaseAdmin
     .from('shift_claim_recipients')
-    .select('id, race_id, staff_id, outcome')
+    .select('id, race_id, staff_id, outcome, different_time_status')
     .in('race_id', raceIds).eq('option_number', intent.option).maybeSingle();
 
-  if (!recipient || recipient.outcome !== null) {
+  // A different-time reply she was asked about: the number accepts it, NO +
+  // the number declines it.
+  if (recipient?.different_time_status === 'pending') {
+    const result = await resolveDifferentTime(recipient.id, intent.kind === 'select');
+    if (!result.ok) {
+      return { handled: true, reply: managerStaleSelectionMessage(), result: 'manager_stale_pick', raceId: recipient.race_id };
+    }
+    return {
+      handled: true,
+      reply: managerDifferentTimeResultMessage(result.staffName, intent.kind === 'select', result.summary),
+      result: 'manager_different_time', raceId: recipient.race_id, staffId: recipient.staff_id,
+    };
+  }
+
+  // Otherwise it's a pick from the gather tier's list — only a plain number,
+  // and only once that race is actually waiting on her pick.
+  const race = recipient ? races.find(r => r.id === recipient.race_id) : undefined;
+  if (intent.kind !== 'select' || !recipient || !race || race.status !== 'awaiting_pick' || recipient.outcome !== null) {
     return { handled: true, reply: managerInvalidPickMessage(), result: 'manager_invalid_pick' };
   }
 
-  const race = races.find(r => r.id === recipient.race_id)!;
   const { data: shift } = await supabaseAdmin
     .from('shifts').select(`*, departments ( id, name )`).eq('id', race.shift_id).single();
   const summary = toSummary(shift);
@@ -817,6 +843,116 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
     raceId: race.id,
     staffId: recipient.staff_id,
   };
+}
+
+/**
+ * A staff member replied that they can work, just not the exact times asked
+ * ("yes but only til 8"). That's never resolved automatically — it goes to
+ * the manager who started the race, numbered like a pick-list option, to
+ * accept (reply the number) or decline (NO + the number); she can also do
+ * either from the race panel. Their turn in the race ends here, so the next
+ * person is asked straight away rather than waiting on her decision.
+ */
+async function handleDifferentTime(
+  race: { id: string; started_by: string | null },
+  recipient: { id: string; staff_id: string },
+  summary: ShiftSummary, body: string, business: string
+): Promise<ReplyOutcome> {
+  const [option] = race.started_by ? await nextOptionNumbers(race.started_by, 1) : [null];
+  await supabaseAdmin.from('shift_claim_recipients').update({
+    is_available: false,
+    responded_at: new Date().toISOString(),
+    response_body: body,
+    different_time_status: 'pending',
+    option_number: option,
+  }).eq('id', recipient.id);
+
+  const manager = await managerProfileFor(race.started_by);
+  if (manager?.phone_e164 && option !== null) {
+    const { data: staff } = await supabaseAdmin.from('staff').select('name').eq('id', recipient.staff_id).single();
+    await sendSms({
+      to: manager.phone_e164,
+      body: managerDifferentTimeMessage(summary, staff?.name ?? 'A staff member', body, option),
+      kind: 'manager_different_time',
+      raceId: race.id, staffId: null, recipientName: manager.name ?? undefined,
+    });
+  }
+
+  await advanceRace(race.id).catch(err => console.error('advanceRace after different-time reply failed', err));
+  return {
+    handled: true, reply: differentTimeAckMessage(business), result: 'different_time',
+    raceId: race.id, staffId: recipient.staff_id,
+  };
+}
+
+export type DifferentTimeResult =
+  | { ok: true; staffName: string; summary: ShiftSummary }
+  | { ok: false };
+
+/**
+ * The manager's answer to a different-time reply, by SMS or from the race
+ * panel. Accepting gives them the shift through the same atomic claim as any
+ * other win (so it can't double-fill a slot someone else just took); either
+ * way the staff member is texted the outcome. `ok: false` means it had
+ * already been answered, or the shift was filled or closed in the meantime.
+ */
+export async function resolveDifferentTime(recipientId: string, accept: boolean): Promise<DifferentTimeResult> {
+  const { data: recipient } = await supabaseAdmin
+    .from('shift_claim_recipients')
+    .select('id, race_id, staff_id, phone_e164, outcome, response_body, different_time_status')
+    .eq('id', recipientId).maybeSingle();
+  if (!recipient || recipient.different_time_status !== 'pending' || recipient.outcome !== null) return { ok: false };
+
+  const { data: race } = await supabaseAdmin
+    .from('shift_claim_races').select('id, shift_id, status, slots_needed').eq('id', recipient.race_id).single();
+  if (!race) return { ok: false };
+
+  const shift = await loadShift(race.shift_id);
+  const summary = toSummary(shift);
+  const [business, staffRow] = await Promise.all([
+    getBusinessName(),
+    supabaseAdmin.from('staff').select('name').eq('id', recipient.staff_id).single().then(r => r.data),
+  ]);
+  const staffName = staffRow?.name ?? 'them';
+  const replyTo = (body: string) => recipient.phone_e164 ? sendSms({
+    to: recipient.phone_e164, body, kind: 'different_time_result',
+    raceId: race.id, staffId: recipient.staff_id, recipientName: staffRow?.name ?? undefined,
+  }) : Promise.resolve();
+
+  if (!accept) {
+    const { data: updated } = await supabaseAdmin.from('shift_claim_recipients')
+      .update({ different_time_status: 'declined', outcome: 'declined' })
+      .eq('id', recipient.id).eq('different_time_status', 'pending').select().maybeSingle();
+    if (!updated) return { ok: false };
+    await replyTo(differentTimeDeclinedMessage(business));
+    // If the race was only holding on for this decision, let it finish now.
+    await advanceRace(race.id).catch(err => console.error('advanceRace after declining a different time failed', err));
+    return { ok: true, staffName, summary };
+  }
+
+  // Same claims as a staff YES (race still running) or a manager's list pick
+  // (race waiting on her pick) — whichever state the race is in right now.
+  let claimed: unknown = null;
+  if (race.status === 'active') {
+    ({ data: claimed } = await supabaseAdmin
+      .rpc('claim_shift_race', { p_race_id: race.id, p_staff_id: recipient.staff_id }));
+  } else if (race.status === 'awaiting_pick') {
+    ({ data: claimed } = await supabaseAdmin
+      .rpc('claim_shift_race_recipient', { p_race_id: race.id, p_recipient_id: recipient.id }));
+  }
+  const claimedRows = Array.isArray(claimed) ? claimed : claimed ? [claimed] : [];
+  const winningRow = claimedRows.find((row: { id?: string | null }) => !!row?.id) as
+    { id: string; slot_index?: number | null } | undefined;
+  if (!winningRow) return { ok: false };
+
+  await supabaseAdmin.from('shift_claim_recipients')
+    .update({ different_time_status: 'accepted' }).eq('id', recipient.id);
+  await onRaceWon(
+    race.id, recipient.id, recipient.staff_id, shift, summary, recipient.response_body ?? '',
+    winningRow.slot_index ?? 1, race.slots_needed ?? 1
+  );
+  await replyTo(differentTimeAcceptedMessage(staffName, business));
+  return { ok: true, staffName, summary };
 }
 
 /**

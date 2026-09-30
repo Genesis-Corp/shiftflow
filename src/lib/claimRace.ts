@@ -45,7 +45,10 @@ export function generateDistinctCodes(
   return out;
 }
 
-export type ReplyIntent = 'yes' | 'no' | 'stop' | 'start' | 'unknown';
+/** `different_time`: they can work, just not the exact times asked — "yes
+ *  but only til 8", "can do 7-9". Never resolved automatically: it goes to
+ *  the manager to accept or decline (see raceService's handleDifferentTime). */
+export type ReplyIntent = 'yes' | 'no' | 'different_time' | 'stop' | 'start' | 'unknown';
 
 export interface ParsedReply {
   intent: ReplyIntent;
@@ -60,6 +63,19 @@ const START_WORDS = ['START', 'UNSTOP', 'SUBSCRIBE'];
 const YES_WORDS = ['YES', 'Y', 'YEP', 'YEAH', 'YUP', 'YE', 'OK', 'OKAY', 'SURE', 'CLAIM', 'ACCEPT'];
 const NO_WORDS  = ['NO', 'N', 'NOPE', 'NAH', 'CANT', 'CANNOT', 'BUSY', 'UNABLE', 'DECLINE', 'SORRY'];
 
+// Words that turn a reply into a condition on the times rather than a plain
+// answer. Deliberately specific to times — "yes please" or "no sorry" alone
+// must never land on the manager's phone as something to decide.
+const TIME_QUALIFIER_WORDS = [
+  'BUT', 'ONLY', 'UNTIL', 'TIL', 'TILL', 'AFTER', 'BEFORE', 'FROM', 'INSTEAD',
+  'LATER', 'EARLIER', 'EXCEPT', 'UNLESS', 'START', 'FINISH', 'ARRIVE', 'HALF', 'PART', 'HOURS', 'HRS',
+];
+// "can do", "could come in" — someone offering something, as opposed to a
+// plain NO that just happens to mention a time ("no sorry, working until 9").
+const OFFER_WORDS = ['CAN', 'COULD'];
+// "8pm", "7:30", "6.30", "7-9", "7 to 9", "at 7"
+const TIME_PATTERN = /\bAT \d{1,2}\b|\b\d{1,2}([:.]\d{2})?\s*(AM|PM)\b|\b\d{1,2}[:.]\d{2}\b|\b\d{1,2}\s*(-|TO)\s*\d{1,2}\b/;
+
 const CODE_TOKEN = new RegExp(`\\b[${CLAIM_CODE_ALPHABET}]{${CLAIM_CODE_LENGTH}}\\b`, 'g');
 
 /**
@@ -71,7 +87,9 @@ const CODE_TOKEN = new RegExp(`\\b[${CLAIM_CODE_ALPHABET}]{${CLAIM_CODE_LENGTH}}
  * the sender's phone number.
  */
 export function parseInboundMessage(raw: string): ParsedReply {
-  const text = (raw ?? '').trim().toUpperCase().replace(/\s+/g, ' ');
+  // Apostrophes dropped rather than split on, so "can't" reads as CANT (a
+  // decline) instead of the two words CAN and T.
+  const text = (raw ?? '').trim().toUpperCase().replace(/['\u2019]/g, '').replace(/\s+/g, ' ');
   if (!text) return { intent: 'unknown', code: null };
 
   // Opt-out wins over everything. "stop texting me, no thanks" must never be
@@ -80,7 +98,9 @@ export function parseInboundMessage(raw: string): ParsedReply {
   if (STOP_WORDS.some(w => (w.includes(' ') ? text.includes(w) : words.includes(w)))) {
     return { intent: 'stop', code: null };
   }
-  if (START_WORDS.some(w => words.includes(w))) {
+  // START only counts as an opt-in when it's (nearly) the whole message —
+  // "I can start at 7" is an answer about the shift, not a keyword.
+  if (words.length <= 2 && START_WORDS.some(w => words.includes(w))) {
     return { intent: 'start', code: null };
   }
 
@@ -89,8 +109,17 @@ export function parseInboundMessage(raw: string): ParsedReply {
   const code =
     codes.find(c => !YES_WORDS.includes(c) && !NO_WORDS.includes(c)) ?? codes[0] ?? null;
 
-  if (NO_WORDS.some(w => words.includes(w))) return { intent: 'no', code };
-  if (YES_WORDS.some(w => words.includes(w))) return { intent: 'yes', code };
+  const saysYes = YES_WORDS.some(w => words.includes(w));
+  const saysNo = NO_WORDS.some(w => words.includes(w));
+  // Tested without the claim code, so a code that happens to look like a
+  // time ("12PM") can't turn a plain YES into a different-time reply.
+  const hasTime = TIME_PATTERN.test(code ? text.replace(code, ' ') : text);
+  const qualifies = hasTime || TIME_QUALIFIER_WORDS.some(w => words.includes(w));
+  const offers = saysYes || hasTime || OFFER_WORDS.some(w => words.includes(w));
+  if (qualifies && offers) return { intent: 'different_time', code };
+
+  if (saysNo) return { intent: 'no', code };
+  if (saysYes) return { intent: 'yes', code };
 
   // A bare code on its own is a claim — it's what someone sends when they
   // copy the code out of the message without retyping "YES".

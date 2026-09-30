@@ -551,3 +551,93 @@ describe('sequential tier end-to-end', () => {
     expect(ack.result).toBe('available_ack');
   });
 });
+
+// ── Different-time replies ───────────────────────────────────────────────
+
+describe('different-time replies', () => {
+  const H = candidate('h', 'Hana', 18);
+  const I = candidate('i', 'Ivan', 19);
+  const MANAGER = '+61400000099';
+
+  async function startWithHanaCountering() {
+    seedShift('shift-dt', '2026-09-19', '17:45', '21:00'); // tomorrow evening -> sequential
+    seedManager('mgr-1', 'Jamie', MANAGER);
+    candidatesForNextRace = [H, I];
+    seedStaff(H, I);
+    const result = await startRace('shift-dt', { startedBy: 'mgr-1' });
+    const reply = await handleInboundReply({ from: H.phone_e164, body: 'yes but only til 8' });
+    return { result, reply };
+  }
+
+  it("sends the reply to the manager, not straight into winning the shift, and asks the next person", async () => {
+    const { result, reply } = await startWithHanaCountering();
+
+    expect(reply.result).toBe('different_time');
+    expect(reply.reply).toContain('passed that on to the manager');
+    const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(race?.status).toBe('active');
+
+    const toManager = messagesTo(MANAGER);
+    expect(toManager).toHaveLength(1);
+    expect(toManager[0].body).toContain('Hana replied');
+    expect(toManager[0].body).toContain('"yes but only til 8"');
+    expect(toManager[0].body).toMatch(/Reply 1 to accept, or NO 1 to decline/);
+
+    // Hana's turn is over — Ivan is asked now, not 4 hours from now.
+    expect(messagesTo(I.phone_e164)).toHaveLength(1);
+  });
+
+  it('gives them the shift when the manager accepts', async () => {
+    const { result } = await startWithHanaCountering();
+
+    const pick = await handleInboundReply({ from: MANAGER, body: '1' });
+    expect(pick.result).toBe('manager_different_time');
+    expect(pick.reply).toContain('Hana has the');
+
+    const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(race?.status).toBe('claimed');
+    const shift = db.tables.shifts.find(s => s.id === 'shift-dt');
+    expect(shift?.assigned_staff_id).toBe('h');
+
+    const toHana = messagesTo(H.phone_e164);
+    expect(toHana[toHana.length - 1].body).toContain('Yes, that time works, thank you Hana.');
+    // Ivan was asked, so he's told it's been covered.
+    expect(messagesTo(I.phone_e164).some(m => m.body.includes('now been covered'))).toBe(true);
+  });
+
+  it('tells them the time is needed when the manager declines, and keeps looking', async () => {
+    const { result } = await startWithHanaCountering();
+
+    const pick = await handleInboundReply({ from: MANAGER, body: 'NO 1' });
+    expect(pick.result).toBe('manager_different_time');
+    expect(pick.reply).toContain('told no');
+
+    const toHana = messagesTo(H.phone_e164);
+    expect(toHana[toHana.length - 1].body).toContain('Sorry, we really need that specific time covered. Thank you anyway.');
+    const race = db.tables.shift_claim_races.find(r => r.id === result.raceId);
+    expect(race?.status).toBe('active');
+    expect(db.tables.shifts.find(s => s.id === 'shift-dt')?.assigned_staff_id ?? null).toBeNull();
+
+    // Answering the same number again is stale, not a second decision.
+    const again = await handleInboundReply({ from: MANAGER, body: '1' });
+    expect(again.result).toBe('manager_invalid_pick');
+  });
+
+  it("doesn't give up as 'nobody available' while the manager is still deciding", async () => {
+    seedShift('shift-solo', '2026-09-19', '17:45', '21:00');
+    seedManager('mgr-1', 'Jamie', MANAGER);
+    candidatesForNextRace = [H];
+    seedStaff(H);
+    const result = await startRace('shift-solo', { startedBy: 'mgr-1' });
+    await handleInboundReply({ from: H.phone_e164, body: 'can do 7-9' });
+
+    vi.setSystemTime(new Date(BASE_NOW.getTime() + 5 * 60 * 60_000));
+    await advanceRace(result.raceId);
+    expect(db.tables.shift_claim_races.find(r => r.id === result.raceId)?.status).toBe('active');
+    expect(messagesTo(MANAGER).some(m => m.body.includes('nobody was available'))).toBe(false);
+
+    // Declining it lets the race finish.
+    await handleInboundReply({ from: MANAGER, body: 'no 1' });
+    expect(db.tables.shift_claim_races.find(r => r.id === result.raceId)?.status).toBe('expired');
+  });
+});

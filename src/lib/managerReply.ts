@@ -11,6 +11,7 @@
 
 export type ManagerIntent =
   | { kind: 'select'; option: number }
+  | { kind: 'reject'; option: number }
   | { kind: 'approve' }
   | { kind: 'decline' }
   | { kind: 'unknown' };
@@ -36,7 +37,13 @@ export function parseManagerReply(body: string): ManagerIntent {
   const tokens = text.split(/[^A-Z0-9]+/).filter(Boolean);
   const numbers = tokens.filter(t => OPTION_TOKEN.test(t)).map(Number).filter(n => n >= 1);
 
-  if (numbers.length === 1) return { kind: 'select', option: numbers[0] };
+  // "NO 5" turns down option 5 — only meaningful for a different-time reply
+  // (see raceService's handleDifferentTime); a plain number accepts/picks.
+  if (numbers.length === 1) {
+    return tokens.some(t => DECLINE.includes(t))
+      ? { kind: 'reject', option: numbers[0] }
+      : { kind: 'select', option: numbers[0] };
+  }
   if (numbers.length > 1) return { kind: 'unknown' };
 
   if (tokens.some(t => APPROVE.includes(t))) return { kind: 'approve' };

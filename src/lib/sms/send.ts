@@ -5,7 +5,8 @@ export type MessageKind =
   | 'offer' | 'covered' | 'winner' | 'too_late' | 'declined_ack' | 'opt_out_ack' | 'opt_in_ack'
   | 'availability' | 'availability_ack' | 'manager_list' | 'manager_outcome'
   | 'manager_invalid_pick' | 'manager_stale_pick' | 'broadcast'
-  | 'extend_ask' | 'extend_confirmed' | 'extend_declined_ack';
+  | 'extend_ask' | 'extend_confirmed' | 'extend_declined_ack'
+  | 'different_time_ack' | 'different_time_result' | 'manager_different_time';
 
 export interface SendRequest {
   to: string;                 // intended recipient, E.164

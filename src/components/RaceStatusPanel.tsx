@@ -24,6 +24,7 @@ export default function RaceStatusPanel({
   const [detail, setDetail] = useState<RaceDetail | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
+  const [decideError, setDecideError] = useState('');
 
   const load = useCallback(async () => {
     const res = await fetch(`/api/claim-race/${raceId}`);
@@ -63,6 +64,19 @@ export default function RaceStatusPanel({
     setBusy('');
     const next = await load();
     if (next && next.race.status !== 'active') onFinished?.(next);
+  }
+
+  /** Accept or decline a staff member's "different time" reply. */
+  async function decide(recipient: ClaimRecipient, accept: boolean) {
+    setBusy(recipient.id + (accept ? 'accept' : 'decline')); setDecideError('');
+    const res = await fetch(`/api/claim-race/${raceId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recipient_id: recipient.id, accept }),
+    });
+    if (!res.ok) setDecideError((await res.json().catch(() => ({}))).error ?? 'Could not save that decision.');
+    setBusy('');
+    const next = await load();
+    if (next && !inProgress(next.race.status)) onFinished?.(next);
   }
 
   async function cancel() {
@@ -176,7 +190,28 @@ export default function RaceStatusPanel({
               </p>
             </div>
 
-            {canSimulate && r.send_status === 'sent' && !r.outcome && (
+            {r.different_time_status === 'pending' && !r.outcome && (
+              <div className="w-full sm:w-auto flex items-center gap-1.5">
+                <button
+                  onClick={() => decide(r, true)}
+                  disabled={!!busy}
+                  className="btn-ghost text-xs px-2 py-1 text-green-700 hover:bg-green-50"
+                  title="Give them the shift — they'll be texted that the time works"
+                >
+                  {busy === r.id + 'accept' ? <Loader2 size={12} className="animate-spin" /> : <CheckCircle2 size={12} />} Accept
+                </button>
+                <button
+                  onClick={() => decide(r, false)}
+                  disabled={!!busy}
+                  className="btn-ghost text-xs px-2 py-1 text-slate-500"
+                  title="They'll be texted that the specific time is needed"
+                >
+                  {busy === r.id + 'decline' ? <Loader2 size={12} className="animate-spin" /> : <XCircle size={12} />} Decline
+                </button>
+              </div>
+            )}
+
+            {canSimulate && r.send_status === 'sent' && !r.outcome && r.different_time_status !== 'pending' && (
               <div className="flex gap-1.5">
                 <button
                   onClick={() => simulate(r, `YES ${r.claim_code}`)}
@@ -200,6 +235,8 @@ export default function RaceStatusPanel({
           </div>
         ))}
       </div>
+
+      {decideError && <p className="text-xs text-red-600">{decideError}</p>}
 
       {/* Message log — the whole point of console mode */}
       {messages.length > 0 && (
@@ -266,7 +303,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function SendStatusBadge({ recipient }: { recipient: ClaimRecipient }) {
+  if (recipient.outcome === 'won' && recipient.different_time_status === 'accepted')
+    return <span className="badge-green">Different time accepted</span>;
   if (recipient.outcome === 'won') return <span className="badge-green">Claimed it</span>;
+  if (recipient.different_time_status === 'pending' && !recipient.outcome)
+    return <span className="badge-amber">Different time — your call</span>;
+  if (recipient.different_time_status === 'declined') return <span className="badge-slate">Different time declined</span>;
   if (recipient.outcome === 'declined') return <span className="badge-amber">Declined</span>;
   if (recipient.outcome === 'lost') return <span className="badge-slate">Too late</span>;
   if (recipient.send_status === 'skipped_no_phone') return <span className="badge-red">No mobile</span>;

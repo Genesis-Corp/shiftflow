@@ -37,6 +37,26 @@ describe('parseInboundMessage', () => {
     expect(parseInboundMessage('subscribe').intent).toBe('start');
   });
 
+  it('reads a yes-with-conditions as a different time, never a plain yes', () => {
+    // A plain YES would hand them the shift outright at the times asked.
+    expect(parseInboundMessage('yes but only til 8').intent).toBe('different_time');
+    expect(parseInboundMessage('Yeah I can do 7-9').intent).toBe('different_time');
+    expect(parseInboundMessage('can do from 6pm').intent).toBe('different_time');
+    expect(parseInboundMessage('I could come in at 7:30 instead').intent).toBe('different_time');
+    expect(parseInboundMessage("Can't do 5:45 but can do 7").intent).toBe('different_time');
+    expect(parseInboundMessage('I can start at 7').intent).toBe('different_time');
+  });
+
+  it('keeps a plain no a no, even when it mentions a time', () => {
+    expect(parseInboundMessage('no sorry, working until 9').intent).toBe('no');
+    expect(parseInboundMessage("can't sorry").intent).toBe('no');
+    expect(parseInboundMessage('Yes please').intent).toBe('yes');
+  });
+
+  it("doesn't read a claim code that looks like a time as a time", () => {
+    expect(parseInboundMessage('YES 23PM')).toEqual({ intent: 'yes', code: '23PM' });
+  });
+
   it('picks the code rather than an intent word that looks like one', () => {
     // Both YES and 4F7K are 4 chars from the code alphabet.
     expect(parseInboundMessage('YES 4F7K').code).toBe('4F7K');
