@@ -68,7 +68,8 @@ export default function RaceStatusPanel({
   async function cancel() {
     if (!confirm('Cancel this claim race? Staff who were texted will not be told.')) return;
     setBusy('cancel');
-    await fetch(`/api/claim-race/${raceId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/claim-race/${raceId}`, { method: 'DELETE' });
+    if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? 'Failed to cancel race');
     setBusy('');
     const next = await load();
     if (next) onFinished?.(next);
@@ -109,6 +110,11 @@ export default function RaceStatusPanel({
               <StatusBadge status={race.status} />
               <span className="badge-slate uppercase text-[10px]">{race.mode}</span>
             </div>
+            {race.shifts && (
+              <p className="text-sm text-slate-700 mt-1 font-medium">
+                {race.shifts.departments?.name} · {race.shifts.date} {race.shifts.start_time}–{race.shifts.end_time}
+              </p>
+            )}
             <p className="text-sm text-slate-600 mt-1">
               {contacted.length} contacted
               {skipped.length > 0 && ` · ${skipped.length} skipped`}
@@ -132,7 +138,7 @@ export default function RaceStatusPanel({
               </p>
             ))}
           </div>
-          {race.status === 'active' && (
+          {inProgress(race.status) && (
             <button onClick={cancel} disabled={!!busy} className="btn-secondary text-sm">
               <Ban size={14} /> Cancel race
             </button>
@@ -172,6 +178,7 @@ export default function RaceStatusPanel({
               <p className="text-xs text-slate-400 mt-0.5">
                 {r.phone_e164 ? formatAUMobile(r.phone_e164) : 'No valid mobile'}
                 {r.response_body && ` · replied "${r.response_body}"`}
+                {r.responded_at && ` at ${new Date(r.responded_at).toLocaleTimeString()}`}
                 {r.send_error && ` · ${r.send_error}`}
               </p>
             </div>

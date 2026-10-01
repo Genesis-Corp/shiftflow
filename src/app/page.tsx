@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriangle, Award, Phone } from 'lucide-react';
+import { Users, Building2, Calendar, ShieldAlert, TrendingUp, Clock, AlertTriangle, Award, Phone, Zap } from 'lucide-react';
+import RaceStatusPanel from '@/components/RaceStatusPanel';
+import type { SmsConfig } from '@/lib/types';
 import { formatDate, weekBounds, shiftDurationMinutes, todayStr } from '@/lib/shiftUtils';
 import ReliabilityBar from '@/components/ReliabilityBar';
 import StaffName from '@/components/StaffName';
@@ -40,7 +42,24 @@ export default function Dashboard() {
   const [needsAttention, setNeedsAttention] = useState<AttentionStaff[]>([]);
   const [highAchievers, setHighAchievers] = useState<HighAchiever[]>([]);
   const [attentionFilter, setAttentionFilter] = useState<AttentionReasonType | 'all'>('all');
+  const [ongoingRaces, setOngoingRaces] = useState<{ id: string; status: string }[]>([]);
+  const [smsConfig, setSmsConfig] = useState<SmsConfig | null>(null);
   const today = todayStr();
+
+  const loadOngoingRaces = useCallback(async () => {
+    try {
+      const res = await fetch('/api/claim-race/ongoing');
+      if (res.ok) setOngoingRaces((await res.json()).races ?? []);
+    } catch { /* leave the section as-is */ }
+  }, []);
+
+  useEffect(() => {
+    loadOngoingRaces();
+    fetch('/api/sms/config').then(r => r.json()).then(setSmsConfig).catch(() => {});
+    // A race can start from another tab or end by SMS reply; keep this fresh.
+    const t = setInterval(loadOngoingRaces, 15000);
+    return () => clearInterval(t);
+  }, [loadOngoingRaces]);
 
   useEffect(() => {
     async function load() {
@@ -181,6 +200,26 @@ export default function Dashboard() {
             ))}
           </div>
         </div>
+      </div>
+
+      <div>
+        <h2 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+          <Zap size={16} className="text-blue-500" /> Ongoing Race
+        </h2>
+        {ongoingRaces.length === 0 ? (
+          <div className="card p-4 text-slate-400 text-sm">No claim race in progress.</div>
+        ) : (
+          <div className="space-y-4">
+            {ongoingRaces.map(r => (
+              <RaceStatusPanel
+                key={r.id}
+                raceId={r.id}
+                config={smsConfig}
+                onFinished={loadOngoingRaces}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <MessageBoard />

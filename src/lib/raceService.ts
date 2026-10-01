@@ -898,11 +898,15 @@ export async function cancelRace(raceId: string): Promise<void> {
   const { data: race } = await supabaseAdmin
     .from('shift_claim_races').select('status').eq('id', raceId).single();
   if (!race) throw new RaceError('Race not found', 404);
-  if (race.status !== 'active') throw new RaceError(`Race is already ${race.status}.`);
+  // awaiting_pick is still in progress (the manager hasn't picked yet), so it
+  // must be cancellable too — otherwise a stuck race can't be cleared.
+  if (race.status !== 'active' && race.status !== 'awaiting_pick') {
+    throw new RaceError(`Race is already ${race.status}.`);
+  }
 
   await supabaseAdmin.from('shift_claim_races').update({
     status: 'cancelled', cancelled_at: new Date().toISOString(),
-  }).eq('id', raceId).eq('status', 'active');
+  }).eq('id', raceId).in('status', ['active', 'awaiting_pick']);
   await supabaseAdmin.from('shift_claim_recipients')
     .update({ outcome: 'no_response' }).eq('race_id', raceId).is('outcome', null);
 }
