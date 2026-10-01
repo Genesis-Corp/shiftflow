@@ -689,8 +689,9 @@ export default function WageTable() {
           <Store size={16} className="text-slate-400" /> Store Name
         </h2>
         <p className="text-xs text-slate-500 mb-3">
-          How every shift-cover text identifies itself to staff — e.g. &quot;Hey Dave, it&apos;s Sarah from{' '}
-          {businessNameInput.trim() || 'Your Store'}&quot;.
+          How every shift-cover text identifies itself to staff — e.g. &quot;Hey Dave, it&apos;s Sarah
+          {businessNameInput.trim() ? ` from ${businessNameInput.trim()}` : ''},&quot;. Leave it blank to leave the
+          store name out of texts.
         </p>
 
         <form onSubmit={saveBusinessName} className="flex flex-wrap items-end gap-2">

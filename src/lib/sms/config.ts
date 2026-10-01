@@ -84,10 +84,11 @@ export async function getQuietHours(): Promise<{ start: string; end: string } | 
 /**
  * The store's own name (Settings → Store name), used to identify the sender
  * on every staff-facing text — the Spam Act 2003 requires it. Falls back to
- * SMS_BUSINESS_NAME until the store has saved one of their own, then to a
- * generic default, so a fresh deployment never sends an unbranded text.
+ * SMS_BUSINESS_NAME until the store has saved one of their own. Null when
+ * neither is set: messages then leave the store name out entirely ("Hey
+ * Dave, it's Sarah,") rather than naming a placeholder like "Your Store".
  */
-export async function getBusinessName(): Promise<string> {
+export async function getBusinessName(): Promise<string | null> {
   const { data } = await supabaseAdmin
     .from('store_settings')
     .select('business_name')
@@ -95,7 +96,7 @@ export async function getBusinessName(): Promise<string> {
     .maybeSingle();
 
   if (data?.business_name?.trim()) return data.business_name.trim();
-  return process.env.SMS_BUSINESS_NAME?.trim() || 'Your Store';
+  return process.env.SMS_BUSINESS_NAME?.trim() || null;
 }
 
 /** Current wall-clock time in the configured timezone, as "HH:MM". */

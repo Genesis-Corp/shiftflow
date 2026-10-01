@@ -3,7 +3,7 @@ import {
   winnerMessage, coveredMessage, tooLateMessage, urgentAvailabilityMessage,
   declinedMessage, smsSegments, isGsm7, formatShiftTimes, formatShiftDate, describeShift,
   availabilityMessage, availabilityAckMessage, managerListMessage, managerStaleSelectionMessage,
-  managerInvalidPickMessage, managerOutcomeMessage,
+  managerInvalidPickMessage, managerOutcomeMessage, broadcastMessage, extendAskMessage,
 } from '../sms/templates';
 
 const SHIFT = {
@@ -136,6 +136,34 @@ describe('gather-tier and manager-pick messages', () => {
     const msg = availabilityMessage(SHIFT, STAFF, BUSINESS, 'John');
     expect(isGsm7(msg)).toBe(true);
     expect(smsSegments(msg)).toBe(2);
+  });
+});
+
+describe('with no store name set', () => {
+  it('greets with just the manager, never a placeholder store name', () => {
+    const msg = availabilityMessage(SHIFT, STAFF, null, 'Sarah');
+    expect(msg.split('\n')[0]).toBe("Hey Christopher, it's Sarah,");
+    expect(urgentAvailabilityMessage(SHIFT, false, STAFF, null, 'Sarah').split('\n')[0]).toBe("Hey Christopher, it's Sarah,");
+    expect(msg).not.toMatch(/your store|null|undefined/i);
+  });
+
+  it('still names the store when one is set', () => {
+    expect(availabilityMessage(SHIFT, STAFF, BUSINESS, 'Sarah').split('\n')[0])
+      .toBe("Hey Christopher, it's Sarah from Farmer Jack's,");
+  });
+
+  it('greets by name alone with neither a store nor a manager name', () => {
+    expect(availabilityMessage(SHIFT, STAFF, null).split('\n')[0]).toBe('Hey Christopher,');
+  });
+
+  it('drops the store prefix from short replies and starts with a capital', () => {
+    expect(winnerMessage(SHIFT, STAFF, null)).toMatch(/^Thanks Christopher, the /);
+    expect(availabilityAckMessage(null)).toMatch(/^Thanks, noted/);
+  });
+
+  it('drops it from broadcasts and extend asks too', () => {
+    expect(broadcastMessage('Hi all', 'general', null, 'Sarah')).toBe('Sarah: Hi all\nReply STOP to opt out.');
+    expect(extendAskMessage('Bakery', '09:00', '08:00', null, 'Sarah')).toMatch(/^Hey it's Sarah - can you come in/);
   });
 });
 

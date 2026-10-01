@@ -23,6 +23,27 @@ export { isGsm7, smsSegments };
  * resolves it once per operation and passes it down.
  */
 
+/** The store's name, or null when none is set — in which case messages
+ *  simply leave it out rather than saying something generic. */
+export type BusinessName = string | null;
+
+/** "Store: thanks ..." with a name set, "Thanks ..." without one. */
+function lead(business: BusinessName, text: string): string {
+  return business ? `${business}: ${text}` : text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** "it's Sarah from Store" / "it's Sarah" / "it's Store" / null. */
+function itsFrom(business: BusinessName, managerName?: string | null): string | null {
+  if (managerName) return business ? `it's ${managerName} from ${business}` : `it's ${managerName}`;
+  return business ? `it's ${business}` : null;
+}
+
+/** "Hey Dave, it's Sarah from Store," — or just "Hey Dave," with nobody to name. */
+function greeting(staffName: string, business: BusinessName, managerName?: string | null): string {
+  const from = itsFrom(business, managerName);
+  return from ? `Hey ${staffName}, ${from},` : `Hey ${staffName},`;
+}
+
 export interface ShiftSummary {
   date: string;        // YYYY-MM-DD
   start_time: string;  // HH:MM[:SS]
@@ -52,13 +73,13 @@ export function describeShift(shift: ShiftSummary, nowDate: string = localDateNo
 }
 
 /** Sent to the winner, confirming the shift is theirs. */
-export function winnerMessage(shift: ShiftSummary, name: string, business: string): string {
-  return `${business}: thanks ${name}, the ${describeShift(shift)} shift is yours. See you then.`;
+export function winnerMessage(shift: ShiftSummary, name: string, business: BusinessName): string {
+  return lead(business, `thanks ${name}, the ${describeShift(shift)} shift is yours. See you then.`);
 }
 
 /** Broadcast to everyone else the moment the race is won. */
-export function coveredMessage(shift: ShiftSummary, business: string): string {
-  return `${business}: the ${describeShift(shift)} shift has now been covered. Thanks!`;
+export function coveredMessage(shift: ShiftSummary, business: BusinessName): string {
+  return lead(business, `the ${describeShift(shift)} shift has now been covered. Thanks!`);
 }
 
 /**
@@ -66,8 +87,8 @@ export function coveredMessage(shift: ShiftSummary, business: string): string {
  * whose phone was off, or who replied a second too late. Without this they
  * get silence after an explicit action, and may turn up to the shift.
  */
-export function tooLateMessage(shift: ShiftSummary, business: string): string {
-  return `${business}: sorry, the ${describeShift(shift)} shift has already been covered by someone else.`;
+export function tooLateMessage(shift: ShiftSummary, business: BusinessName): string {
+  return lead(business, `sorry, the ${describeShift(shift)} shift has already been covered by someone else.`);
 }
 
 /** Acknowledges an explicit NO, so the reply isn't met with silence. Always a
@@ -79,28 +100,28 @@ export function declinedMessage(): string {
 }
 
 /** Acknowledges a "different time" reply while the manager decides. */
-export function differentTimeAckMessage(business: string): string {
-  return `${business}: thanks - I've passed that on to the manager and will let you know shortly.`;
+export function differentTimeAckMessage(business: BusinessName): string {
+  return lead(business, `thanks - I've passed that on to the manager and will let you know shortly.`);
 }
 
 /** The manager accepted their different time — the shift is theirs. */
-export function differentTimeAcceptedMessage(name: string, business: string): string {
-  return `${business}: Yes, that time works, thank you ${name}.`;
+export function differentTimeAcceptedMessage(name: string, business: BusinessName): string {
+  return lead(business, `Yes, that time works, thank you ${name}.`);
 }
 
 /** The manager needs the times as asked. */
-export function differentTimeDeclinedMessage(business: string): string {
-  return `${business}: Sorry, we really need that specific time covered. Thank you anyway.`;
+export function differentTimeDeclinedMessage(business: BusinessName): string {
+  return lead(business, `Sorry, we really need that specific time covered. Thank you anyway.`);
 }
 
 /** Confirms an opt-out. */
-export function optOutMessage(business: string): string {
-  return `${business}: you will not receive any more shift messages from us.`;
+export function optOutMessage(business: BusinessName): string {
+  return lead(business, `you will not receive any more shift messages from us.`);
 }
 
 /** Confirms an opt-back-in, e.g. after a reply of START. */
-export function optInMessage(business: string): string {
-  return `${business}: you're back on the list and will receive shift messages again.`;
+export function optInMessage(business: BusinessName): string {
+  return lead(business, `you're back on the list and will receive shift messages again.`);
 }
 
 // ── Message Board (manager broadcast) ───────────────────────────────────────
@@ -112,10 +133,12 @@ export function optInMessage(business: string): string {
  *  contain the Unicode bold/italic/underline characters the Message Board
  *  toolbar produces — this only adds the business-name prefix and STOP line. */
 export function broadcastMessage(
-  body: string, urgency: 'urgent' | 'general', business: string, managerName?: string | null
+  body: string, urgency: 'urgent' | 'general', business: BusinessName, managerName?: string | null
 ): string {
-  const who = managerName ? `${managerName}, ${business}` : business;
-  const prefix = urgency === 'urgent' ? `${who} (URGENT): ` : `${who}: `;
+  const who = [managerName, business].filter(Boolean).join(', ');
+  const prefix = who
+    ? (urgency === 'urgent' ? `${who} (URGENT): ` : `${who}: `)
+    : (urgency === 'urgent' ? 'URGENT: ' : '');
   return `${prefix}${body}\nReply STOP to opt out.`;
 }
 
@@ -144,11 +167,10 @@ export function broadcastMessage(
 
 /** Wave one: are you free? Not an offer — nobody is given the shift by replying. */
 export function availabilityMessage(
-  shift: ShiftSummary, staffName: string, business: string, managerName?: string | null
+  shift: ShiftSummary, staffName: string, business: BusinessName, managerName?: string | null
 ): string {
-  const from = managerName ? `it's ${managerName} from ${business}` : `it's ${business}`;
   return [
-    `Hey ${staffName}, ${from},`,
+    greeting(staffName, business, managerName),
     `Are you available to work ${formatShiftDate(shift.date)} ${formatShiftTimes(shift.start_time, shift.end_time)}, in ${shift.departmentName}?`,
     `Reply STOP to opt out.`,
     `Reply YES or NO if you can or can't, and we will confirm the shift shortly after.`,
@@ -156,8 +178,8 @@ export function availabilityMessage(
 }
 
 /** Acknowledges a YES during the gather window — it does not win them the shift. */
-export function availabilityAckMessage(business: string): string {
-  return `${business}: thanks, noted - we'll confirm shortly if you're needed.`;
+export function availabilityAckMessage(business: BusinessName): string {
+  return lead(business, `thanks, noted - we'll confirm shortly if you're needed.`);
 }
 
 /** The immediate tier's ask — someone hasn't turned up and this shift is
@@ -167,12 +189,11 @@ export function availabilityAckMessage(business: string): string {
  *  just faster, and ASAP is worked into the reply line rather than added as
  *  a separate sentence to keep the same four-line shape. */
 export function urgentAvailabilityMessage(
-  shift: ShiftSummary, isTonight: boolean, staffName: string, business: string, managerName?: string | null
+  shift: ShiftSummary, isTonight: boolean, staffName: string, business: BusinessName, managerName?: string | null
 ): string {
-  const from = managerName ? `it's ${managerName} from ${business}` : `it's ${business}`;
   const when = isTonight ? 'tonight' : 'today';
   return [
-    `Hey ${staffName}, ${from},`,
+    greeting(staffName, business, managerName),
     `Are you available to work ${when} at ${formatShiftTimes(shift.start_time, shift.end_time)}, in ${shift.departmentName}?`,
     `Reply STOP to opt out.`,
     `Reply YES or NO ASAP if you can or can't, and we will confirm the shift shortly after.`,
@@ -192,28 +213,29 @@ export function urgentAvailabilityMessage(
  *  `departmentName` and `existingStart` describe their shift as it stands
  *  today; `proposedStart` is the earlier time being asked for. */
 export function extendAskMessage(
-  departmentName: string, existingStart: string, proposedStart: string, business: string, managerName?: string | null
+  departmentName: string, existingStart: string, proposedStart: string, business: BusinessName, managerName?: string | null
 ): string {
-  const greeting = managerName ? `Hey it's ${managerName} - ` : '';
-  return `${greeting}${business}: can you come in earlier today for ${departmentName}, ` +
+  const ask = `can you come in earlier today for ${departmentName}, ` +
     `starting ${proposedStart.slice(0, 5)} instead of ${existingStart.slice(0, 5)}? Reply YES or NO. Reply STOP to opt out.`;
+  if (managerName) return `Hey ${itsFrom(business, managerName)} - ${ask}`;
+  return lead(business, ask);
 }
 
 /** Confirms the earlier start once they reply YES. */
-export function extendConfirmedMessage(proposedStart: string, business: string): string {
-  return `${business}: thanks, see you at ${proposedStart.slice(0, 5)}.`;
+export function extendConfirmedMessage(proposedStart: string, business: BusinessName): string {
+  return lead(business, `thanks, see you at ${proposedStart.slice(0, 5)}.`);
 }
 
 /** Sent to whoever the manager picked. Not currently wired into any live
  *  flow — kept for the manager-pick UI this pairs with. */
-export function acceptedMessage(business: string): string {
-  return `${business}: thank you for accepting the shift, see you soon!`;
+export function acceptedMessage(business: BusinessName): string {
+  return lead(business, `thank you for accepting the shift, see you soon!`);
 }
 
 /** Sent to everyone who offered but wasn't picked. Not currently wired into
  *  any live flow — kept for the manager-pick UI this pairs with. */
-export function notSelectedMessage(business: string): string {
-  return `${business}: thank you for offering to cover the shift, unfortunately it has been covered.`;
+export function notSelectedMessage(business: BusinessName): string {
+  return lead(business, `thank you for offering to cover the shift, unfortunately it has been covered.`);
 }
 
 // ── Manager messages ────────────────────────────────────────────────────────

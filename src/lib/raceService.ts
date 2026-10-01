@@ -856,7 +856,7 @@ async function handleManagerPick(from: string, body: string): Promise<ReplyOutco
 async function handleDifferentTime(
   race: { id: string; started_by: string | null },
   recipient: { id: string; staff_id: string },
-  summary: ShiftSummary, body: string, business: string
+  summary: ShiftSummary, body: string, business: string | null
 ): Promise<ReplyOutcome> {
   const [option] = race.started_by ? await nextOptionNumbers(race.started_by, 1) : [null];
   await supabaseAdmin.from('shift_claim_recipients').update({
