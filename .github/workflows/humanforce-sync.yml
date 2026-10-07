@@ -1,9 +1,11 @@
 name: Humanforce roster sync
 
-# Pulls the day's roster PDF from Humanforce and applies it to ShiftFlow via
-# /api/automation/roster-pdf. See automation/humanforce-sync.mjs — it will
-# not do anything useful until its TODO blocks are filled in with real
-# Humanforce selectors from `npx playwright codegen`.
+# Pulls each day's roster PDF from Humanforce, starting at the configured
+# offset, and applies every published day to ShiftFlow via
+# /api/automation/roster-pdf — stopping at the first date that isn't
+# published yet. See automation/humanforce-sync.mjs for the full flow and
+# its known caveats (department-selection persistence, month-boundary
+# calendar picking).
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   HUMANFORCE_USERNAME, HUMANFORCE_PASSWORD — the Humanforce login.
