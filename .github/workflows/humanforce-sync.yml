@@ -18,11 +18,22 @@ name: Humanforce roster sync
 # If ShiftFlow has Vercel Password Protection enabled, this workflow also
 # needs a way past it (a bypass token in the request, or protection scoped
 # to exclude API routes) — check that separately before relying on this.
+#
+# Runs on a self-hosted runner (a Windows PC), not GitHub's hosted runners —
+# Humanforce's login sits behind AWS WAF bot protection that challenges
+# GitHub's shared datacenter IP ranges with an interactive CAPTCHA. Running
+# from an ordinary residential/business IP avoids that. See
+# docs/self-hosted-runner-setup.md for registering the runner.
+#
+# This means the scheduled run only fires if that PC is on, logged in (or
+# the runner installed as a service) and online at the scheduled time.
 
 on:
   schedule:
     # 20:00 UTC = 4:00am AWST (Perth is UTC+8 year-round, no DST). Adjust to
-    # whenever you actually want the day's roster pulled in.
+    # whenever you actually want the day's roster pulled in — and to a time
+    # the runner PC is reliably on, since a self-hosted runner can't run
+    # while its machine is asleep or off.
     - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
@@ -33,7 +44,7 @@ on:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Windows]
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +54,11 @@ jobs:
 
       - run: npm ci
 
-      - run: npx playwright install --with-deps chromium
+      # No --with-deps here — that flag installs Linux system packages via
+      # apt and doesn't apply on Windows; the runner just needs the browser
+      # binary itself, which this downloads straight into the Playwright
+      # cache on this machine (persists across runs, unlike a hosted runner).
+      - run: npx playwright install chromium
 
       - run: node automation/humanforce-sync.mjs
         env:
