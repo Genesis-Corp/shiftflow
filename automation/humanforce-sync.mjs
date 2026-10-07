@@ -31,6 +31,7 @@
  */
 
 import { chromium } from 'playwright';
+import { readFile, writeFile } from 'node:fs/promises';
 
 const {
   HUMANFORCE_URL = 'https://fjspearwood.humanforce.com/Account/LogOn?ReturnUrl=%2fReporting%2fRosterDailyCoverageReportByRole',
@@ -133,7 +134,7 @@ async function main() {
       await pdfLink.click();
       const download = await downloadPromise;
       const pdfPath = await download.path();
-      const pdfBuffer = await (await import('node:fs/promises')).readFile(pdfPath);
+      const pdfBuffer = await readFile(pdfPath);
       await popup.close();
 
       // ── 5. Hand it to ShiftFlow ───────────────────────────────────────────
@@ -157,6 +158,18 @@ async function main() {
       }
       daysApplied += 1;
     }
+  } catch (err) {
+    // The runner's headless browser can't be watched interactively, so on
+    // any failure save what it was actually looking at — otherwise a
+    // selector mismatch is a guessing game.
+    try {
+      await page.screenshot({ path: 'automation/debug-failure.png', fullPage: true });
+      await writeFile('automation/debug-failure.html', await page.content());
+      console.log('Saved automation/debug-failure.png and .html for inspection.');
+    } catch (debugErr) {
+      console.error('Could not capture failure diagnostics:', debugErr);
+    }
+    throw err;
   } finally {
     await browser.close();
   }

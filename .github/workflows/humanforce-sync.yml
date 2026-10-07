@@ -52,3 +52,12 @@ jobs:
           SHIFTFLOW_URL: ${{ secrets.SHIFTFLOW_URL }}
           AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
           TARGET_DATE_OFFSET_DAYS: ${{ inputs.target_date_offset_days || '0' }}
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: humanforce-sync-debug
+          path: |
+            automation/debug-failure.png
+            automation/debug-failure.html
+          if-no-files-found: ignore
