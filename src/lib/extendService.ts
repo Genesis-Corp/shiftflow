@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import {
-  shiftsOverlap, mergeShiftRanges, shiftDurationMinutes, requiresBreak, clashesWithOtherShift,
+  shiftsOverlap, mergeShiftRanges, isSameRange, shiftDurationMinutes, requiresBreak, clashesWithOtherShift,
   BREAK_DURATION_MINUTES, MAX_EXTENDED_SHIFT_MINUTES,
 } from '@/lib/shiftUtils';
 import { sendSms } from '@/lib/sms/send';
@@ -79,6 +79,9 @@ async function loadOverlap(shiftId: string, staffId: string) {
 
   const existing = overlapping[0];
   const merged = mergeShiftRanges(existing.start_time, existing.end_time, openShift.start_time, openShift.end_time);
+  if (isSameRange(merged, existing)) {
+    throw new ExtendError('Their existing shift already covers this time — there is nothing to extend.', 409);
+  }
 
   const otherSameDayShifts = (sameDayShifts ?? []).filter((s: ShiftRow) => s.id !== existing.id);
   if (clashesWithOtherShift(merged.start_time, merged.end_time, otherSameDayShifts)) {

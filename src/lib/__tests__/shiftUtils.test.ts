@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
   shiftsOverlap, mergeShiftRanges, clashesWithOtherShift, weekBounds, isBirthday,
   addDays, todayStr, minutesUntil, formatTimeOfDay, applyReliabilityDelta, seniorCoversWholeShift,
-  isSchoolTermWeekday,
+  isSchoolTermWeekday, isSameRange,
 } from '../shiftUtils';
 
 describe('applyReliabilityDelta', () => {
@@ -93,6 +93,23 @@ describe('shiftsOverlap', () => {
 
   it('is true when one range fully contains the other', () => {
     expect(shiftsOverlap('08:00', '18:00', '10:00', '12:00')).toBe(true);
+  });
+});
+
+describe('isSameRange', () => {
+  it('is true when an existing shift already covers the requested time exactly', () => {
+    const existing = { start_time: '17:45:00', end_time: '21:00:00' };
+    expect(isSameRange(mergeShiftRanges(existing.start_time, existing.end_time, '17:45', '21:00'), existing)).toBe(true);
+  });
+
+  it('is true when the existing shift fully contains the requested time', () => {
+    const existing = { start_time: '17:00', end_time: '22:00' };
+    expect(isSameRange(mergeShiftRanges(existing.start_time, existing.end_time, '17:45', '21:00'), existing)).toBe(true);
+  });
+
+  it('is false when extending would actually change the shift', () => {
+    const existing = { start_time: '18:00', end_time: '21:00' };
+    expect(isSameRange(mergeShiftRanges(existing.start_time, existing.end_time, '17:45', '21:00'), existing)).toBe(false);
   });
 });
 

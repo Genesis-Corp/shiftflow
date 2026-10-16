@@ -3,7 +3,7 @@ import {
   availabilityCoversShift, dayOfWeekFromDate, weekBounds, shiftsOverlap, mergeShiftRanges,
   shiftDurationMinutes, requiresBreak, BREAK_DURATION_MINUTES, clashesWithOtherShift,
   MAX_EXTENDED_SHIFT_MINUTES, WEEKLY_HOURS_CAP_MINUTES, isBirthday, addDays, daysBetween,
-  seniorCoversWholeShift, isSchoolTermWeekday, timeToMinutes, JUNIOR_SCHOOL_CUTOFF,
+  seniorCoversWholeShift, isSchoolTermWeekday, timeToMinutes, isSameRange, JUNIOR_SCHOOL_CUTOFF,
 } from '@/lib/shiftUtils';
 import {
   calculateShiftCost, ageBracketFor, seniorityFromBirthday,
@@ -388,6 +388,11 @@ export async function findEligibleCandidates(
     if (overlapping.length === 1) {
       const conflict = overlapping[0];
       const merged = mergeShiftRanges(conflict.start_time, conflict.end_time, start_time, end_time);
+
+      // Their existing shift already spans the whole requested time, so there
+      // is nothing to stretch — offering "extend" would be a no-op. They're
+      // simply already rostered for it; don't surface them as an option.
+      if (isSameRange(merged, conflict)) continue;
 
       // A split shift — another shift they already have the same day that
       // doesn't itself overlap this one — can still rule out the extension

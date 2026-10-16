@@ -179,6 +179,14 @@ export function shiftsOverlap(aStart: string, aEnd: string, bStart: string, bEnd
   return aStartM < bEndM && bStartM < aEndM;
 }
 
+/** Whether two shift ranges are identical, ignoring "HH:MM" vs "HH:MM:SS" formatting. */
+export function isSameRange(
+  a: { start_time: string; end_time: string }, b: { start_time: string; end_time: string }
+): boolean {
+  return timeToMinutes(a.start_time) === timeToMinutes(b.start_time)
+    && timeToMinutes(a.end_time) === timeToMinutes(b.end_time);
+}
+
 /** The smallest single range spanning two overlapping (or touching) shifts. */
 export function mergeShiftRanges(
   aStart: string, aEnd: string, bStart: string, bEnd: string
