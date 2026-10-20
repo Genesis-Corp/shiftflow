@@ -3,7 +3,7 @@ import {
   winnerMessage, coveredMessage, tooLateMessage, urgentAvailabilityMessage,
   declinedMessage, smsSegments, isGsm7, formatShiftTimes, formatShiftDate, describeShift,
   availabilityMessage, availabilityAckMessage, managerListMessage, managerStaleSelectionMessage,
-  managerInvalidPickMessage, managerOutcomeMessage,
+  managerInvalidPickMessage, managerOutcomeMessage, rosterChangeMessage,
 } from '../sms/templates';
 
 const SHIFT = {
@@ -198,5 +198,20 @@ describe('smsSegments', () => {
   it('counts UCS-2 segments when a non-GSM character appears', () => {
     expect(smsSegments('😀')).toBe(1);
     expect(smsSegments('😀' + 'a'.repeat(100))).toBe(2);
+  });
+});
+
+describe('rosterChangeMessage', () => {
+  it('carries the required wording, sender name and opt-out', () => {
+    const msg = rosterChangeMessage(BUSINESS);
+    expect(msg).toContain('There have been changes made to the rosters.');
+    expect(msg).toContain('Please check your humanforce app to see your new rostered shifts.');
+    expect(msg.startsWith(`${BUSINESS}:`)).toBe(true);
+    expect(msg).toContain('Reply STOP to opt out.');
+  });
+
+  it('fits in a single SMS segment', () => {
+    expect(isGsm7(rosterChangeMessage(BUSINESS))).toBe(true);
+    expect(smsSegments(rosterChangeMessage(BUSINESS))).toBe(1);
   });
 });

@@ -104,6 +104,18 @@ export function broadcastMessage(
   return `${prefix}${body}\nReply STOP to opt out.`;
 }
 
+// ── Roster change notice ────────────────────────────────────────────────────
+// Fixed-copy nudge from the dashboard's "Notify roster changes" button. Not
+// part of any opt-in race, so — like the Message Board broadcast — it carries
+// the Spam Act's identification + opt-out itself. Stays under one GSM-7
+// segment (160 chars) for any reasonable business name.
+
+/** Tells staff the roster changed and to check Humanforce for their shifts. */
+export function rosterChangeMessage(business: string): string {
+  return `${business}: There have been changes made to the rosters. ` +
+    `Please check your humanforce app to see your new rostered shifts. Reply STOP to opt out.`;
+}
+
 // ── Availability flow (the "gather" cover tier) ─────────────────────────────
 // Enough notice to collect options: the manager who started the race picks
 // from who's free, rather than it going to whoever replies first. The

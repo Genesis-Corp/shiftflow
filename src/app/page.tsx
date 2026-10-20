@@ -7,6 +7,7 @@ import { formatDate, weekBounds, shiftDurationMinutes, todayStr } from '@/lib/sh
 import ReliabilityBar from '@/components/ReliabilityBar';
 import StaffName from '@/components/StaffName';
 import MessageBoard from '@/components/MessageBoard';
+import RosterNotifyButton from '@/components/RosterNotifyButton';
 
 interface Stats {
   totalStaff: number;
@@ -112,9 +113,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-        <p className="text-slate-500 text-sm mt-1">{formatDate(today)} — Shift management overview</p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
+          <p className="text-slate-500 text-sm mt-1">{formatDate(today)} — Shift management overview</p>
+        </div>
+        <RosterNotifyButton />
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
