@@ -35,10 +35,36 @@ export default function RosterQueue({
 
   const ready = jobs.filter(j => j.status === 'ready');
   const working = jobs.some(j => j.status === 'pending' || j.status === 'reading');
+  const finished = jobs.filter(j => j.status === 'ready' || j.status === 'failed' || j.status === 'applied').length;
+  const progress = jobs.length ? Math.round((finished / jobs.length) * 100) : 0;
+  const awaitingSave = !working && ready.length > 0;
+  const addAllLabel = applying ? 'Adding…' : ready.length === 1 ? 'Add this roster' : `Add all ${ready.length} rosters`;
+  const actionButtons = (position: 'top' | 'bottom') => (
+    <div className={`flex flex-wrap justify-end items-center gap-2 bg-white px-1 py-2 ${position === 'top' ? 'sticky top-[55px] z-10 border-b border-slate-200' : 'sticky bottom-0 z-10 border-t border-slate-200'}`}>
+      {position === 'bottom' && <button onClick={onClose} className="btn-secondary">Close</button>}
+      {ready.length > 0 && (
+        <button onClick={onApplyAll} disabled={applying !== null || working} className="btn-primary">
+          {addAllLabel}
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <Modal title={jobs.length === 1 ? 'Roster from screenshot' : `${jobs.length} rosters`} onClose={onClose} size="lg">
       <div className="space-y-3 text-sm">
+        {actionButtons('top')}
+        <div aria-label="Roster processing progress" className="space-y-1.5 px-1" role="status">
+          <div className="flex items-center justify-between gap-2 text-xs text-slate-600">
+            <span>{applying ? 'Saving shifts…' : awaitingSave ? 'Ready for review — save shifts when you are happy' : working ? 'Reading and checking rosters…' : 'Roster processing complete'}</span>
+            <span className="tabular-nums font-semibold">{progress}%</span>
+          </div>
+          <div className="h-3 w-full overflow-hidden rounded-full border border-slate-200 bg-slate-100" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+            <div className={`h-full rounded-full transition-[width] duration-300 ${awaitingSave ? 'roster-awaiting-save' : 'bg-blue-500'}`} style={{ width: `${progress}%` }} />
+          </div>
+          {awaitingSave && <p className="text-xs text-blue-700">100% processed. Stripes mean the rosters are waiting for you to save their shifts.</p>}
+          {!working && jobs.some(j => j.status === 'failed') && <p className="text-xs text-amber-700">Some rosters failed to process. Review them before saving the others.</p>}
+        </div>
         {working && (
           <p className="text-xs text-slate-500">
             Reading the photos one at a time — each is its own upload, so a long batch cannot time out. You can check the
@@ -198,15 +224,18 @@ export default function RosterQueue({
           );
         })}
 
-        <div className="flex justify-end gap-2 pt-1">
-          <button onClick={onClose} className="btn-secondary">Close</button>
-          {ready.length > 0 && (
-            <button onClick={onApplyAll} disabled={applying !== null} className="btn-primary">
-              {applying ? 'Adding…' : ready.length === 1 ? 'Add this roster' : `Add all ${ready.length} rosters`}
-            </button>
-          )}
-        </div>
+        {actionButtons('bottom')}
       </div>
+
+      <style jsx>{`
+        .roster-awaiting-save {
+          background: repeating-linear-gradient(45deg, #ffffff 0px, #ffffff 9px, #7cc4ef 9px, #7cc4ef 18px);
+          background-size: 26px 26px;
+          animation: roster-stripes 0.9s linear infinite;
+        }
+        @keyframes roster-stripes { from { background-position: 0 0; } to { background-position: 26px 0; } }
+        @media (prefers-reduced-motion: reduce) { .roster-awaiting-save { animation: none; } }
+      `}</style>
     </Modal>
   );
 }
