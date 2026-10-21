@@ -253,6 +253,13 @@ export default function ShiftsPage() {
   const [staff, setStaff] = useState<Staff[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearScope, setClearScope] = useState<'range' | 'all'>('range');
+  const [clearFrom, setClearFrom] = useState(todayStr());
+  const [clearTo, setClearTo] = useState(todayStr());
+  const [clearPhrase, setClearPhrase] = useState('');
+  const [clearBusy, setClearBusy] = useState(false);
+  const [clearError, setClearError] = useState('');
   const [modal, setModal] = useState<'add' | 'edit' | 'adjust' | null>(null);
   const [editing, setEditing] = useState<Shift | null>(null);
   const [view, setView] = useState<'list' | 'timeline' | 'past'>('list');
@@ -678,10 +685,42 @@ export default function ShiftsPage() {
     setModal(null); load();
   }
 
+  async function clearSavedShifts() {
+    if (clearBusy || (clearScope === 'all' && clearPhrase !== 'DELETE ALL SHIFTS')) return;
+    if (clearScope === 'range' && (!clearFrom || !clearTo || clearFrom > clearTo)) {
+      setClearError('Choose a valid start and end date.');
+      return;
+    }
+    const description = clearScope === 'all' ? 'ALL saved shifts' : 'shifts from ' + clearFrom + ' through ' + clearTo;
+    if (!window.confirm('Permanently delete ' + description + '? This cannot be undone.')) return;
+    setClearBusy(true);
+    setClearError('');
+    try {
+      const result = await fetchJson<{ deleted: number }>('/api/shifts', {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(clearScope === 'all'
+          ? { scope: 'all', confirmation: clearPhrase }
+          : { scope: 'range', from: clearFrom, to: clearTo }),
+      });
+      setClearOpen(false);
+      setClearPhrase('');
+      await load();
+      window.alert(result.deleted + ' saved shift(s) deleted.');
+    } catch (error) {
+      setClearError(error instanceof Error ? error.message : 'Could not clear shifts.');
+    } finally {
+      setClearBusy(false);
+    }
+  }
+
   async function remove(s: Shift) {
     if (!confirm('Delete this shift?')) return;
-    await fetch(`/api/shifts/${s.id}`, { method: 'DELETE' });
-    load();
+    try {
+      await fetchJson(`/api/shifts/${s.id}`, { method: 'DELETE' });
+      await load();
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Could not delete shift.');
+    }
   }
 
   function openLate(s: Shift) {
@@ -964,6 +1003,7 @@ export default function ShiftsPage() {
               },
             ]}
           />
+          <button onClick={() => { setClearError(''); setClearOpen(true); }} disabled={busy || clearBusy || shifts.length === 0} className="btn-secondary text-red-700 disabled:opacity-50"><Trash2 size={14} /> Clear Shifts</button>
           <button onClick={handleExport} className="btn-secondary"><Download size={14} /> Export</button>
           <button onClick={openAdd} className="btn-primary"><Plus size={16} /> Add Shift</button>
         </div>
@@ -1085,6 +1125,33 @@ export default function ShiftsPage() {
             </div>
           )}
         </div>
+      )}
+
+      {clearOpen && (
+        <Modal title="Clear saved shifts" onClose={() => { if (!clearBusy) setClearOpen(false); }}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">Remove outdated shifts before uploading replacements. Staff and departments are not deleted. This action cannot be undone.</p>
+            <select className="input w-full" aria-label="Deletion scope" value={clearScope} onChange={e => { setClearScope(e.target.value as 'range' | 'all'); setClearError(''); }} disabled={clearBusy}>
+              <option value="range">Shifts within a date range</option>
+              <option value="all">All saved shifts (including history)</option>
+            </select>
+            {clearScope === 'range' ? (
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-sm">From (inclusive)<input type="date" className="input w-full mt-1" value={clearFrom} onChange={e => setClearFrom(e.target.value)} disabled={clearBusy} /></label>
+                <label className="text-sm">To (inclusive)<input type="date" className="input w-full mt-1" value={clearTo} onChange={e => setClearTo(e.target.value)} disabled={clearBusy} /></label>
+              </div>
+            ) : (
+              <label className="block text-sm text-red-700">Type <strong>DELETE ALL SHIFTS</strong> to confirm deletion of all shifts, including past records.
+                <input className="input w-full mt-2" value={clearPhrase} onChange={e => setClearPhrase(e.target.value)} disabled={clearBusy} placeholder="DELETE ALL SHIFTS" autoComplete="off" />
+              </label>
+            )}
+            {clearError && <p role="alert" className="text-sm text-red-700">{clearError}</p>}
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" disabled={clearBusy} onClick={() => setClearOpen(false)}>Cancel</button>
+              <button type="button" className="btn-primary bg-red-700 hover:bg-red-800 disabled:opacity-50" disabled={clearBusy || (clearScope === 'all' ? clearPhrase !== 'DELETE ALL SHIFTS' : !clearFrom || !clearTo || clearFrom > clearTo)} onClick={clearSavedShifts}>{clearBusy ? 'Deleting…' : 'Delete shifts'}</button>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {(modal === 'add' || modal === 'edit') && (
