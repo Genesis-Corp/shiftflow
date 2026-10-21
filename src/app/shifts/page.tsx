@@ -1100,16 +1100,16 @@ export default function ShiftsPage() {
                   ))}
                 </div>
 
-                <div className="mt-1 divide-y divide-slate-100">
+                <div className="mt-1 overflow-hidden rounded-md border border-slate-200/80 divide-y divide-slate-200/70">
                   {unassigned.length > 0 && (
-                    <div className="flex items-center py-2">
-                      <div className="w-24 sm:w-36 flex-shrink-0 pr-2 text-sm font-medium text-amber-700 italic truncate">
+                    <div className="flex items-center">
+                      <div className="w-24 sm:w-36 flex-shrink-0 px-2 py-2 text-sm font-medium text-amber-700 italic truncate bg-amber-50/40 border-r border-slate-200/80">
                         Unassigned
                       </div>
-                      <div className="relative flex-1 h-7 rounded bg-amber-50/50">
+                      <div className="relative flex-1 h-9 bg-amber-50/30">
                         <div className="absolute inset-0 flex pointer-events-none">
                           {timelineHours.map(h => (
-                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                            <div key={h} className="flex-1 border-l border-slate-200/80 first:border-l-0" />
                           ))}
                         </div>
                         {unassigned.map(timelineBar)}
@@ -1118,14 +1118,14 @@ export default function ShiftsPage() {
                   )}
 
                   {staffRows.map(({ staffId, name, birthday, shifts: rowShifts }) => (
-                    <div key={staffId} className="flex items-center py-2">
-                      <div className="w-24 sm:w-36 flex-shrink-0 pr-2 text-sm font-medium text-slate-700 truncate">
+                    <div key={staffId} className="flex items-center">
+                      <div className="w-24 sm:w-36 flex-shrink-0 px-2 py-2 text-sm font-medium text-slate-700 truncate bg-slate-50/50 border-r border-slate-200/80">
                         <StaffName staffId={staffId} name={name} />{isBirthday(birthday, timelineDate) && <span title="Birthday today" className="ml-1">🎁</span>}
                       </div>
-                      <div className="relative flex-1 h-7 rounded bg-slate-50">
+                      <div className="relative flex-1 h-9 bg-white">
                         <div className="absolute inset-0 flex pointer-events-none">
                           {timelineHours.map(h => (
-                            <div key={h} className="flex-1 border-l border-slate-100 first:border-l-0" />
+                            <div key={h} className="flex-1 border-l border-slate-200/80 first:border-l-0" />
                           ))}
                         </div>
                         {rowShifts.map(timelineBar)}
