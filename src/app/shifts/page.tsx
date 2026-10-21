@@ -307,6 +307,8 @@ export default function ShiftsPage() {
   const [jobs, setJobs] = useState<RosterJob[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
   const [applying, setApplying] = useState<string | null>(null);
+  const batchSaving = useRef(false);
+  const [saveProgress, setSaveProgress] = useState<{ total: number; completed: number; status: 'saving' | 'done' | 'failed' } | null>(null);
   /** Sources are read one at a time; this stops a second reader starting. */
   const reading = useRef(false);
 
@@ -384,6 +386,7 @@ export default function ShiftsPage() {
         kind: file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf') ? 'pdf' : 'image',
       })),
     ]);
+    setSaveProgress(null);
     setQueueOpen(true);
   }
 
@@ -562,9 +565,26 @@ export default function ShiftsPage() {
 
   /** Add every roster that has been read and checked, in order. */
   async function applyAllJobs() {
-    for (const job of jobs.filter(j => j.status === 'ready')) {
-      const ok = await applyJob(job.id);
-      if (!ok) break; // stop at the first failure rather than pressing on blindly
+    if (batchSaving.current || applying !== null) return;
+    const pending = jobs.filter(j => j.status === 'ready');
+    if (!pending.length) return;
+    batchSaving.current = true;
+    let completed = 0;
+    setSaveProgress({ total: pending.length, completed: 0, status: 'saving' });
+    try {
+      for (const job of pending) {
+        const ok = await applyJob(job.id);
+        if (!ok) {
+          setSaveProgress({ total: pending.length, completed, status: 'failed' });
+          return;
+        }
+        completed++;
+        setSaveProgress({ total: pending.length, completed, status: completed === pending.length ? 'done' : 'saving' });
+      }
+    } catch {
+      setSaveProgress({ total: pending.length, completed, status: 'failed' });
+    } finally {
+      batchSaving.current = false;
     }
   }
 
@@ -1310,6 +1330,7 @@ export default function ShiftsPage() {
           jobs={jobs}
           departments={departments}
           applying={applying}
+          saveProgress={saveProgress}
           onClose={() => setQueueOpen(false)}
           onChangeTarget={changeJobTarget}
           onToggleNoShows={toggleJobNoShows}
