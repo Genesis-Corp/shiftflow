@@ -456,7 +456,7 @@ export default function ShiftsPage() {
         const departmentId = matched?.id ?? job.department_id;
 
         update({
-          status: 'ready',
+          status: 'reading',
           entries: data.entries,
           warnings: data.warnings,
           seconds: data.seconds,
@@ -475,7 +475,7 @@ export default function ShiftsPage() {
           ...job,
           id: i === 0 ? job.id : `${job.id}-${i}`,
           name: group.label ? `${job.name} — ${group.label}` : job.name,
-          status: 'ready',
+          status: 'reading',
           entries: group.entries,
           warnings: data.warnings,
           seconds: data.seconds,
@@ -510,7 +510,7 @@ export default function ShiftsPage() {
     setJobs(current =>
       current.map(j =>
         j.id === job.id
-          ? { ...j, plan: preview.data ?? undefined, error: preview.ok ? undefined : preview.error ?? undefined }
+          ? { ...j, status: preview.ok && preview.data ? 'ready' : 'failed', plan: preview.data ?? undefined, error: preview.ok ? undefined : preview.error ?? 'Could not preview this roster.' }
           : j
       )
     );
