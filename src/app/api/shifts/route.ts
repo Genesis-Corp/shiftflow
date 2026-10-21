@@ -97,3 +97,34 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json(data, { status: 201 });
 }
+
+/** Bulk deletion for replacing outdated rosters. Never run without an explicit scope. */
+export async function DELETE(req: NextRequest) {
+  const user = await requireUser();
+  if (!user) return unauthorized();
+
+  const body = await req.json().catch(() => null);
+  const scope = body?.scope;
+  if (scope !== 'all' && scope !== 'range') {
+    return NextResponse.json({ error: 'Choose a date range or explicitly clear all shifts.' }, { status: 400 });
+  }
+  const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+  if (scope === 'all' && body?.confirmation !== 'DELETE ALL SHIFTS') {
+    return NextResponse.json({ error: 'Type DELETE ALL SHIFTS to confirm.' }, { status: 400 });
+  }
+  if (scope === 'range' && (
+    typeof body?.from !== 'string' || typeof body?.to !== 'string' ||
+    !datePattern.test(body.from) || !datePattern.test(body.to) || body.from > body.to ||
+    !Number.isFinite(Date.parse(body.from)) || !Number.isFinite(Date.parse(body.to))
+  )) {
+    return NextResponse.json({ error: 'Provide a valid inclusive date range.' }, { status: 400 });
+  }
+
+  let query = supabase.from('shifts').delete({ count: 'exact' });
+  query = scope === 'all'
+    ? query.not('id', 'is', null)
+    : query.gte('date', body.from).lte('date', body.to);
+  const { error, count } = await query;
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ success: true, deleted: count ?? 0 });
+}
