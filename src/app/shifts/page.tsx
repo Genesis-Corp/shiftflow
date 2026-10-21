@@ -306,6 +306,7 @@ export default function ShiftsPage() {
   const [stage, setStage] = useState<ProgressStage | null>(null);
   const [jobs, setJobs] = useState<RosterJob[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
+  const [queueMinimized, setQueueMinimized] = useState(false);
   const [applying, setApplying] = useState<string | null>(null);
   const batchSaving = useRef(false);
   const [saveProgress, setSaveProgress] = useState<{ total: number; completed: number; status: 'saving' | 'done' | 'failed' } | null>(null);
@@ -388,6 +389,7 @@ export default function ShiftsPage() {
     ]);
     setSaveProgress(null);
     setQueueOpen(true);
+    setQueueMinimized(false);
   }
 
   /** Work through the queue one source at a time. */
@@ -1325,13 +1327,43 @@ export default function ShiftsPage() {
         </Modal>
       )}
 
-      {queueOpen && jobs.length > 0 && (
+      {queueOpen && queueMinimized && jobs.length > 0 && (() => {
+        const readingCount = jobs.filter(j => j.status === 'pending' || j.status === 'reading').length;
+        const readyCount = jobs.filter(j => j.status === 'ready').length;
+        const completeCount = jobs.filter(j => j.status === 'ready' || j.status === 'failed' || j.status === 'applied').length;
+        const saving = saveProgress?.status === 'saving';
+        const percent = saveProgress
+          ? Math.round(saveProgress.completed / saveProgress.total * 100)
+          : Math.round(completeCount / jobs.length * 100);
+        const message = saving ? 'Saving rosters' : saveProgress?.status === 'done' ? 'Rosters saved' :
+          saveProgress?.status === 'failed' ? 'Save stopped — review needed' :
+          readingCount ? 'Processing rosters' : readyCount ? 'Ready to add shifts' : 'Review roster results';
+        return (
+          <button
+            type="button"
+            className="fixed bottom-20 right-4 sm:bottom-5 z-40 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-blue-200 bg-white p-3 shadow-xl text-left"
+            onClick={() => setQueueMinimized(false)}
+            aria-label={`Restore roster uploads: ${message}, ${percent}%`}
+          >
+            <div className="flex items-center justify-between gap-3 text-sm font-semibold text-slate-800">
+              <span className="flex items-center gap-2"><FileText size={16} className="text-blue-600" />{message}</span>
+              <span className="tabular-nums text-blue-700">{percent}%</span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-blue-100">
+              <div className={`h-full rounded-full transition-[width] duration-300 ${saveProgress?.status === 'done' ? 'bg-green-600' : 'bg-blue-600'}`} style={{ width: `${percent}%` }} />
+            </div>
+            <p className="mt-1 text-xs text-slate-500">{saving ? `${saveProgress?.completed} of ${saveProgress?.total} saved` : `${readyCount} ready · ${readingCount} processing`} · Tap to expand</p>
+          </button>
+        );
+      })()}
+      {queueOpen && !queueMinimized && jobs.length > 0 && (
         <RosterQueue
           jobs={jobs}
           departments={departments}
           applying={applying}
           saveProgress={saveProgress}
           onClose={() => setQueueOpen(false)}
+          onMinimize={() => setQueueMinimized(true)}
           onChangeTarget={changeJobTarget}
           onToggleNoShows={toggleJobNoShows}
           onApply={applyJob}

@@ -15,6 +15,7 @@ interface Props {
   applying: string | null;
   saveProgress: { total: number; completed: number; status: 'saving' | 'done' | 'failed' } | null;
   onClose: () => void;
+  onMinimize: () => void;
   onChangeTarget: (id: string, date: string, departmentId: string) => void;
   onToggleNoShows: (id: string, value: boolean) => void;
   onApply: (id: string) => void;
@@ -30,7 +31,7 @@ interface Props {
  * in the background, so a row can be checked while the next is still being read.
  */
 export default function RosterQueue({
-  jobs, departments, applying, saveProgress, onClose, onChangeTarget, onToggleNoShows, onApply, onApplyAll, onRemove,
+  jobs, departments, applying, saveProgress, onClose, onMinimize, onChangeTarget, onToggleNoShows, onApply, onApplyAll, onRemove,
 }: Props) {
   const [open, setOpen] = useState<string | null>(null);
 
@@ -56,6 +57,11 @@ export default function RosterQueue({
   return (
     <Modal title={jobs.length === 1 ? 'Roster from screenshot' : `${jobs.length} rosters`} onClose={onClose} size="lg">
       <div className="space-y-3 text-sm">
+        <div className="flex justify-end">
+          <button type="button" onClick={onMinimize} className="btn-secondary text-xs" title="Minimize uploads and continue using Shifts">
+            <ChevronDown size={15} /> Minimize
+          </button>
+        </div>
         {actionButtons('top')}
         {saveProgress && (
           <div className="space-y-2 rounded-lg border border-blue-200 bg-blue-50 p-3" role="status" aria-live="polite">
