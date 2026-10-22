@@ -1,5 +1,10 @@
 # Self-hosted runner setup (Windows) — Humanforce roster sync
 
+> Daily scheduling has moved to Windows Task Scheduler at 05:00 AWST. See
+> [Humanforce Windows sync](humanforce-windows-sync.md) for the current setup.
+> The GitHub cron is removed; the remaining instructions below describe the
+> optional legacy runner for manually dispatched diagnostics only.
+
 The `humanforce-sync.yml` workflow runs on a self-hosted runner instead of
 GitHub's hosted runners, because Humanforce's login sits behind AWS WAF bot
 protection that challenges GitHub's shared datacenter IP ranges with an

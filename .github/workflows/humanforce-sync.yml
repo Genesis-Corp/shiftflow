@@ -1,78 +1,40 @@
 name: Humanforce roster sync
 
-# Pulls each day's roster PDF from Humanforce, starting at the configured
-# offset, and applies every published day to ShiftFlow via
-# /api/automation/roster-pdf — stopping at the first date that isn't
-# published yet. See automation/humanforce-sync.mjs for the full flow and
-# its known caveats (department-selection persistence, month-boundary
-# calendar picking).
-#
-# Required repo secrets (Settings → Secrets and variables → Actions):
-#   HUMANFORCE_USERNAME, HUMANFORCE_PASSWORD — the Humanforce login.
-#   SHIFTFLOW_URL      — e.g. https://shiftflow-git-<branch>-<team>.vercel.app
-#                         (the stable per-branch alias, not a one-off deploy URL).
-#   AUTOMATION_TOKEN   — must match the AUTOMATION_TOKEN set on that Vercel
-#                         deployment (all environments) — generate with
-#                         `openssl rand -hex 32`, same value both places.
-#
-# If ShiftFlow has Vercel Password Protection enabled, this workflow also
-# needs a way past it (a bypass token in the request, or protection scoped
-# to exclude API routes) — check that separately before relying on this.
-#
-# Runs on a self-hosted runner (a Windows PC), not GitHub's hosted runners —
-# Humanforce's login sits behind AWS WAF bot protection that challenges
-# GitHub's shared datacenter IP ranges with an interactive CAPTCHA. Running
-# from an ordinary residential/business IP avoids that. See
-# docs/self-hosted-runner-setup.md for registering the runner.
-#
-# This means the scheduled run only fires if that PC is on, logged in (or
-# the runner installed as a service) and online at the scheduled time.
-
+# Daily scheduling belongs to Windows Task Scheduler at 05:00 AWST.
+# No GitHub cron: do not reintroduce a second scheduler.
+# Manual diagnostic runs default to a dry run and use the same safe endpoints.
 on:
-  schedule:
-    # 20:00 UTC = 4:00am AWST (Perth is UTC+8 year-round, no DST). Adjust to
-    # whenever you actually want the day's roster pulled in — and to a time
-    # the runner PC is reliably on, since a self-hosted runner can't run
-    # while its machine is asleep or off.
-    - cron: '0 20 * * *'
   workflow_dispatch:
     inputs:
       target_date_offset_days:
-        description: "0 = today, 1 = tomorrow, etc. Leave default for the scheduled run's usual offset."
-        required: false
+        description: '0 = today, 1 = tomorrow (Perth date)'
         default: '0'
+      dry_run:
+        description: 'Preview without database writes'
+        type: boolean
+        default: true
 
+permissions:
+  contents: read
+concurrency:
+  group: humanforce-sync
+  cancel-in-progress: false
 jobs:
   sync:
     runs-on: [self-hosted, Windows]
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
+          node-version: 22
       - run: npm ci
-
-      # No --with-deps here — that flag installs Linux system packages via
-      # apt and doesn't apply on Windows; the runner just needs the browser
-      # binary itself, which this downloads straight into the Playwright
-      # cache on this machine (persists across runs, unlike a hosted runner).
       - run: npx playwright install chromium
-
       - run: node automation/humanforce-sync.mjs
         env:
           HUMANFORCE_USERNAME: ${{ secrets.HUMANFORCE_USERNAME }}
           HUMANFORCE_PASSWORD: ${{ secrets.HUMANFORCE_PASSWORD }}
           SHIFTFLOW_URL: ${{ secrets.SHIFTFLOW_URL }}
           AUTOMATION_TOKEN: ${{ secrets.AUTOMATION_TOKEN }}
-          TARGET_DATE_OFFSET_DAYS: ${{ inputs.target_date_offset_days || '0' }}
-
-      - uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: humanforce-sync-debug
-          path: |
-            automation/debug-failure.png
-            automation/debug-failure.html
-          if-no-files-found: ignore
+          TARGET_DATE_OFFSET_DAYS: ${{ inputs.target_date_offset_days }}
+          DRY_RUN: ${{ inputs.dry_run }}

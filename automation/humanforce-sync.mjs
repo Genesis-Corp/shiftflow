@@ -1,183 +1,130 @@
 #!/usr/bin/env node
-/**
- * Pulls the Humanforce "Daily Coverage By Role" roster PDF for each day
- * starting at TARGET_DATE_OFFSET_DAYS and hands every populated one to
- * ShiftFlow's automation endpoint (/api/automation/roster-pdf), which reads
- * it and applies whatever shifts it can straight away.
- *
- * Keeps scanning forward one day at a time and stops at the first date
- * Humanforce hasn't published a roster for yet — its report viewer shows
- * "The current data set presented in the report did not produce any
- * significant content..." for those instead of a populated grid. Running
- * this daily means a day that wasn't published yet on one run gets picked
- * up automatically once it's confirmed, without a separate schedule entry
- * per day.
- *
- * Runs as a fresh headless login every time, so Humanforce's inactivity
- * logout is a non-issue here: there is no long-lived session to time out.
- *
- * Known caveats — not yet exercised by a real run:
- *  - Department selection isn't touched here at all; it assumes Humanforce
- *    remembers the usual filter (everything except Cleaning, Direct
- *    Filling, Direct Ordering, Payroll Officer, Store Cashier) across date
- *    changes. Worth confirming against a live run before trusting it
- *    unattended — a silent revert to "all departments" or "none" would
- *    misreport who's rostered.
- *  - The day is picked by clicking the calendar link matching its
- *    day-of-month text (e.g. "11"), which is unambiguous for two-digit
- *    days but can collide with a leading/trailing day from an adjacent
- *    month shown in the same calendar grid once a single-digit day (1-9)
- *    comes up. Untested across a month boundary.
- */
-
 import { chromium } from 'playwright';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { parseHumanforceCsv } from '../src/lib/humanforceCsv.mjs';
 
-const {
-  HUMANFORCE_URL = 'https://fjspearwood.humanforce.com/Account/LogOn?ReturnUrl=%2fReporting%2fRosterDailyCoverageReportByRole',
-  HUMANFORCE_USERNAME,
-  HUMANFORCE_PASSWORD,
-  SHIFTFLOW_URL,
-  AUTOMATION_TOKEN,
-  // 0 = today, 1 = tomorrow, etc. — where the forward scan starts.
-  TARGET_DATE_OFFSET_DAYS = '0',
-  // Safety cap so a report viewer change that breaks the "no content"
-  // detection can't turn this into an infinite loop.
-  MAX_DAYS_AHEAD = '21',
-} = process.env;
-
-for (const [name, value] of Object.entries({ HUMANFORCE_USERNAME, HUMANFORCE_PASSWORD, SHIFTFLOW_URL, AUTOMATION_TOKEN })) {
-  if (!value) {
-    console.error(`Missing required environment variable: ${name}`);
-    process.exit(1);
+export const PROTOCOL = 'humanforce-safe-v1';
+export function perthDate(offset = 0, now = new Date()) {
+  const local = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const date = new Date(`${local}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+export function configuration(env) {
+  for (const name of ['HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN']) {
+    if (!env[name]?.trim()) throw new Error(`Missing configuration: ${name}`);
   }
+  const integer = (name, fallback, max) => {
+    const raw = env[name] ?? fallback;
+    if (!/^\d+$/.test(raw) || +raw > max) throw new Error(`Invalid configuration: ${name}`);
+    return +raw;
+  };
+  const app = new URL(env.SHIFTFLOW_URL);
+  const humanforce = new URL(env.HUMANFORCE_URL || 'https://fjspearwood.humanforce.com/Account/LogOn?ReturnUrl=%2fReporting%2fRosterDailyCoverageReportByRole');
+  if (app.protocol !== 'https:' || app.username || app.password || app.pathname !== '/' || app.search || app.hash) throw new Error('SHIFTFLOW_URL must be an HTTPS origin.');
+  if (humanforce.protocol !== 'https:' || humanforce.username || humanforce.password || !humanforce.hostname.endsWith('.humanforce.com')) throw new Error('Invalid Humanforce HTTPS URL.');
+  if (env.DRY_RUN !== undefined && !['true','false'].includes(env.DRY_RUN)) throw new Error('DRY_RUN must be true or false.');
+  const max = integer('MAX_DAYS_AHEAD', '21', 60);
+  if (max < 1) throw new Error('MAX_DAYS_AHEAD must be at least 1.');
+  return { app: app.origin, humanforce: humanforce.href, offset: integer('TARGET_DATE_OFFSET_DAYS','0',60), max,
+    dryRun: env.DRY_RUN !== 'false', site: env.HUMANFORCE_SITE || 'Phoenix / Spearwood' };
 }
 
-function dateAtOffset(offsetDays) {
-  const d = new Date();
-  d.setDate(d.getDate() + offsetDays);
-  return d;
+const log = (event, fields = {}) => console.log(JSON.stringify({ at: new Date().toISOString(), event, ...fields }));
+export async function requestSync(config, env, path, body, fetcher = fetch) {
+  const res = await fetcher(`${config.app}/api/automation/${path}`, {
+    method: body ? 'POST' : 'GET', redirect: 'error', signal: AbortSignal.timeout(90000),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${env.AUTOMATION_TOKEN}` },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const result = await res.json().catch(() => null);
+  if (!res.ok || result?.protocol !== PROTOCOL || (!body && result.ready !== true)) throw new Error(`ShiftFlow readiness/import failed (HTTP ${res.status}).`);
+  return result;
 }
 
-function isoDate(d) {
-  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+async function setDate(page, date) {
+  const input = page.locator('#reportDate');
+  const type = await input.getAttribute('type');
+  const [year, month, day] = date.split('-');
+  const text = type === 'date' ? date : `${day}/${month}/${year}`;
+  await input.fill(text);
+  await input.press('Tab');
+  if ((await input.inputValue()).trim() !== text) throw new Error('Humanforce did not retain the requested report date.');
 }
 
-async function main() {
-  const startOffset = Number(TARGET_DATE_OFFSET_DAYS);
-  const maxDays = Number(MAX_DAYS_AHEAD);
+async function exportReport(popup, format) {
+  const name = format === 'csv' ? /CSV|comma.?separated/i : /Acrobat.*PDF/i;
+  let link = popup.getByRole('link', { name });
+  if (!(await link.isVisible().catch(() => false))) {
+    await popup.getByRole('menuitem', { name: 'Export', exact: true }).getByTitle('Export').click();
+  }
+  if (await link.count() !== 1) throw new Error(`No unique ${format} export option.`);
+  const [download] = await Promise.all([popup.waitForEvent('download', { timeout: 30000 }), link.click()]);
+  if (await download.failure()) throw new Error(`${format} download failed.`);
+  const file = await download.path();
+  if (!file) throw new Error('Download file unavailable.');
+  const bytes = await readFile(file);
+  if (!bytes.length || bytes.length > (format === 'csv' ? 2_000_000 : 14_000_000)) throw new Error('Invalid export size.');
+  if (format === 'pdf' && bytes.subarray(0,5).toString() !== '%PDF-') throw new Error('Export is not a PDF.');
+  return bytes;
+}
 
+export async function main(env = process.env) {
+  const config = configuration(env);
+  // Never send exports to an old deployment with the unsafe PDF importer.
+  await requestSync(config, env, 'roster-csv');
+  if (env.PREFLIGHT_ONLY === 'true') { log('preflight_ok'); return; }
   const browser = await chromium.launch();
-  const page = await browser.newPage();
-
-  let settingsOpened = false;
-  let daysApplied = 0;
-
+  let stage = 'login';
+  let review = false, checked = 0;
   try {
-    // ── 1. Log in ──────────────────────────────────────────────────────────
-    await page.goto(HUMANFORCE_URL);
-    await page.getByRole('textbox', { name: 'Employee code or email' }).fill(HUMANFORCE_USERNAME);
-    await page.getByRole('textbox', { name: 'Password' }).fill(HUMANFORCE_PASSWORD);
+    const page = await browser.newPage({ acceptDownloads: true });
+    page.setDefaultTimeout(30000);
+    await page.goto(config.humanforce, { timeout: 60000 });
+    await page.getByRole('textbox', { name: 'Employee code or email' }).fill(env.HUMANFORCE_USERNAME);
+    await page.getByRole('textbox', { name: 'Password' }).fill(env.HUMANFORCE_PASSWORD);
     await page.getByRole('textbox', { name: 'Password' }).press('Enter');
-    await page.waitForURL('**/Reporting/**');
-
-    for (let i = 0; i < maxDays; i++) {
-      const d = dateAtOffset(startOffset + i);
-      const date = isoDate(d);
-      const dayOfMonth = String(d.getDate());
-
-      console.log(`Checking roster for ${date}...`);
-
-      // ── 2. Set the report date under Settings ──────────────────────────
-      // The Settings panel stays open once expanded, so only open it once.
-      if (!settingsOpened) {
-        await page.getByText('Settings').click();
-        settingsOpened = true;
-      }
-      await page.locator('#reportDate').click();
-      await page.getByRole('link', { name: dayOfMonth, exact: true }).click();
-
-      const popupPromise = page.waitForEvent('popup');
-      await page.getByText('Print Preview').click();
-      const popup = await popupPromise;
-      await popup.waitForLoadState();
-
-      // ── 3. Tell "not published yet" from "populated" ────────────────────
-      const emptyBanner = popup.getByText('did not produce any significant content');
-      const populatedHeading = popup.getByText('Daily Staff Coverage By Role');
-
-      const outcome = await Promise.race([
-        emptyBanner.waitFor({ state: 'visible', timeout: 20000 }).then(() => 'empty'),
-        populatedHeading.waitFor({ state: 'visible', timeout: 20000 }).then(() => 'populated'),
-      ]).catch(() => 'unknown');
-
-      if (outcome === 'unknown') {
-        await popup.close();
-        throw new Error(
-          `${date}: could not tell whether the roster had loaded — neither the "no content" ` +
-          'message nor the report heading showed up within 20s. Stopping rather than guessing.'
-        );
-      }
-
-      if (outcome === 'empty') {
-        console.log(`${date}: no roster published yet — stopping here.`);
-        await popup.close();
-        break;
-      }
-
-      // ── 4. Export/download the PDF ───────────────────────────────────────
-      const pdfLink = popup.getByRole('link', { name: 'Acrobat (PDF) file' });
-      if (!(await pdfLink.isVisible().catch(() => false))) {
-        await popup.getByRole('menuitem', { name: 'Export' }).getByTitle('Export').click();
-      }
-      const downloadPromise = popup.waitForEvent('download');
-      await pdfLink.click();
-      const download = await downloadPromise;
-      const pdfPath = await download.path();
-      const pdfBuffer = await readFile(pdfPath);
-      await popup.close();
-
-      // ── 5. Hand it to ShiftFlow ───────────────────────────────────────────
-      const pdfBase64 = pdfBuffer.toString('base64');
-      const res = await fetch(`${SHIFTFLOW_URL}/api/automation/roster-pdf`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTOMATION_TOKEN}` },
-        body: JSON.stringify({ date, pdf: pdfBase64 }),
-      });
-      const result = await res.json();
-      if (!res.ok) {
-        console.error(`${date}: ShiftFlow rejected the import:`, result);
-        process.exitCode = 1;
-        break;
-      }
-
-      console.log(`${date}: applied ${result.shifts_created} shift(s) across ${result.departments_applied} department(s).`);
-      if (result.flags?.length) {
-        console.log(`${date}: ${result.flags.length} flag(s) — also visible in the ShiftFlow banner:`);
-        for (const f of result.flags) console.log(`  - ${f.department ? f.department + ': ' : ''}${f.message}`);
-      }
-      daysApplied += 1;
+    await page.waitForURL('**/Reporting/**', { timeout: 60000 });
+    await page.getByText('Settings', { exact: true }).click();
+    for (let i = 0; i < config.max; i++) {
+      const date = perthDate(config.offset + i);
+      log('checking', { date });
+      stage = 'report_date';
+      await setDate(page, date);
+      const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByText('Print Preview', { exact: true }).click()]);
+      try {
+        await popup.waitForLoadState();
+        const state = await Promise.any([
+          popup.getByText(/did not produce any significant content/i).waitFor({ state: 'visible', timeout: 30000 }).then(() => 'empty'),
+          popup.getByText(/Daily Staff Coverage By Role/).first().waitFor({ state: 'visible', timeout: 30000 }).then(() => 'populated'),
+        ]);
+        if (state === 'empty') { log('unpublished', { date }); continue; }
+        stage = 'export';
+        let format = 'csv', bytes;
+        try { bytes = await exportReport(popup, 'csv'); }
+        catch { log('csv_export_unavailable', { date }); format = 'pdf'; bytes = await exportReport(popup, 'pdf'); }
+        // Invalid CSV data stops the run; it must never silently become a PDF import.
+        stage = 'validation';
+        if (format === 'csv') parseHumanforceCsv(bytes.toString('utf8'), date, config.site);
+        stage = 'reconciliation';
+        const result = await requestSync(config, env, `roster-${format}`, {
+          date, dryRun: config.dryRun, ...(format === 'csv' ? { csv: bytes.toString('utf8') } : { pdf: bytes.toString('base64') }),
+        });
+        review ||= !!result.flags?.length;
+        checked++;
+        log('day_complete', { date, format, dry_run: config.dryRun, shifts_created: result.shifts_created,
+          proposed_shifts: result.proposed_shifts, duplicates: result.duplicates, flags: result.flags?.length ?? 0 });
+      } finally { await popup.close(); }
     }
-  } catch (err) {
-    // The runner's headless browser can't be watched interactively, so on
-    // any failure save what it was actually looking at — otherwise a
-    // selector mismatch is a guessing game.
-    try {
-      await page.screenshot({ path: 'automation/debug-failure.png', fullPage: true });
-      await writeFile('automation/debug-failure.html', await page.content());
-      console.log('Saved automation/debug-failure.png and .html for inspection.');
-    } catch (debugErr) {
-      console.error('Could not capture failure diagnostics:', debugErr);
-    }
-    throw err;
-  } finally {
-    await browser.close();
-  }
-
-  console.log(`Done — ${daysApplied} day(s) applied this run.`);
+    log('complete', { days_checked: checked, needs_review: review, dry_run: config.dryRun });
+    if (review) process.exitCode = 2;
+  } catch {
+    // Do not write page HTML, screenshots, roster data or credentials to diagnostics.
+    throw new Error(`Humanforce sync stopped at ${stage}; no further dates processed.`);
+  } finally { await browser.close(); }
 }
 
-main().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(error => { log('failed', { message: error.message }); process.exitCode = 1; });
+}
