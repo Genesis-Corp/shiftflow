@@ -4,7 +4,8 @@ param(
     [string]$NodePath = (Get-Command node.exe -ErrorAction Stop).Source,
     [ValidateRange(1,60)][int]$Days = 21,
     [switch]$DryRun,
-    [switch]$PreflightOnly
+    [switch]$PreflightOnly,
+    [switch]$SetupSession
 )
 . (Join-Path $PSScriptRoot 'Sync.Common.ps1')
 Protect-SyncDirectory $StateDirectory
@@ -23,7 +24,7 @@ try {
     $configPath = Join-Path $StateDirectory 'configuration.clixml'
     if (!(Test-Path -LiteralPath $configPath)) { throw 'Encrypted configuration missing. Run Set-SyncConfiguration.ps1 as this Windows user.' }
     $config = Import-Clixml -LiteralPath $configPath
-    foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN','DRY_RUN','MAX_DAYS_AHEAD','TARGET_DATE_OFFSET_DAYS','PREFLIGHT_ONLY')) {
+    foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN','DRY_RUN','MAX_DAYS_AHEAD','TARGET_DATE_OFFSET_DAYS','PREFLIGHT_ONLY','SESSION_SETUP','HUMANFORCE_STORAGE_STATE','HUMANFORCE_SESSION_FILE')) {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN')) {
@@ -31,7 +32,19 @@ try {
         $secrets[$name] = Read-SyncSecret $config[$name]
         [Environment]::SetEnvironmentVariable($name, $secrets[$name], 'Process')
     }
-    $env:DRY_RUN = $DryRun.IsPresent.ToString().ToLowerInvariant()
+    $sessionPath = Join-Path $StateDirectory 'humanforce-session.clixml'
+    $env:HUMANFORCE_STORAGE_STATE = $null
+    $env:HUMANFORCE_SESSION_FILE = $null
+    if (Test-Path -LiteralPath $sessionPath) {
+        $sessionValue = Import-Clixml -LiteralPath $sessionPath
+        if ($sessionValue -isnot [Security.SecureString]) { throw 'Invalid encrypted Humanforce session.' }
+        $secrets['HUMANFORCE_STORAGE_STATE'] = Read-SyncSecret $sessionValue
+        $env:HUMANFORCE_STORAGE_STATE = $secrets['HUMANFORCE_STORAGE_STATE']
+        $env:HUMANFORCE_SESSION_FILE = $sessionPath
+    }
+    if ($SetupSession) { $env:HUMANFORCE_SESSION_FILE = $sessionPath }
+    $env:SESSION_SETUP = $SetupSession.IsPresent.ToString().ToLowerInvariant()
+    $env:DRY_RUN = ($DryRun.IsPresent -or $SetupSession.IsPresent).ToString().ToLowerInvariant()
     $env:PREFLIGHT_ONLY = $PreflightOnly.IsPresent.ToString().ToLowerInvariant()
     $env:MAX_DAYS_AHEAD = [string]$Days
     $env:TARGET_DATE_OFFSET_DAYS = '0'
@@ -51,7 +64,7 @@ try {
 } finally {
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     if ($lock) {
-        @{ finished_at = [DateTime]::UtcNow.ToString('o'); exit_code = $code; dry_run = $DryRun.IsPresent;
+        @{ finished_at = [DateTime]::UtcNow.ToString('o'); exit_code = $code; dry_run = ($DryRun.IsPresent -or $SetupSession.IsPresent); session_setup = $SetupSession.IsPresent;
            status = $(if ($code -eq 0) {'ok'} elseif ($code -eq 2) {'needs_review'} else {'failed'}) } |
             ConvertTo-Json | Set-Content -LiteralPath $statusPath
         $lock.Dispose()

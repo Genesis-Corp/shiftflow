@@ -3,6 +3,7 @@ import { chromium } from 'playwright';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { parseHumanforceCsv } from '../src/lib/humanforceCsv.mjs';
+import { loginHumanforce, sessionOptions, saveEncryptedSession, HumanVerificationRequired } from './humanforce-session.mjs';
 
 export const PROTOCOL = 'humanforce-safe-v1';
 export function perthDate(offset = 0, now = new Date()) {
@@ -75,17 +76,19 @@ export async function main(env = process.env) {
   // Never send exports to an old deployment with the unsafe PDF importer.
   await requestSync(config, env, 'roster-csv');
   if (env.PREFLIGHT_ONLY === 'true') { log('preflight_ok'); return; }
-  const browser = await chromium.launch();
+  const setupSession = env.SESSION_SETUP === 'true';
+  if (setupSession && !env.HUMANFORCE_SESSION_FILE) throw new Error('Encrypted session destination is required.');
+  const browser = await chromium.launch({ headless: !setupSession });
   let stage = 'login';
   let review = false, checked = 0;
   try {
-    const page = await browser.newPage({ acceptDownloads: true });
+    const context = await browser.newContext({ acceptDownloads: true, ...sessionOptions(env) });
+    const page = await context.newPage();
     page.setDefaultTimeout(30000);
-    await page.goto(config.humanforce, { timeout: 60000 });
-    await page.getByRole('textbox', { name: 'Employee code or email' }).fill(env.HUMANFORCE_USERNAME);
-    await page.getByRole('textbox', { name: 'Password' }).fill(env.HUMANFORCE_PASSWORD);
-    await page.getByRole('textbox', { name: 'Password' }).press('Enter');
-    await page.waitForURL('**/Reporting/**', { timeout: 60000 });
+    if (setupSession) log('verification_window_open', { message: 'Complete Humanforce verification in the browser. Session setup does not import rosters.' });
+    await loginHumanforce(page, config, env, setupSession);
+    if (env.HUMANFORCE_SESSION_FILE) saveEncryptedSession(await context.storageState(), env.HUMANFORCE_SESSION_FILE);
+    if (setupSession) { log('encrypted_session_saved'); return; }
     await page.getByText('Settings', { exact: true }).click();
     for (let i = 0; i < config.max; i++) {
       const date = perthDate(config.offset + i);
@@ -119,8 +122,9 @@ export async function main(env = process.env) {
     }
     log('complete', { days_checked: checked, needs_review: review, dry_run: config.dryRun });
     if (review) process.exitCode = 2;
-  } catch {
+  } catch (error) {
     // Do not write page HTML, screenshots, roster data or credentials to diagnostics.
+    if (error instanceof HumanVerificationRequired) throw error;
     throw new Error(`Humanforce sync stopped at ${stage}; no further dates processed.`);
   } finally { await browser.close(); }
 }

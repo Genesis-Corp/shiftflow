@@ -23,17 +23,27 @@ try {
     $encrypted = @{}
     foreach ($name in $values.Keys) { $encrypted[$name] = ConvertTo-SecureString $values[$name] -AsPlainText -Force }
     $encrypted | Export-Clixml -LiteralPath (Join-Path $testRoot 'configuration.clixml')
+    $sessionPath = Join-Path $testRoot 'humanforce-session.clixml'
+    $writerPath = Join-Path $testRoot 'write-session.mjs'
+    $sessionModule = ([uri][IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../humanforce-session.mjs'))).AbsoluteUri
+    ('import { saveEncryptedSession } from ' + ($sessionModule | ConvertTo-Json -Compress) + '; saveEncryptedSession({cookies:[{value:"fake-cookie-secret"}],origins:[]},process.argv[2]);') |
+        Set-Content -LiteralPath $writerPath
+    & (Get-Command node.exe).Source $writerPath $sessionPath
+    if ($LASTEXITCODE -ne 0) { throw 'Session encryption failed.' }
+    if ((Get-Content -LiteralPath $sessionPath -Raw).Contains('fake-cookie-secret')) { throw 'Session was saved in plaintext.' }
+    if (!(Read-SyncSecret (Import-Clixml -LiteralPath $sessionPath)).Contains('fake-cookie-secret')) { throw 'Session could not be decrypted.' }
     $mock = Join-Path $testRoot 'mock-network.mjs'
     @'
 console.log(process.env.AUTOMATION_TOKEN);
 console.log(process.env.HUMANFORCE_PASSWORD);
+console.log(process.env.HUMANFORCE_STORAGE_STATE);
 globalThis.fetch = async () => new Response(JSON.stringify({protocol:'humanforce-safe-v1',ready:true}));
 '@ | Set-Content -LiteralPath $mock
     $env:NODE_OPTIONS = '--import="' + ([uri]$mock).AbsoluteUri + '"'
     & $engine -NoProfile -NonInteractive -File $launcher -StateDirectory $testRoot -PreflightOnly | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'DPAPI configuration / preflight test failed.' }
     $logs = Get-Content -LiteralPath (Join-Path $testRoot ('logs/' + (Get-Date -Format 'yyyy-MM-dd') + '.log')) -Raw
-    if ($logs.Contains($fakeToken) -or $logs.Contains('fake-password') -or !$logs.Contains('[REDACTED]')) { throw 'Log redaction failed.' }
+    if ($logs.Contains($fakeToken) -or $logs.Contains('fake-password') -or $logs.Contains('fake-cookie-secret') -or !$logs.Contains('[REDACTED]')) { throw 'Log redaction failed.' }
     $status = Get-Content -LiteralPath (Join-Path $testRoot 'last-status.json') -Raw | ConvertFrom-Json
     if ($status.status -ne 'ok') { throw 'Successful preflight status not recorded.' }
     Write-Output 'Windows launcher checks passed: conflicting module path, missing configuration, DPAPI round trip, preflight and secret redaction.'
