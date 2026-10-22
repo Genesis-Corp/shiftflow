@@ -24,6 +24,7 @@
     "zustand": "^5.0.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.11",
     "@types/node": "^20.17.57",
     "@types/papaparse": "^5.3.16",
     "@types/react": "^18.3.23",
