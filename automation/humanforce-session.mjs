@@ -35,7 +35,7 @@ export async function loginHumanforce(page, config, env, interactive = false) {
   ]);
   if (outcome === 'authenticated') return;
   await username.fill(env.HUMANFORCE_USERNAME);
-  const password = page.locator('input[type="password"]');
+  const password = page.getByLabel('Password', { exact: true });
   if (await password.count() !== 1) throw new Error('No unique Humanforce password input.');
   await password.fill(env.HUMANFORCE_PASSWORD);
   await password.press('Enter');

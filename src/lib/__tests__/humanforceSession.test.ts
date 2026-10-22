@@ -21,11 +21,11 @@ describe('verified Humanforce session',()=>{
   it('lets the human complete verification and uses a password input afterward',async()=>{
     const username={waitFor:vi.fn().mockResolvedValue(undefined),fill:vi.fn()};
     const password={count:async()=>1,fill:vi.fn(),press:vi.fn()};
-    const page={goto:vi.fn(),url:()=>config.humanforce,title:async()=>'Human Verification',getByRole:vi.fn(()=>username),locator:vi.fn(()=>password),
+    const page={goto:vi.fn(),url:()=>config.humanforce,title:async()=>'Human Verification',getByRole:vi.fn(()=>username),getByLabel:vi.fn(()=>password),
       waitForURL:vi.fn().mockImplementationOnce(()=>new Promise(()=>{})).mockResolvedValue(undefined)};
     await loginHumanforce(page,config,env,true);
     expect(username.fill).toHaveBeenCalledWith('fake-user');
-    expect(page.locator).toHaveBeenCalledWith('input[type="password"]');
+    expect(page.getByLabel).toHaveBeenCalledWith('Password', {exact:true});
     expect(password.fill).toHaveBeenCalledWith('fake-password');
   });
 });
