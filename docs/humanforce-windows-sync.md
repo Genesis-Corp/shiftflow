@@ -38,6 +38,8 @@ npx.cmd playwright install chromium
 
 The configuration command prompts privately for Humanforce username/password, the deployed ShiftFlow HTTPS origin and automation token. SecureStrings are saved with Windows DPAPI to `%LOCALAPPDATA%\ShiftFlowSync\configuration.clixml`. They can be decrypted only by the same Windows account on this PC. The directory ACL grants access to that user and SYSTEM. Secrets are passed to the child process only as temporary environment variables, restored/removed afterward, and redacted from captured logs. The job uses no stored browser session.
 
+The scripts load the running engine's built-in Security, Management and Utility modules by absolute path. This avoids `Get-Acl`/SecureString autoload failures caused by inheriting an incompatible module search path from another PowerShell version. It does not change the computer's module paths or weaken directory permissions.
+
 First inspect the one-day dry run for correct date/filter/export behavior, then resolve its flags. `Install-SyncTask.ps1` without `-Enable` registers a disabled task. `-Enable` requires a successful server readiness check. The task pins absolute script/runtime paths, hides its console, ignores overlapping starts and has a 90-minute execution cap. It does not update code or install dependencies during daily runs. To update, stop/disable the task, update the installed checkout, install dependencies, validate a dry run and reinstall/enable.
 
 The default installed checkout for this setup is `%LOCALAPPDATA%\ShiftFlowSync\app`. Installation can use another stable checkout; don't delete the checkout referenced by Task Scheduler. You can disable or remove the task in Task Scheduler using its name **ShiftFlow Humanforce Sync**.

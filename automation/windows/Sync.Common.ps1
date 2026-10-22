@@ -1,6 +1,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# A parent terminal can pass PowerShell 7's modules to Windows PowerShell 5.1.
+# Load this engine's built-in modules by absolute path, never by search order.
+foreach ($moduleName in @('Microsoft.PowerShell.Security', 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility')) {
+    $manifest = [IO.Path]::Combine($PSHOME, 'Modules', $moduleName, ($moduleName + '.psd1'))
+    Import-Module -Name $manifest -ErrorAction Stop
+}
+
 function Protect-SyncDirectory([string]$Path) {
     [void](New-Item -ItemType Directory -Path $Path -Force)
     $acl = Get-Acl -LiteralPath $Path
