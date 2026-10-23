@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { parseHumanforceCsv } from '../src/lib/humanforceCsv.mjs';
 import { loginHumanforce, sessionOptions, saveEncryptedSession, HumanVerificationRequired } from './humanforce-session.mjs';
 
-export const PROTOCOL = 'humanforce-safe-v1';
+export const PROTOCOL = 'humanforce-replace-v2';
 export function perthDate(offset = 0, now = new Date()) {
   const local = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
   const date = new Date(`${local}T00:00:00Z`);
@@ -150,9 +150,11 @@ export async function main(env = process.env) {
         review ||= !!result.flags?.length;
         checked++;
         log('day_complete', { date, format, dry_run: config.dryRun, shifts_created: result.shifts_created,
+          shifts_deleted: result.shifts_deleted, proposed_deletions: result.proposed_deletions,
           proposed_shifts: result.proposed_shifts, duplicates: result.duplicates, flags: result.flags?.length ?? 0 });
       } finally { await popup.close(); }
     }
+    if (!checked) throw new Error('No published source dates were validated; scheduling cannot be enabled.');
     log('complete', { days_checked: checked, needs_review: review, dry_run: config.dryRun });
     if (review) process.exitCode = 2;
   } catch (error) {

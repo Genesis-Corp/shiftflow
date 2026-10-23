@@ -37,7 +37,7 @@ try {
 console.log(process.env.AUTOMATION_TOKEN);
 console.log(process.env.HUMANFORCE_PASSWORD);
 console.log(process.env.HUMANFORCE_STORAGE_STATE);
-globalThis.fetch = async () => new Response(JSON.stringify({protocol:'humanforce-safe-v1',ready:true}));
+globalThis.fetch = async () => new Response(JSON.stringify({protocol:'humanforce-replace-v2',ready:true}));
 '@ | Set-Content -LiteralPath $mock
     $env:NODE_OPTIONS = '--import="' + ([uri]$mock).AbsoluteUri + '"'
     & $engine -NoProfile -NonInteractive -File $launcher -StateDirectory $testRoot -PreflightOnly | Out-Null

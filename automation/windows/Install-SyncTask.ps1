@@ -12,10 +12,10 @@ $launcher = Join-Path $PSScriptRoot 'Run-HumanforceSync.ps1'
 $engine = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
 foreach ($path in @($launcher, $StateDirectory, $NodePath)) { if ($path.Contains('"')) { throw 'Paths cannot contain quotes.' } }
 if ($Enable) {
-    & $engine -NoProfile -NonInteractive -File $launcher -StateDirectory $StateDirectory -NodePath $NodePath -PreflightOnly
-    if ($LASTEXITCODE -ne 0) { throw 'Readiness check failed; task was not enabled.' }
+    & $engine -NoProfile -NonInteractive -File $launcher -StateDirectory $StateDirectory -NodePath $NodePath -DryRun -Days 21
+    if ($LASTEXITCODE -ne 0) { throw 'Roster preview failed or needs review; task was not enabled.' }
     $status = Get-Content -LiteralPath (Join-Path $StateDirectory 'last-status.json') -Raw | ConvertFrom-Json
-    if ($status.status -ne 'ok') { throw 'Readiness check did not succeed.' }
+    if ($status.status -ne 'ok' -or !$status.dry_run -or $status.session_setup) { throw 'Roster preview did not succeed.' }
 }
 $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "{0}" -StateDirectory "{1}" -NodePath "{2}"' -f $launcher, $StateDirectory, $NodePath
 $action = New-ScheduledTaskAction -Execute $engine -Argument $arguments -WorkingDirectory ([IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..')))
