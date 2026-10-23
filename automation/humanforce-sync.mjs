@@ -78,7 +78,11 @@ export async function main(env = process.env) {
   if (env.PREFLIGHT_ONLY === 'true') { log('preflight_ok'); return; }
   const setupSession = env.SESSION_SETUP === 'true';
   if (setupSession && !env.HUMANFORCE_SESSION_FILE) throw new Error('Encrypted session destination is required.');
-  const browser = await chromium.launch({ headless: !setupSession });
+  // Keep a verified session in the same normal browser mode used at setup.
+  // No verification controls, user agents or browser fingerprints are altered.
+  const savedSession = Boolean(env.HUMANFORCE_STORAGE_STATE);
+  const browser = await chromium.launch({ headless: !setupSession && !savedSession,
+    ...(savedSession && !setupSession && !config.dryRun ? { args: ['--start-minimized'] } : {}) });
   let stage = 'login';
   let review = false, checked = 0;
   try {
