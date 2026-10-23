@@ -43,4 +43,11 @@ describe('Humanforce CSV', () => {
     expect(()=>parseHumanforceCsv(Papa.unparse([...rows, rows[1]]),date)).toThrow();
     expect(validDate('2026-02-30')).toBe(false);
   });
+  it('accepts nonoverlapping department changes but rejects overlap within the same CSV', () => {
+    const rows=Papa.parse<string[]>(csv('07:00 - 11:00','')).data;
+    const later=[...rows[1]]; later[2]='Dairy'; later[5]='11:00 - 15:00';
+    expect(parseHumanforceCsv(Papa.unparse([...rows,later]),date).entries).toHaveLength(2);
+    later[5]='10:59 - 15:00';
+    expect(()=>parseHumanforceCsv(Papa.unparse([...rows,later]),date)).toThrow('overlapping source');
+  });
 });

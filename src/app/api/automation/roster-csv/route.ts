@@ -8,12 +8,13 @@ export const maxDuration = 60;
 
 export async function GET(req: NextRequest) {
   if (!requireAutomationToken(req)) return automationUnauthorized();
-  const [transaction, audit] = await Promise.all([
-    supabase.rpc('apply_humanforce_sync', { p_date: '2000-01-01', p_shifts: [], p_flags: [], p_dry_run: true }),
+  const [transaction, audit, departments] = await Promise.all([
+    supabase.rpc('replace_humanforce_roster', { p_date: '2000-01-01', p_shifts: [], p_flags: [], p_expected: [], p_dry_run: true }),
     supabase.from('automation_runs').select('id').limit(1),
+    supabase.from('departments').select('id, name'),
   ]);
   const ready = !transaction.error && !audit.error;
-  return NextResponse.json({ protocol: SYNC_PROTOCOL, ready }, { status: ready ? 200 : 503 });
+  return NextResponse.json({ protocol: SYNC_PROTOCOL, ready, departments: departments.data ?? [] }, { status: ready ? 200 : 503 });
 }
 
 export async function POST(req: NextRequest) {

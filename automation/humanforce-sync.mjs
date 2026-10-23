@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { chromium } from 'playwright';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseHumanforceCsv } from '../src/lib/humanforceCsv.mjs';
+import { loginHumanforce, sessionOptions, saveEncryptedSession, HumanVerificationRequired } from './humanforce-session.mjs';
 
-export const PROTOCOL = 'humanforce-safe-v1';
+export const PROTOCOL = 'humanforce-replace-v2';
 export function perthDate(offset = 0, now = new Date()) {
   const local = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Perth', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
   const date = new Date(`${local}T00:00:00Z`);
@@ -43,13 +45,34 @@ export async function requestSync(config, env, path, body, fetcher = fetch) {
   return result;
 }
 
-async function setDate(page, date) {
+export async function setDate(page, date) {
   const input = page.locator('#reportDate');
+  await input.waitFor({ state: 'visible' });
   const type = await input.getAttribute('type');
   const [year, month, day] = date.split('-');
   const text = type === 'date' ? date : `${day}/${month}/${year}`;
-  await input.fill(text);
-  await input.press('Tab');
+  if ((await input.inputValue()).trim() === text) return;
+  if (await input.getAttribute('readonly') !== null) {
+    await input.click();
+    const calendar = page.locator('#ui-datepicker-div');
+    const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    let selected = false;
+    for (let step = 0; step < 36; step++) {
+      const choice = calendar.locator(`td[data-year="${year}"][data-month="${Number(month) - 1}"] a[data-date="${Number(day)}"]`);
+      if (await choice.count() === 1) { await choice.click(); selected = true; break; }
+      const heading = (await calendar.locator('.ui-datepicker-title').innerText()).trim();
+      const match = heading.match(/^([A-Za-z]+)\s+(\d{4})$/);
+      const shownMonth = match ? months.indexOf(match[1]) : -1;
+      if (!match || shownMonth < 0) throw new Error('Unrecognised Humanforce calendar heading.');
+      const distance = (+year * 12 + +month - 1) - (+match[2] * 12 + shownMonth);
+      if (!distance) throw new Error('Requested Humanforce calendar day is unavailable.');
+      await calendar.locator(distance > 0 ? '.ui-datepicker-next' : '.ui-datepicker-prev').click();
+    }
+    if (!selected) throw new Error('Requested Humanforce date exceeds calendar navigation limit.');
+  } else {
+    await input.fill(text);
+    await input.press('Tab');
+  }
   if ((await input.inputValue()).trim() !== text) throw new Error('Humanforce did not retain the requested report date.');
 }
 
@@ -57,8 +80,9 @@ async function exportReport(popup, format) {
   const name = format === 'csv' ? /CSV|comma.?separated/i : /Acrobat.*PDF/i;
   let link = popup.getByRole('link', { name });
   if (!(await link.isVisible().catch(() => false))) {
-    await popup.getByRole('menuitem', { name: 'Export', exact: true }).getByTitle('Export').click();
+    await popup.locator('#trv-main-menu-export-command').getByTitle('Export').click();
   }
+  await link.waitFor({ state: 'visible', timeout: 15000 });
   if (await link.count() !== 1) throw new Error(`No unique ${format} export option.`);
   const [download] = await Promise.all([popup.waitForEvent('download', { timeout: 30000 }), link.click()]);
   if (await download.failure()) throw new Error(`${format} download failed.`);
@@ -75,18 +99,27 @@ export async function main(env = process.env) {
   // Never send exports to an old deployment with the unsafe PDF importer.
   await requestSync(config, env, 'roster-csv');
   if (env.PREFLIGHT_ONLY === 'true') { log('preflight_ok'); return; }
-  const browser = await chromium.launch();
+  const setupSession = env.SESSION_SETUP === 'true';
+  if (setupSession && !env.HUMANFORCE_SESSION_FILE) throw new Error('Encrypted session destination is required.');
+  // Keep a verified session in the same normal browser mode used at setup.
+  // No verification controls, user agents or browser fingerprints are altered.
+  const savedSession = Boolean(env.HUMANFORCE_STORAGE_STATE);
+  const browser = await chromium.launch({ headless: !setupSession && !savedSession,
+    ...(savedSession && !setupSession && !config.dryRun ? { args: ['--start-minimized'] } : {}) });
   let stage = 'login';
   let review = false, checked = 0;
   try {
-    const page = await browser.newPage({ acceptDownloads: true });
+    const context = await browser.newContext({ acceptDownloads: true, ...sessionOptions(env) });
+    const page = await context.newPage();
     page.setDefaultTimeout(30000);
-    await page.goto(config.humanforce, { timeout: 60000 });
-    await page.getByRole('textbox', { name: 'Employee code or email' }).fill(env.HUMANFORCE_USERNAME);
-    await page.getByRole('textbox', { name: 'Password' }).fill(env.HUMANFORCE_PASSWORD);
-    await page.getByRole('textbox', { name: 'Password' }).press('Enter');
-    await page.waitForURL('**/Reporting/**', { timeout: 60000 });
-    await page.getByText('Settings', { exact: true }).click();
+    if (setupSession) log('verification_window_open', { message: 'Complete Humanforce verification in the browser. Session setup does not import rosters.' });
+    await loginHumanforce(page, config, env, setupSession);
+    log('signed_in');
+    stage = 'session_refresh';
+    if (env.HUMANFORCE_SESSION_FILE) saveEncryptedSession(await context.storageState(), env.HUMANFORCE_SESSION_FILE);
+    if (setupSession) { log('encrypted_session_saved'); return; }
+    stage = 'report_settings';
+    if (!(await page.locator('#reportDate').isVisible())) await page.getByText('Settings', { exact: true }).click();
     for (let i = 0; i < config.max; i++) {
       const date = perthDate(config.offset + i);
       log('checking', { date });
@@ -111,17 +144,24 @@ export async function main(env = process.env) {
         const result = await requestSync(config, env, `roster-${format}`, {
           date, dryRun: config.dryRun, ...(format === 'csv' ? { csv: bytes.toString('utf8') } : { pdf: bytes.toString('base64') }),
         });
+        if (config.dryRun && env.SHIFTFLOW_PREVIEW_DIRECTORY) {
+          await writeFile(path.join(env.SHIFTFLOW_PREVIEW_DIRECTORY, `${date}.json`), JSON.stringify(result, null, 2));
+        }
         review ||= !!result.flags?.length;
         checked++;
         log('day_complete', { date, format, dry_run: config.dryRun, shifts_created: result.shifts_created,
+          shifts_deleted: result.shifts_deleted, proposed_deletions: result.proposed_deletions,
           proposed_shifts: result.proposed_shifts, duplicates: result.duplicates, flags: result.flags?.length ?? 0 });
       } finally { await popup.close(); }
     }
+    if (!checked) throw new Error('No published source dates were validated; scheduling cannot be enabled.');
     log('complete', { days_checked: checked, needs_review: review, dry_run: config.dryRun });
     if (review) process.exitCode = 2;
-  } catch {
+  } catch (error) {
     // Do not write page HTML, screenshots, roster data or credentials to diagnostics.
-    throw new Error(`Humanforce sync stopped at ${stage}; no further dates processed.`);
+    if (error instanceof HumanVerificationRequired) throw error;
+    const reason = error instanceof Error ? error.message.split('\n')[0].slice(0, 240) : 'Unknown failure';
+    throw new Error(`Humanforce sync stopped at ${stage}: ${reason}. No further dates processed.`);
   } finally { await browser.close(); }
 }
 

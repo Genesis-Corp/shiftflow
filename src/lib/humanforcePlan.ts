@@ -13,48 +13,52 @@ export type SyncCreate = {
   has_break: boolean; break_duration_minutes: number;
 };
 
-/** Conservative additions only. Changed, missing and ambiguous records are review items. */
+/** A complete validated CSV is authoritative for its date. Any flag blocks the whole day. */
 export function planHumanforceSync(entries: SyncEntry[], staff: { id: string; name: string; active: boolean }[],
   departments: { id: string; name: string }[], existing: SyncShift[]) {
-  const creates: SyncCreate[] = [], flags: AutomationFlag[] = [];
-  const matched = new Set<string>(), scopedDepartments = new Set<string>();
-  let duplicates = 0;
+  const desired: SyncCreate[] = [], flags: AutomationFlag[] = [];
   const flag = (department: string | null, kind: AutomationFlag['kind'], message: string) => flags.push({ department, kind, message });
-  const deptKey = (s: string) => nameKey(s).replace(/s$/, '');
-  const usable = entries.filter(e => !excludedArea(e.department ?? ''));
-  for (const entry of usable) {
+  const deptKey = (s: string) => {
+    const key = nameKey(s).replace(/s$/, '');
+    // Humanforce calls this Grocery; the existing ShiftFlow department was
+    // named Grocery Assistant. Still require exactly one matching department.
+    return key === 'grocery assistant' ? 'grocery' : key;
+  };
+  const scope = new Set(departments.filter(d => !excludedArea(d.name)).map(d => d.id));
+  for (const entry of entries.filter(e => !excludedArea(e.department ?? ''))) {
     const depts = departments.filter(d => deptKey(d.name) === deptKey(entry.department ?? ''));
-    if (depts.length !== 1) { flag(entry.department, 'unmatched_department', 'Department has no unique exact match; skipped.'); continue; }
+    if (depts.length !== 1) { flag(entry.department, 'unmatched_department', 'Department has no unique exact match; replacement blocked for this day.'); continue; }
     const dept = depts[0];
-    scopedDepartments.add(dept.id);
     const people = staff.filter(s => nameKey(s.name) === nameKey(entry.name));
-    if (people.length !== 1 || entry.truncated) { flag(dept.name, 'unmatched_staff', `${entry.name}: no unique full-name match; skipped.`); continue; }
+    if (people.length !== 1 || entry.truncated) { flag(dept.name, 'unmatched_staff', `${entry.name}: no unique full-name match; replacement blocked.`); continue; }
     const person = people[0];
-    if (!person.active) { flag(dept.name, 'warning', `${person.name}: inactive staff member; skipped.`); continue; }
+    if (!person.active) { flag(dept.name, 'warning', `${person.name}: inactive staff member; replacement blocked.`); continue; }
     if (!entry.start_time || !entry.end_time || !/^([01]\d|2[0-3]):[0-5]\d:00$/.test(entry.start_time) || !/^([01]\d|2[0-3]):[0-5]\d:00$/.test(entry.end_time) || entry.start_time === entry.end_time) {
-      flag(dept.name, 'unreadable', `${person.name}: invalid shift times; skipped.`); continue;
+      flag(dept.name, 'unreadable', `${person.name}: invalid shift times; replacement blocked.`); continue;
     }
-    if (usable.filter(e => nameKey(e.name) === nameKey(entry.name)).length > 1) {
-      flag(dept.name, 'warning', `${person.name}: multiple source rows on this day require review; skipped.`); continue;
+    const minutes = (s: string) => +s.slice(0, 2) * 60 + +s.slice(3, 5);
+    const start = minutes(entry.start_time), end = minutes(entry.end_time) + (entry.end_time < entry.start_time ? 1440 : 0);
+    if (end - start > 960 || !Number.isInteger(entry.break_duration_minutes) || entry.break_duration_minutes! < 0 || entry.break_duration_minutes! > 60 || entry.has_break !== (entry.break_duration_minutes! > 0)) {
+      flag(dept.name, 'warning', `${person.name}: CSV break segments could not be verified; replacement blocked.`); continue;
     }
-    const same = existing.filter(s => s.assigned_staff_id === person.id);
-    const exact = same.find(s => s.department_id === dept.id && s.status === 'covered' &&
-      s.start_time.slice(0, 5) === entry.start_time!.slice(0, 5) && s.end_time.slice(0, 5) === entry.end_time!.slice(0, 5) &&
-      (entry.has_break === undefined || (s.has_break === entry.has_break && s.break_duration_minutes === entry.break_duration_minutes)));
-    if (exact) { matched.add(exact.id); duplicates++; continue; }
-    if (same.length) { flag(dept.name, 'warning', `${person.name}: roster differs from existing shift(s); kept existing shifts for review.`); continue; }
-    if (existing.some(s => s.department_id === dept.id && !s.assigned_staff_id)) {
-      flag(dept.name, 'warning', `${person.name}: department has an unassigned shift; review before adding.`); continue;
-    }
-    // The PDF reader does not supply break segments. Do not invent break details.
-    if (entry.has_break === undefined) { flag(dept.name, 'warning', `${person.name}: PDF cannot verify break segments; review before adding.`); continue; }
-    creates.push({ staff_id: person.id, department_id: dept.id, start_time: entry.start_time, end_time: entry.end_time,
-      has_break: entry.has_break, break_duration_minutes: entry.break_duration_minutes ?? 0 });
+    if (desired.some(s => {
+      const otherStart = minutes(s.start_time), otherEnd = minutes(s.end_time) + (s.end_time < s.start_time ? 1440 : 0);
+      return s.staff_id === person.id && start < otherEnd && otherStart < end;
+    })) { flag(dept.name, 'warning', `${person.name}: overlapping source assignments; replacement blocked.`); continue; }
+    desired.push({ staff_id: person.id, department_id: dept.id, start_time: entry.start_time, end_time: entry.end_time,
+      has_break: entry.has_break!, break_duration_minutes: entry.break_duration_minutes! });
   }
-  for (const shift of existing) {
-    if (!scopedDepartments.has(shift.department_id) || matched.has(shift.id)) continue;
-    flag(departments.find(d => d.id === shift.department_id)?.name ?? null, 'warning',
-      `Existing shift ${shift.id} (${shift.start_time.slice(0,5)}–${shift.end_time.slice(0,5)}) was not confirmed by this report; retained for review.`);
-  }
-  return { creates, flags, duplicates };
+  if (!desired.length && !flags.length) flag(null, 'empty_read', 'No in-scope assignments; replacement blocked.');
+  // Keep identical rows and IDs. All other in-scope rows on this date go.
+  const keep = new Set<string>();
+  const creates = desired.filter(entry => {
+    const exact = existing.find(s => !keep.has(s.id) && s.assigned_staff_id === entry.staff_id &&
+      s.department_id === entry.department_id && s.status === 'covered' &&
+      s.start_time.slice(0, 5) === entry.start_time.slice(0, 5) && s.end_time.slice(0, 5) === entry.end_time.slice(0, 5) &&
+      s.has_break === entry.has_break && s.break_duration_minutes === entry.break_duration_minutes);
+    if (!exact) return true;
+    keep.add(exact.id); return false;
+  });
+  const removeIds = existing.filter(s => scope.has(s.department_id) && !keep.has(s.id)).map(s => s.id);
+  return { desired, creates, removeIds, flags, duplicates: keep.size, canApply: flags.length === 0 };
 }

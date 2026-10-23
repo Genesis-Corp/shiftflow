@@ -43,7 +43,7 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
   if (!header || required.some(name => header.filter(h => h.trim() === name).length !== 1)) throw new Error('Missing or duplicate Humanforce CSV columns.');
   const index = Object.fromEntries(required.map(name => [name, header.findIndex(h => h.trim() === name)]));
   const entries = [];
-  const seen = new Set();
+  const sourceRanges = new Map();
   let excluded = 0;
   for (const row of rows) {
     if (row.length !== header.length) throw new Error('CSV row width differs from header.');
@@ -64,9 +64,13 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
     const start = segments[0].start, end = segments[segments.length - 1].end;
     const gap = segments.length === 2 ? segments[1].start - segments[0].end : 0;
     if (gap < 0 || gap > 60 || end - start > 16 * 60) throw new Error('Overlapping, reversed or split CSV segments require review.');
-    const identity = `${key(name)}|${key(department)}`;
-    if (seen.has(identity)) throw new Error('Repeated staff/department row requires review.');
-    seen.add(identity);
+    // A person may change departments. Adjacent assignments are valid.
+    const ranges = sourceRanges.get(key(name)) ?? [];
+    if (ranges.some(range => start < range.end && range.start < end)) {
+      throw new Error(`${name}: overlapping source assignments require review.`);
+    }
+    ranges.push({ start, end });
+    sourceRanges.set(key(name), ranges);
     entries.push({ name, department, start_time: clock(start), end_time: clock(end),
       has_break: gap > 0, break_duration_minutes: gap, status: null, truncated: false });
   }
