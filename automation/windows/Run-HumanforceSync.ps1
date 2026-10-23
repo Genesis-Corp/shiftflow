@@ -24,7 +24,7 @@ try {
     $configPath = Join-Path $StateDirectory 'configuration.clixml'
     if (!(Test-Path -LiteralPath $configPath)) { throw 'Encrypted configuration missing. Run Set-SyncConfiguration.ps1 as this Windows user.' }
     $config = Import-Clixml -LiteralPath $configPath
-    foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN','DRY_RUN','MAX_DAYS_AHEAD','TARGET_DATE_OFFSET_DAYS','PREFLIGHT_ONLY','SESSION_SETUP','HUMANFORCE_STORAGE_STATE','HUMANFORCE_SESSION_FILE')) {
+    foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN','DRY_RUN','MAX_DAYS_AHEAD','TARGET_DATE_OFFSET_DAYS','PREFLIGHT_ONLY','SESSION_SETUP','HUMANFORCE_STORAGE_STATE','HUMANFORCE_SESSION_FILE','SHIFTFLOW_PREVIEW_DIRECTORY')) {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
     }
     foreach ($name in @('HUMANFORCE_USERNAME','HUMANFORCE_PASSWORD','SHIFTFLOW_URL','AUTOMATION_TOKEN')) {
@@ -45,6 +45,11 @@ try {
     if ($SetupSession) { $env:HUMANFORCE_SESSION_FILE = $sessionPath }
     $env:SESSION_SETUP = $SetupSession.IsPresent.ToString().ToLowerInvariant()
     $env:DRY_RUN = ($DryRun.IsPresent -or $SetupSession.IsPresent).ToString().ToLowerInvariant()
+    $env:SHIFTFLOW_PREVIEW_DIRECTORY = $null
+    if ($DryRun -and !$SetupSession) {
+        $env:SHIFTFLOW_PREVIEW_DIRECTORY = Join-Path $StateDirectory 'previews'
+        [void](New-Item -ItemType Directory -Path $env:SHIFTFLOW_PREVIEW_DIRECTORY -Force)
+    }
     $env:PREFLIGHT_ONLY = $PreflightOnly.IsPresent.ToString().ToLowerInvariant()
     $env:MAX_DAYS_AHEAD = [string]$Days
     $env:TARGET_DATE_OFFSET_DAYS = '0'

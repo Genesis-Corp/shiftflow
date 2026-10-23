@@ -50,9 +50,11 @@ The default installed checkout for this setup is `%LOCALAPPDATA%\ShiftFlowSync\a
 
 ## Operations and recovery
 
-The runner scans up to 21 dates starting with today's Perth date; empty/unpublished dates are logged and skipped so a later published date can still be found. Dates are filled explicitly in the report field instead of selecting ambiguous day numbers in a calendar. The native field uses ISO date; text fields use `dd/MM/yyyy` and must retain that value. If the live Humanforce viewer uses a different format/selector, the job stops for correction. A fresh headless login occurs each run. Login challenges/MFA, popup/export selector changes and CSV validation failures stop processing further dates.
+The runner scans up to 21 dates starting with today's Perth date; empty/unpublished dates are logged and skipped so a later published date can still be found. Humanforce's read-only date field is handled through its calendar, selecting the cell by year, month and day and verifying the resulting `dd/MM/yyyy` value. It navigates month/year boundaries explicitly. Editable/native date inputs remain supported. The export dropdown is allowed to finish opening before choosing CSV or PDF. Login challenges/MFA, popup/export selector changes and CSV validation failures stop processing further dates.
 
 Logs: `%LOCALAPPDATA%\ShiftFlowSync\logs\YYYY-MM-DD.log` (30-day retention). Machine-readable last outcome: `%LOCALAPPDATA%\ShiftFlowSync\last-status.json`. Logs contain counts, dates and failure stages, not names, full exports, page HTML, screenshots or tokens. Exit 0 means completed, 1 means failed, 2 means completed with review flags, 3 means another local run holds the lock. Preview with review flags also exits 2. A server/database error returns failure instead of claiming success. Do not auto-retry an uncertain import blindly; the next run will recheck existing records.
+
+Dry-run results, including review messages, are saved privately under `%LOCALAPPDATA%\ShiftFlowSync\previews\YYYY-MM-DD.json`, inheriting the restricted state-directory permissions. They contain the endpoint's result and flags, not the original export, credentials or token. Dry runs still write no shifts or audit rows to the server.
 
 The GitHub workflow has **no cron** after merge. The old deployed workflow was disabled separately during setup, and its queued run was cancelled. Keep it disabled unless you want manual diagnostic runs. The manual workflow defaults to preview. Re-enabling it after merge does not restore a cron.
 
