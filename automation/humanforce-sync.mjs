@@ -167,14 +167,14 @@ export async function main(env = process.env) {
         });
         if (config.dryRun && env.SHIFTFLOW_PREVIEW_DIRECTORY) {
           await writeFile(path.join(env.SHIFTFLOW_PREVIEW_DIRECTORY, `${date}.json`), JSON.stringify({
-            ...result, ...(csvProblem ? { csv_needs_review: true, csv_problem: csvProblem } : {}),
+            ...result, ...(csvProblem ? { csv_needs_review: true, csv_problem: 'CSV validation blocked automatic import' } : {}),
           }, null, 2));
         }
         // An investigative PDF is never a clean validation, even if the PDF parser
         // returns zero warnings. Require explicit human review before scheduling.
         review ||= format === 'pdf' || !!result.flags?.length;
         checked++;
-        log('day_complete', { date, format, dry_run: config.dryRun, shifts_created: result.shifts_created,
+        log('day_complete', { date, format, dry_run: effectiveDryRun, shifts_created: result.shifts_created,
           shifts_deleted: result.shifts_deleted, proposed_deletions: result.proposed_deletions,
           proposed_shifts: result.proposed_shifts, duplicates: result.duplicates, flags: result.flags?.length ?? 0 });
       } finally { await popup.close(); }
