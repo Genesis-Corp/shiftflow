@@ -45,7 +45,8 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
   const entries = [];
   const sourceRanges = new Map();
   let excluded = 0;
-  for (const row of rows) {
+  const blankRows = [];
+  for (const [rowIndex, row] of rows.entries()) {
     if (row.length !== header.length) throw new Error('CSV row width differs from header.');
     const get = name => row[index[name]].trim();
     if (reportDate(get('titleTextBox')) !== expectedDate) throw new Error('CSV report date differs from requested date.');
@@ -56,7 +57,7 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
     const name = get('tbDetailsSubText');
     if (!department || !name || /…|\.{2,}/.test(name)) throw new Error('Missing department or full staff name in CSV.');
     const segments = ['tbShift_1','tbShift_2'].map(get).filter(Boolean).map(segment);
-    if (!segments.length) throw new Error('CSV row has no shift time.');
+    if (!segments.length) { blankRows.push({ row: rowIndex + 2, name }); continue; }
     // Roll a second segment past midnight if the first segment crosses midnight.
     if (segments.length === 2 && segments[0].end > 1440 && segments[1].start < segments[0].start) {
       segments[1].start += 1440; segments[1].end += 1440;
@@ -74,6 +75,13 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
     entries.push({ name, department, start_time: clock(start), end_time: clock(end),
       has_break: gap > 0, break_duration_minutes: gap, status: null, truncated: false });
   }
+  // A blank departmental duplicate is safe to ignore only when the same staff
+  // member has a valid timed assignment elsewhere in this very report.
+  for (const blank of blankRows) {
+    if (!sourceRanges.has(key(blank.name))) {
+      throw new Error(`CSV row ${blank.row} has no shift time and no matching timed assignment.`);
+    }
+  }
   if (!rows.length || !entries.length) throw new Error('No in-scope roster rows in CSV.');
-  return { entries, excluded, date: expectedDate };
+  return { entries, excluded, blank_duplicates: blankRows.length, date: expectedDate };
 }

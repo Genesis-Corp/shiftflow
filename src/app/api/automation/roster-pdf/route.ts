@@ -3,7 +3,7 @@ import { requireAutomationToken, automationUnauthorized } from '@/lib/auth';
 import { readPdfRequest, visionErrorResponse } from '@/lib/vision';
 import { readRosterPdf } from '@/lib/rosterVision';
 import { validDate } from '@/lib/humanforceCsv.mjs';
-import { readAutomationBody, reconcileHumanforce } from '@/lib/humanforceSync';
+import { readAutomationBody, SYNC_PROTOCOL } from '@/lib/humanforceSync';
 
 export const maxDuration = 60;
 
@@ -22,8 +22,18 @@ export async function POST(req: NextRequest) {
   try { read = await readRosterPdf(request); }
   catch (error) { return visionErrorResponse(error, 'PDF'); }
   if (read.date !== body.date) return NextResponse.json({ error: 'PDF printed date is missing or differs from requested date.' }, { status: 422 });
-  return reconcileHumanforce(body.date, read.entries.map(e => ({ ...e, department: e.department ?? read.department })), body.dryRun !== false, [
-    { department: null, kind: 'warning', message: 'PDF fallback used. Existing shifts retained; new shifts need CSV or manual review to verify breaks and exclusions.' },
-    ...read.warnings.map(message => ({ department: null, kind: 'warning' as const, message })),
-  ]);
+  // PDF is investigative evidence only. Never run PDF-derived entries through the
+  // replacement planner: incomplete visual extraction would produce misleading
+  // deletion proposals against the existing database roster.
+  const flags = [
+    { department: null, kind: 'warning', message: 'Investigative PDF only: CSV requires review; no shifts can be created, updated, or deleted from this report.' },
+    ...read.warnings.map(message => ({ department: null, kind: 'warning', message })),
+  ];
+  return NextResponse.json({
+    protocol: SYNC_PROTOCOL, date: body.date, dry_run: true,
+    investigative_only: true, source_shifts: read.entries.length,
+    duplicates: 0, proposed_shifts: 0, proposed_deletions: 0,
+    shifts_created: 0, shifts_deleted: 0, departments_applied: 0,
+    flags, can_apply: false,
+  });
 }

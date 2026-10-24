@@ -53,6 +53,9 @@ try {
     $env:PREFLIGHT_ONLY = $PreflightOnly.IsPresent.ToString().ToLowerInvariant()
     $env:MAX_DAYS_AHEAD = [string]$Days
     $env:TARGET_DATE_OFFSET_DAYS = '0'
+    # Do not inherit Playwright Inspector/debug pausing from the launching shell.
+    $previousDebug = [Environment]::GetEnvironmentVariable('PWDEBUG', 'Process')
+    [Environment]::SetEnvironmentVariable('PWDEBUG', $null, 'Process')
     $entry = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../humanforce-sync.mjs'))
     & $NodePath $entry 2>&1 | ForEach-Object {
         $line = [string]$_
@@ -67,6 +70,7 @@ try {
     Add-Content -LiteralPath $logPath -Value $message
     Write-Output $message
 } finally {
+    if ($null -ne $previousDebug) { [Environment]::SetEnvironmentVariable('PWDEBUG', $previousDebug, 'Process') }
     foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name], 'Process') }
     if ($lock) {
         @{ finished_at = [DateTime]::UtcNow.ToString('o'); exit_code = $code; dry_run = ($DryRun.IsPresent -or $SetupSession.IsPresent); session_setup = $SetupSession.IsPresent;

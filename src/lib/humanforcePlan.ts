@@ -22,7 +22,10 @@ export function planHumanforceSync(entries: SyncEntry[], staff: { id: string; na
     const key = nameKey(s).replace(/s$/, '');
     // Humanforce calls this Grocery; the existing ShiftFlow department was
     // named Grocery Assistant. Still require exactly one matching department.
-    return key === 'grocery assistant' ? 'grocery' : key;
+    if (key === 'grocery assistant') return 'grocery';
+    // Humanforce Office entries belong to ShiftFlow Admin Office.
+    if (key === 'office') return 'admin office';
+    return key;
   };
   const scope = new Set(departments.filter(d => !excludedArea(d.name)).map(d => d.id));
   for (const entry of entries.filter(e => !excludedArea(e.department ?? ''))) {
