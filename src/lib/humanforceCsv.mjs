@@ -45,7 +45,7 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
   const entries = [];
   const sourceRanges = new Map();
   let excluded = 0;
-  for (const row of rows) {
+  for (const [rowIndex, row] of rows.entries()) {
     if (row.length !== header.length) throw new Error('CSV row width differs from header.');
     const get = name => row[index[name]].trim();
     if (reportDate(get('titleTextBox')) !== expectedDate) throw new Error('CSV report date differs from requested date.');
@@ -56,7 +56,7 @@ export function parseHumanforceCsv(csv, expectedDate, expectedSite = 'Phoenix / 
     const name = get('tbDetailsSubText');
     if (!department || !name || /…|\.{2,}/.test(name)) throw new Error('Missing department or full staff name in CSV.');
     const segments = ['tbShift_1','tbShift_2'].map(get).filter(Boolean).map(segment);
-    if (!segments.length) throw new Error('CSV row has no shift time.');
+    if (!segments.length) throw new Error(`CSV row ${rowIndex + 2} has no shift time (both shift columns empty).`);
     // Roll a second segment past midnight if the first segment crosses midnight.
     if (segments.length === 2 && segments[0].end > 1440 && segments[1].start < segments[0].start) {
       segments[1].start += 1440; segments[1].end += 1440;
