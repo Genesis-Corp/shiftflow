@@ -139,18 +139,40 @@ export async function main(env = process.env) {
         stage = 'export';
         let format = 'csv', bytes;
         try { bytes = await exportReport(popup, 'csv'); }
-        catch { log('csv_export_unavailable', { date }); format = 'pdf'; bytes = await exportReport(popup, 'pdf'); }
-        // Invalid CSV data stops the run; it must never silently become a PDF import.
-        stage = 'validation';
-        if (format === 'csv') parseHumanforceCsv(bytes.toString('utf8'), date, config.site);
+        catch (error) {
+          log('csv_export_unavailable', { date, reason: 'download_failed' });
+          format = 'pdf';
+          bytes = await exportReport(popup, 'pdf');
+        }
+        let csvProblem = null;
+        if (format === 'csv') {
+          stage = 'validation';
+          try { parseHumanforceCsv(bytes.toString('utf8'), date, config.site); }
+          catch (error) {
+            csvProblem = error instanceof Error ? error.message : 'CSV validation failed';
+            // Do not feed an ambiguous CSV into the live replacement endpoint.
+            // PDF can investigate, but must never supply authoritative shifts.
+            log('csv_needs_pdf_review', { date, reason: csvProblem.replace(/\\b[A-Z][a-z]+ [A-Z][a-z]+\\b/g, '[REDACTED]') });
+            stage = 'investigative_pdf';
+            bytes = await exportReport(popup, 'pdf');
+            format = 'pdf';
+          }
+        }
         stage = 'reconciliation';
+        // Force all PDF imports into dry-run mode, even during a live scheduled sync.
+        // The PDF reader may give useful evidence but cannot authorize replacements.
+        const effectiveDryRun = config.dryRun || format === 'pdf';
         const result = await requestSync(config, env, `roster-${format}`, {
-          date, dryRun: config.dryRun, ...(format === 'csv' ? { csv: bytes.toString('utf8') } : { pdf: bytes.toString('base64') }),
+          date, dryRun: effectiveDryRun, ...(format === 'csv' ? { csv: bytes.toString('utf8') } : { pdf: bytes.toString('base64') }),
         });
         if (config.dryRun && env.SHIFTFLOW_PREVIEW_DIRECTORY) {
-          await writeFile(path.join(env.SHIFTFLOW_PREVIEW_DIRECTORY, `${date}.json`), JSON.stringify(result, null, 2));
+          await writeFile(path.join(env.SHIFTFLOW_PREVIEW_DIRECTORY, `${date}.json`), JSON.stringify({
+            ...result, ...(csvProblem ? { csv_needs_review: true, csv_problem: csvProblem } : {}),
+          }, null, 2));
         }
-        review ||= !!result.flags?.length;
+        // An investigative PDF is never a clean validation, even if the PDF parser
+        // returns zero warnings. Require explicit human review before scheduling.
+        review ||= format === 'pdf' || !!result.flags?.length;
         checked++;
         log('day_complete', { date, format, dry_run: config.dryRun, shifts_created: result.shifts_created,
           shifts_deleted: result.shifts_deleted, proposed_deletions: result.proposed_deletions,
