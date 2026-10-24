@@ -104,7 +104,7 @@ export async function main(env = process.env) {
   // Keep a verified session in the same normal browser mode used at setup.
   // No verification controls, user agents or browser fingerprints are altered.
   const savedSession = Boolean(env.HUMANFORCE_STORAGE_STATE);
-  const browser = await chromium.launch({ headless: !setupSession && !savedSession,
+  const browser = await chromium.launch({ channel: 'msedge', headless: !setupSession && !savedSession,
     ...(savedSession && !setupSession && !config.dryRun ? { args: ['--start-minimized'] } : {}) });
   let stage = 'login';
   let review = false, checked = 0;
@@ -123,6 +123,7 @@ export async function main(env = process.env) {
     for (let i = 0; i < config.max; i++) {
       const date = perthDate(config.offset + i);
       log('checking', { date });
+      if (i > 0) await page.waitForTimeout(5000);
       stage = 'report_date';
       await setDate(page, date);
       const [popup] = await Promise.all([page.waitForEvent('popup'), page.getByText('Print Preview', { exact: true }).click()]);
@@ -133,6 +134,8 @@ export async function main(env = process.env) {
           popup.getByText(/Daily Staff Coverage By Role/).first().waitFor({ state: 'visible', timeout: 30000 }).then(() => 'populated'),
         ]);
         if (state === 'empty') { log('unpublished', { date }); continue; }
+        // Report toolbar can appear before its export options are ready.
+        await popup.waitForTimeout(5000);
         stage = 'export';
         let format = 'csv', bytes;
         try { bytes = await exportReport(popup, 'csv'); }
